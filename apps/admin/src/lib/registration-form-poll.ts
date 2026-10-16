@@ -16,8 +16,10 @@ import {
   answersByTitle,
   buildRegistrationPayload,
   formMappingSchema,
+  receiptFileFor,
   requiredQuestions,
 } from './registration-form-mapping';
+import { drainFormReceipts, type ReceiptDrainOutcome } from './form-receipts';
 
 // THE CONSOLE READS ITS GOOGLE FORMS (00287).
 //
@@ -43,6 +45,13 @@ import {
 // the round carries on. Only a 429 that survives its retries, or the round's
 // read budget, stops the round; forms not reached keep their place.
 //
+// A RESPONSE'S UPLOADED RECEIPT (00288) is recorded against its import as the
+// response is imported, replays included, with no Drive call; a failure to
+// record holds the watermark like a failed import, so the next round replays
+// it. The files themselves are downloaded after the forms are read, with what
+// is left of the budget and time, by lib/form-receipts.ts, which then files
+// them as receipts for review. That runs even when no form is due.
+//
 // Unconfigured, nothing runs: no claim, no Google call, no log line.
 //
 // NOTHING IS LOGGED THAT CARRIES AN ANSWER OR AN EMAIL. Expected refusals go
@@ -62,6 +71,8 @@ export const POLL_CONCURRENCY = 3;
 export const POLL_TIME_BUDGET_MS = 90_000;
 /** How far before the watermark each read starts. */
 export const WATERMARK_OVERLAP_MS = 60_000;
+/** No receipt download is started after this long into the round. */
+export const RECEIPT_TIME_BUDGET_MS = 150_000;
 
 export type PollErrorCode =
   | 'auth'
@@ -94,6 +105,8 @@ export interface FormPollRun {
   errors: number;
   stopped?: 'rate_limited' | 'budget' | 'time' | 'auth';
   forms: FormPollOutcome[];
+  /** The uploaded receipts' round (00288). Absent when the reader is not configured. */
+  receipts?: ReceiptDrainOutcome;
 }
 
 interface ClaimedForm {
@@ -216,7 +229,30 @@ async function pollForm(
       }
       if (whole) {
         outcome.skipped += 1;
-      } else if (rows.length > 0 && rows.every((r) => r.replayed)) {
+        continue;
+      }
+      const file = receiptFileFor(mapping.data, questions, response.fileAnswers);
+      if (file) {
+        const recorded = await admin.rpc('record_registration_import_receipt', {
+          p_binding_id: form.id,
+          p_response_id: built.payload.response_id,
+          p_drive_file_id: file.fileId,
+          p_mime_type: file.mimeType,
+        });
+        if (recorded.error) {
+          failed = true;
+          Sentry.captureException(new Error(`Form receipt record failed: ${recorded.error.message}`), {
+            extra: { job: 'registration-form-poll', binding: form.id },
+          });
+        } else {
+          // An earlier upload that a new one replaced, held by no submission.
+          const stale = (Array.isArray(recorded.data) ? (recorded.data as { stale_path: string | null }[]) : [])
+            .map((r) => r.stale_path)
+            .filter((p): p is string => !!p);
+          if (stale.length > 0) await admin.storage.from('fee-proofs').remove(stale);
+        }
+      }
+      if (rows.length > 0 && rows.every((r) => r.replayed)) {
         outcome.replayed += 1;
       } else {
         outcome.imported += 1;
@@ -264,11 +300,29 @@ export async function runRegistrationFormPoll(admin: Admin, deps: PollDeps = def
   if (error) throw new Error(`Could not claim forms to read: ${error.message}`);
   const queue = ((data ?? []) as ClaimedForm[]).slice();
   run.claimed = queue.length;
-  if (queue.length === 0) return run;
 
   const started = deps.now();
   const budget = new ReadBudget(POLL_READ_BUDGET);
+  if (queue.length > 0) await readForms(admin, queue, account, deps, budget, started, run);
 
+  // The uploaded receipts, with what is left. Downloads are skipped once
+  // Google has stopped the round; filing needs no Google and always runs.
+  run.receipts = await drainFormReceipts(admin, account, deps, budget, {
+    downloads: run.stopped !== 'rate_limited' && run.stopped !== 'auth',
+    deadline: started + RECEIPT_TIME_BUDGET_MS,
+  });
+  return run;
+}
+
+async function readForms(
+  admin: Admin,
+  queue: ClaimedForm[],
+  account: ServiceAccount,
+  deps: PollDeps,
+  budget: ReadBudget,
+  started: number,
+  run: FormPollRun,
+): Promise<void> {
   // One token for the round. Refused: every claimed form says so, once.
   try {
     await accessToken(account, deps);
@@ -280,7 +334,7 @@ export async function runRegistrationFormPoll(admin: Admin, deps: PollDeps = def
     }
     run.errors = queue.length;
     run.stopped = code === 'rate_limited' ? 'rate_limited' : 'auth';
-    return run;
+    return;
   }
 
   let stop: FormPollRun['stopped'];
@@ -317,5 +371,4 @@ export async function runRegistrationFormPoll(admin: Admin, deps: PollDeps = def
     if (outcome.error && outcome.error !== 'responses_skipped') run.errors += 1;
     run.imported += outcome.imported;
   }
-  return run;
 }

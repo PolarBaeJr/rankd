@@ -8,7 +8,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { generateKeyPairSync, createVerify } from 'node:crypto';
 import {
   accessToken,
+  downloadDriveFile,
+  DriveFileError,
   filterTimestamp,
+  getDriveFileMeta,
   getFormQuestions,
   GoogleFormsError,
   GOOGLE_FORMS_SCOPES,
@@ -113,7 +116,7 @@ describe('the service account in the environment', () => {
 });
 
 describe('the token', () => {
-  it('signs an RS256 assertion for the two read-only scopes', () => {
+  it('signs an RS256 assertion for the read-only scopes, Drive included', () => {
     const jwt = signAssertion(ACCOUNT, 1_700_000_000);
     const [header, claims, signature] = jwt.split('.');
     const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
@@ -125,6 +128,7 @@ describe('the token', () => {
       iat: 1_700_000_000,
       exp: 1_700_003_600,
     });
+    expect(GOOGLE_FORMS_SCOPES).toContain('https://www.googleapis.com/auth/drive.readonly');
     const verifier = createVerify('RSA-SHA256').update(`${header}.${claims}`);
     expect(verifier.verify(publicKey, Buffer.from(signature!, 'base64url'))).toBe(true);
   });
@@ -228,8 +232,18 @@ describe('reading a form', () => {
     const since = new Date('2026-10-09T10:59:00.500Z');
     const responses = await listResponsesSince(FORM, since, ACCOUNT, h.deps, new ReadBudget(10));
     expect(responses).toEqual([
-      { responseId: 'r1', lastSubmittedTime: '2026-10-09T11:00:00.123456Z', answers: { q1: ['a@example.org'] } },
-      { responseId: 'r2', lastSubmittedTime: '2026-10-09T11:05:00Z', answers: { q3: ['Singles', 'Doubles'] } },
+      {
+        responseId: 'r1',
+        lastSubmittedTime: '2026-10-09T11:00:00.123456Z',
+        answers: { q1: ['a@example.org'] },
+        fileAnswers: {},
+      },
+      {
+        responseId: 'r2',
+        lastSubmittedTime: '2026-10-09T11:05:00Z',
+        answers: { q3: ['Singles', 'Doubles'] },
+        fileAnswers: { f1: [{ fileId: 'x', mimeType: null }] },
+      },
     ]);
     const listed = h.requests.filter((r) => r.url !== GOOGLE_TOKEN_URL).map((r) => new URL(r.url));
     expect(listed).toHaveLength(2);
@@ -310,5 +324,88 @@ describe('reading a form', () => {
       name: 'BudgetExhausted',
     });
     expect(budget.used).toBe(3);
+  });
+});
+
+describe('reading an uploaded file from Drive (00288)', () => {
+  const FILE = 'file-123';
+
+  it('reads the size and type, across shared drives', async () => {
+    const h = harness(({ url }) =>
+      url === GOOGLE_TOKEN_URL ? tokenReply() : json(200, { size: '2048', mimeType: 'image/png' }),
+    );
+    expect(await getDriveFileMeta(FILE, ACCOUNT, h.deps, new ReadBudget(5))).toEqual({ size: 2048, mimeType: 'image/png' });
+    const asked = new URL(h.requests[1]!.url);
+    expect(asked.pathname).toBe('/drive/v3/files/file-123');
+    expect(asked.searchParams.get('fields')).toBe('size,mimeType');
+    expect(asked.searchParams.get('supportsAllDrives')).toBe('true');
+  });
+
+  it('makes a 404 or a file-level 403 a refusal of that file, without echoing the body', async () => {
+    for (const [status, body] of [
+      [404, { error: { message: 'File not found: secret-name.png' } }],
+      [403, { error: { errors: [{ reason: 'forbidden', message: 'secret-name.png' }] } }],
+    ] as const) {
+      resetGoogleTokenCache();
+      const h = harness(({ url }) => (url === GOOGLE_TOKEN_URL ? tokenReply() : json(status, body)));
+      const err = await getDriveFileMeta(FILE, ACCOUNT, h.deps, new ReadBudget(5)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DriveFileError);
+      expect(err).toMatchObject({ code: 'drive_forbidden', httpStatus: status });
+      expect(String((err as Error).message)).not.toContain('secret-name');
+    }
+  });
+
+  it('makes a Drive API that is off, or a missing scope, a refusal of the whole round', async () => {
+    for (const reason of ['accessNotConfigured', 'insufficientPermissions']) {
+      resetGoogleTokenCache();
+      const h = harness(({ url }) =>
+        url === GOOGLE_TOKEN_URL ? tokenReply() : json(403, { error: { errors: [{ reason }] } }),
+      );
+      const err = await getDriveFileMeta(FILE, ACCOUNT, h.deps, new ReadBudget(5)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(GoogleFormsError);
+      expect(err).toMatchObject({ code: 'forbidden' });
+    }
+    resetGoogleTokenCache();
+    const h = harness(({ url }) =>
+      url === GOOGLE_TOKEN_URL ? tokenReply() : json(403, { error: { errors: [{ reason: 'userRateLimitExceeded' }] } }),
+    );
+    await expect(getDriveFileMeta(FILE, ACCOUNT, h.deps, new ReadBudget(5))).rejects.toMatchObject({
+      code: 'rate_limited',
+    });
+  });
+
+  it('downloads the bytes', async () => {
+    const h = harness(({ url }) =>
+      url === GOOGLE_TOKEN_URL ? tokenReply() : new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+    );
+    const bytes = await downloadDriveFile(FILE, 10, ACCOUNT, h.deps, new ReadBudget(5));
+    expect([...bytes]).toEqual([1, 2, 3, 4]);
+    expect(new URL(h.requests[1]!.url).searchParams.get('alt')).toBe('media');
+  });
+
+  it('stops reading a file once it passes the cap, whatever its length header says', async () => {
+    let pulled = 0;
+    const stream = () =>
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled += 1;
+          controller.enqueue(new Uint8Array(4));
+          if (pulled > 100) controller.close();
+        },
+      });
+    const h = harness(({ url }) => (url === GOOGLE_TOKEN_URL ? tokenReply() : new Response(stream(), { status: 200 })));
+    await expect(downloadDriveFile(FILE, 10, ACCOUNT, h.deps, new ReadBudget(5))).rejects.toMatchObject({
+      code: 'too_large',
+    });
+    expect(pulled).toBeLessThan(10);
+
+    const declared = harness(({ url }) =>
+      url === GOOGLE_TOKEN_URL
+        ? tokenReply()
+        : new Response(new Uint8Array(4), { status: 200, headers: { 'content-length': '999999' } }),
+    );
+    await expect(downloadDriveFile(FILE, 10, ACCOUNT, declared.deps, new ReadBudget(5))).rejects.toMatchObject({
+      code: 'too_large',
+    });
   });
 });

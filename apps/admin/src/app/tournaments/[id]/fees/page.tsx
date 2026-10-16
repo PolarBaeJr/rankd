@@ -130,12 +130,18 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
     })
     .sort((a, b) => a.name.localeCompare(b.name));
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
-  const submissionByPlayer = new Map(
-    (canReview ? await loadPendingSubmissions(supabase, { tournamentId: id }) : []).map((s) => [s.playerId, s]),
+  // Keyed by FEE: a receipt a Google Form collected (00288) can sit on a
+  // non-member's named row, which has no player id to key it by.
+  const submissionByFee = new Map(
+    (canReview ? await loadPendingSubmissions(supabase, { tournamentId: id }) : []).map((s) => [s.feeId, s]),
   );
+  const submissionOf = (playerId: string) => {
+    const feeId = feeByPlayer.get(playerId)?.id;
+    return feeId ? submissionByFee.get(feeId) : undefined;
+  };
   const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
-  const reviewControls = (playerName: string, playerId: string) => {
-    const s = submissionByPlayer.get(playerId);
+  const reviewControls = (playerName: string, feeId: string | undefined) => {
+    const s = feeId ? submissionByFee.get(feeId) : undefined;
     return s ? (
       <SubmissionActions
         submissionId={s.id}
@@ -146,6 +152,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         proofHref={s.hasScreenshot ? `/tournaments/${id}/fees/proof/${s.id}` : null}
         method={s.method}
         feeType="tournament"
+        fromForm={s.fromForm}
+        readableScreenshot={s.readableScreenshot}
       />
     ) : null;
   };
@@ -327,7 +335,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                     <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
                       {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
                     </Badge>
-                    {submissionByPlayer.has(player.id) && <Badge variant="neutral">Submitted</Badge>}
+                    {submissionOf(player.id) && <Badge variant="neutral">Submitted</Badge>}
                     {note && <Badge variant="neutral">{note}</Badge>}
                   </>
                 }
@@ -337,7 +345,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                 ]}
                 actions={
                   <>
-                    {reviewControls(player.full_name, player.id)}
+                    {reviewControls(player.full_name, feeByPlayer.get(player.id)?.id)}
                     <TournamentFeeActions
                       mode="mark"
                       tournamentId={id}
@@ -402,7 +410,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                       <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
                         {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
                       </Badge>
-                      {submissionByPlayer.has(player.id) && (
+                      {submissionOf(player.id) && (
                         <span className="ml-2">
                           <Badge variant="neutral">Submitted</Badge>
                         </span>
@@ -421,7 +429,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                       {(paid && fee?.method) || '-'}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {reviewControls(player.full_name, player.id)}
+                      {reviewControls(player.full_name, feeByPlayer.get(player.id)?.id)}
                       <TournamentFeeActions
                         mode="mark"
                         tournamentId={id}
@@ -449,7 +457,12 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
           <h2 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">
             Non-member entries <span className="font-normal text-[var(--text-muted)]">({nonMemberFees.length})</span>
           </h2>
-          <NonMemberFees rows={nonMemberFees} canMarkPaid={bulkCan.markPaid} canMarkUnpaid={bulkCan.markUnpaid} />
+          <NonMemberFees
+            rows={nonMemberFees}
+            canMarkPaid={bulkCan.markPaid}
+            canMarkUnpaid={bulkCan.markUnpaid}
+            reviews={Object.fromEntries(nonMemberFees.map((f) => [f.id, reviewControls(f.name, f.id)]))}
+          />
         </Card>
       )}
       {canBulk && (

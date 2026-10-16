@@ -240,10 +240,10 @@ export async function MemberSection({
                     {l.kind === 'reinstatement' && 'Settled with an exec'}
                     {l.kind !== 'reinstatement' && l.owedCents == null && 'No price recorded yet. Ask an exec.'}
                     {payable && !waiting && !uploadable && 'Ask an exec how to pay this one.'}
-                    {waiting && (
+                    {waiting && latest?.reference && (
                       <>
                         {' · '}
-                        <Atomic>{latest?.reference}</Atomic>
+                        <Atomic>{latest.reference}</Atomic>
                       </>
                     )}
                   </div>

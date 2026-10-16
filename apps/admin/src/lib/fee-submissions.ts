@@ -31,17 +31,54 @@ export function submissionCapability(feeType: string | null | undefined): Capabi
   return null;
 }
 
+/** A screenshot the console can read in the browser (receipt-ocr.ts). HEIC and PDF are typed by the exec. */
+export function isReadableScreenshot(path: string | null | undefined): boolean {
+  return !!path && /\.(jpe?g|png|webp)$/i.test(path);
+}
+
+const INLINE_TYPES: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+/**
+ * A proof route's `?inline=1`: the screenshot's bytes, same origin, for the
+ * console's own OCR (receipt-ocr.ts) to read. The caller has already gated it.
+ * Images only, typed by the stored extension, never sniffed by the browser,
+ * and an attachment if navigated to, so the response cannot run as a page.
+ */
+export async function inlineProof(admin: AdminClient, path: string): Promise<Response> {
+  const contentType = INLINE_TYPES[path.split('.').pop()?.toLowerCase() ?? ''];
+  if (!contentType) return new Response('Not found', { status: 404 });
+  const { data, error } = await admin.storage.from('fee-proofs').download(path);
+  if (error || !data) {
+    console.error('[fees] could not read a payment screenshot:', error?.message);
+    return new Response('Could not open that screenshot', { status: 502 });
+  }
+  return new Response(data, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Disposition': 'attachment',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+
 export type PendingSubmission = {
   id: string;
-  reference: string;
+  /** Null for a receipt a Google Form collected (00288): the exec reads it off the screenshot. */
+  reference: string | null;
   /** How the member paid, as their browser read the receipt. Null when it could not tell. */
   method: ReceiptMethod | null;
   submittedAt: string;
   hasScreenshot: boolean;
+  /** The screenshot is one the browser can OCR. */
+  readableScreenshot: boolean;
+  /** Sent through a Google Form's upload question (00288), not the member's app. */
+  fromForm: boolean;
   feeId: string;
   feeType: FeeType;
   amountCents: number | null;
-  playerId: string;
+  /** Null for a non-member's named fee; the name and email are the ones the form gave. */
+  playerId: string | null;
   playerName: string;
   playerEmail: string | null;
   /** "Fall 2026 dues", an event's title, or a tournament's name. */
@@ -62,25 +99,26 @@ export async function loadPendingSubmissions(
   const subs = unwrap(
     await admin
       .from('fee_submissions')
-      .select('id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at')
+      .select('id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at, import_receipt_id')
       .eq('status', 'submitted')
       .order('submitted_at', { ascending: true }),
     'FEE-102',
   ) as {
     id: string;
     club_fee_id: string;
-    player_id: string;
-    reference: string;
+    player_id: string | null;
+    reference: string | null;
     method: string | null;
     screenshot_path: string | null;
     submitted_at: string;
+    import_receipt_id: string | null;
   }[];
   if (subs.length === 0) return [];
 
   const feeQuery = (ids: string[]) => {
     const q = admin
       .from('club_fees')
-      .select('id, fee_type, amount_cents, season_id, club_event_id, tournament_id')
+      .select('id, fee_type, amount_cents, season_id, club_event_id, tournament_id, manual_name, manual_email')
       .in('id', ids);
     return scope === 'club'
       ? q.in('fee_type', ['dues', 'event'])
@@ -89,23 +127,47 @@ export async function loadPendingSubmissions(
   const fees = unwrap(
     await selectInChunks([...new Set(subs.map((s) => s.club_fee_id))], (ids) => feeQuery(ids) as never),
     'FEE-102',
-  ) as { id: string; fee_type: FeeType; amount_cents: number | null; season_id: string | null; club_event_id: string | null; tournament_id: string | null }[];
+  ) as {
+    id: string;
+    fee_type: FeeType;
+    amount_cents: number | null;
+    season_id: string | null;
+    club_event_id: string | null;
+    tournament_id: string | null;
+    manual_name: string | null;
+    manual_email: string | null;
+  }[];
   const feeById = new Map(fees.map((f) => [f.id, f]));
   const mine = subs.filter((s) => feeById.has(s.club_fee_id));
   if (mine.length === 0) return [];
 
-  const playerIds = [...new Set(mine.map((s) => s.player_id))];
+  const playerIds = [...new Set(mine.map((s) => s.player_id).filter((v): v is string => Boolean(v)))];
+  // A non-member's named event fee (00284) is withdrawn when their guest place is gone.
+  const namedEventEmails = [
+    ...new Set(
+      mine
+        .filter((s) => !s.player_id)
+        .map((s) => feeById.get(s.club_fee_id)!)
+        .filter((f) => f.fee_type === 'event' && f.manual_email)
+        .map((f) => f.manual_email!.toLowerCase()),
+    ),
+  ];
   const eventIds = [...new Set(fees.map((f) => f.club_event_id).filter((v): v is string => Boolean(v)))];
   const seasonIds = [...new Set(fees.filter((f) => f.fee_type === 'dues').map((f) => f.season_id).filter((v): v is string => Boolean(v)))];
   const tournamentIds = [...new Set(fees.map((f) => f.tournament_id).filter((v): v is string => Boolean(v)))];
 
-  const [players, events, signups, seasons, tournaments] = await Promise.all([
-    selectInChunks(playerIds, (ids) => admin.from('players').select('id, full_name, email').in('id', ids) as never),
+  const [players, events, signups, guestSignups, seasons, tournaments] = await Promise.all([
+    playerIds.length
+      ? selectInChunks(playerIds, (ids) => admin.from('players').select('id, full_name, email').in('id', ids) as never)
+      : Promise.resolve({ data: [], error: null }),
     eventIds.length
       ? admin.from('club_events').select('id, title, status').in('id', eventIds)
       : Promise.resolve({ data: [], error: null }),
-    eventIds.length
+    eventIds.length && playerIds.length
       ? admin.from('club_event_signups').select('event_id, player_id').in('event_id', eventIds).in('player_id', playerIds)
+      : Promise.resolve({ data: [], error: null }),
+    eventIds.length && namedEventEmails.length
+      ? admin.from('club_event_external_signups').select('event_id, email').in('event_id', eventIds).in('email', namedEventEmails)
       : Promise.resolve({ data: [], error: null }),
     seasonIds.length
       ? admin.from('seasons').select('id, name').in('id', seasonIds)
@@ -123,12 +185,18 @@ export async function loadPendingSubmissions(
   const signedUp = new Set(
     (unwrap(signups, 'FEE-102') as { event_id: string; player_id: string }[]).map((s) => `${s.event_id}:${s.player_id}`),
   );
+  const guestSignedUp = new Set(
+    (unwrap(guestSignups, 'FEE-102') as { event_id: string; email: string }[]).map((s) => `${s.event_id}:${s.email}`),
+  );
   const seasonName = new Map((unwrap(seasons, 'FEE-102') as { id: string; name: string }[]).map((s) => [s.id, s.name]));
   const tournamentName = new Map((unwrap(tournaments, 'FEE-102') as { id: string; name: string }[]).map((t) => [t.id, t.name]));
 
   return mine.map((s) => {
     const fee = feeById.get(s.club_fee_id)!;
-    const player = playerById.get(s.player_id);
+    const player = s.player_id ? playerById.get(s.player_id) : undefined;
+    const signupKey = s.player_id
+      ? `${fee.club_event_id}:${s.player_id}`
+      : `${fee.club_event_id}:${(fee.manual_email ?? '').toLowerCase()}`;
     const event = fee.club_event_id ? eventById.get(fee.club_event_id) : undefined;
     const line =
       fee.fee_type === 'dues'
@@ -142,16 +210,20 @@ export async function loadPendingSubmissions(
       method: isReceiptMethod(s.method) ? s.method : null,
       submittedAt: s.submitted_at,
       hasScreenshot: s.screenshot_path != null,
+      readableScreenshot: isReadableScreenshot(s.screenshot_path),
+      fromForm: s.import_receipt_id != null,
       feeId: fee.id,
       feeType: fee.fee_type,
       amountCents: fee.amount_cents,
       playerId: s.player_id,
-      playerName: player?.full_name ?? 'Unknown member',
-      playerEmail: player?.email ?? null,
+      playerName: player?.full_name ?? (s.player_id ? 'Unknown member' : fee.manual_name ?? 'A non-member'),
+      playerEmail: player?.email ?? (s.player_id ? null : fee.manual_email),
       line,
       withdrawn:
         fee.fee_type === 'event' &&
-        (!fee.club_event_id || !signedUp.has(`${fee.club_event_id}:${s.player_id}`) || event?.status === 'cancelled'),
+        (!fee.club_event_id ||
+          !(s.player_id ? signedUp : guestSignedUp).has(signupKey) ||
+          event?.status === 'cancelled'),
     };
   });
 }

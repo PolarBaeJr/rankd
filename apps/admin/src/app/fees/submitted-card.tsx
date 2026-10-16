@@ -74,7 +74,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
           badges={s.withdrawn ? <Badge variant="warning">Withdrawn</Badge> : undefined}
           fields={[
             { label: 'Paid by', value: paidBy(s.method) },
-            { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference}</Atomic> },
+            { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic> },
             { label: 'Sent', value: new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) },
           ]}
           actions={
@@ -87,6 +87,8 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
               method={s.method}
               feeType={s.feeType}
+              fromForm={s.fromForm}
+              readableScreenshot={s.readableScreenshot}
             />
           }
         />
@@ -136,7 +138,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               </td>
               <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{paidBy(s.method)}</td>
               <td className="px-4 py-3">
-                <Atomic className="font-mono text-xs">{s.reference}</Atomic>
+                <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic>
               </td>
               <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                 {new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' })}
@@ -151,6 +153,8 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
                   proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
                   method={s.method}
                   feeType={s.feeType}
+                  fromForm={s.fromForm}
+                  readableScreenshot={s.readableScreenshot}
                 />
               </td>
             </tr>

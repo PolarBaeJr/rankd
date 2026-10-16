@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { browserReachableSignedUrl } from '@/lib/signed-url';
+import { inlineProof } from '@/lib/fee-submissions';
 
 /**
  * Open the screenshot sent with a receipt for this tournament's entry fee
  * (00248). The sibling of /fees/proof/[id], under /tournaments so an officer
  * holding entry money and not the club-fee section can reach it. The fee must
  * be an entry for THIS tournament: the id in the path is checked against the
- * row, not trusted.
+ * row, not trusted. `?inline=1` answers the image itself, under the same
+ * check (inlineProof).
  */
 
 const PROOF_URL_TTL_SECONDS = 60;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; submissionId: string }> },
 ) {
   await requireCapability('tournaments.fees.markpaid.write');
@@ -39,6 +41,8 @@ export async function GET(
   if (!sub?.screenshot_path || fee?.fee_type !== 'tournament' || fee.tournament_id !== id) {
     return new NextResponse('Not found', { status: 404 });
   }
+
+  if (new URL(request.url).searchParams.get('inline') === '1') return inlineProof(adminClient, sub.screenshot_path);
 
   const { data, error } = await adminClient.storage
     .from('fee-proofs')
