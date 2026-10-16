@@ -5,6 +5,8 @@ import { z } from 'zod';
 import {
   ETRANSFER_REFERENCE_PATTERN,
   ExpectedError,
+  SFU_REC_REFERENCE_PATTERN,
+  normaliseReference,
   RECEIPT_METHODS,
   formatPaymentMethod,
   isReceiptMethod,
@@ -30,14 +32,23 @@ import { duesFor, loadOutstandingMembers, submissionCapability } from '../fee-su
 // How it was paid is the method stored on the submission, which the member's
 // browser read off the receipt. The exec's pick is read only when none was
 // stored; a wrong stored method is corrected with Mark unpaid, then Mark paid.
+// The reference is the same: a receipt a Google Form collected (00288) has
+// none, and the exec's typed one is read only then.
+//
+// A form receipt belongs to somebody who may have no account, so the purge
+// cannot reach its screenshot by player. "Erase screenshot" removes it on
+// request (a non-member writing to the privacy address), leaving the
+// submission and the fee as the club's record of the payment.
 
 type SubmissionRow = {
   id: string;
   club_fee_id: string;
-  player_id: string;
+  player_id: string | null;
   status: string;
   method: string | null;
-  reference: string;
+  reference: string | null;
+  screenshot_path: string | null;
+  import_receipt_id: string | null;
 };
 type FeeRow = { id: string; fee_type: string; tournament_id: string | null; amount_cents: number | null };
 
@@ -52,6 +63,8 @@ const REVIEW_REFUSALS: Record<string, string> = {
   needs_method: 'Say how this was paid before confirming.',
   bad_method: 'That is not how this fee can be paid. Only membership dues are sold on the SFU Rec website.',
   short_reference: 'That reference is too short for an e-transfer, which has 6 to 32 characters. A 4 or 5 character number is an SFU Rec receipt.',
+  needs_reference: 'Type the reference from the screenshot before confirming.',
+  bad_reference: 'A reference is 4 to 32 letters, digits and hyphens.',
 };
 
 /** The submission, its fee, and the capability that settles it, checked. */
@@ -60,7 +73,7 @@ async function authorise(id: string) {
   const adminClient = createAdminClient();
   const { data: sub, error } = await adminClient
     .from('fee_submissions')
-    .select('id, club_fee_id, player_id, status, method, reference')
+    .select('id, club_fee_id, player_id, status, method, reference, screenshot_path, import_receipt_id')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Could not read that receipt: ${error.message}`);
@@ -87,25 +100,36 @@ function revalidate(fee: FeeRow) {
   if (fee.tournament_id) revalidatePath(`/tournaments/${fee.tournament_id}/fees`);
 }
 
-export async function confirmFeeSubmission(id: string, method?: string): Promise<ActionResult> {
-  return runAction(() => confirmImpl(id, method));
+export async function confirmFeeSubmission(id: string, method?: string, reference?: string): Promise<ActionResult> {
+  return runAction(() => confirmImpl(id, method, reference));
 }
 
-async function confirmImpl(id: string, method?: string): Promise<void> {
+async function confirmImpl(id: string, method?: string, reference?: string): Promise<void> {
   const picked = parseOrThrow(z.enum(RECEIPT_METHODS).optional(), method);
+  const typed = parseOrThrow(
+    z
+      .string()
+      .transform(normaliseReference)
+      .pipe(z.string().regex(SFU_REC_REFERENCE_PATTERN, REVIEW_REFUSALS.bad_reference!))
+      .optional(),
+    reference === '' ? undefined : reference,
+  );
   const { adminClient, actor, sub, fee } = await authorise(id);
   const effective = isReceiptMethod(sub.method) ? sub.method : picked;
   if (!effective) throw new ExpectedError(REVIEW_REFUSALS.needs_method!);
   if (effective === 'sfu_rec' && fee.fee_type !== 'dues') {
     throw new ExpectedError(REVIEW_REFUSALS.bad_method!);
   }
-  if (effective === 'e_transfer' && !ETRANSFER_REFERENCE_PATTERN.test(sub.reference)) {
+  const effectiveReference = sub.reference ?? typed;
+  if (!effectiveReference) throw new ExpectedError(REVIEW_REFUSALS.needs_reference!);
+  if (effective === 'e_transfer' && !ETRANSFER_REFERENCE_PATTERN.test(effectiveReference)) {
     throw new ExpectedError(REVIEW_REFUSALS.short_reference!);
   }
   const { data, error } = await adminClient.rpc('review_fee_submission_confirm', {
     p_submission_id: sub.id,
     p_actor: actor.id,
     p_method: effective,
+    p_reference: sub.reference ? null : effectiveReference,
   });
   if (error) throw new Error(`The receipt was not confirmed: ${error.message}`);
   if (data !== 'ok') throw new ExpectedError(REVIEW_REFUSALS[data as string] ?? 'The receipt was not confirmed.');
@@ -159,13 +183,86 @@ async function rejectImpl(id: string, reason: string): Promise<void> {
   );
 
   // Best-effort by notifyPlayers' own contract: the rejection stands whether
-  // or not the bell row commits. In-app only.
-  await notifyPlayers(adminClient, [sub.player_id], {
-    type: 'general',
-    title: 'Your payment receipt was not accepted',
-    body: why,
-    metadata: { kind: 'fee_submission_rejected', fee_submission_id: sub.id },
-  });
+  // or not the bell row commits. In-app only. A non-member's form receipt
+  // (00288) has nobody to notify.
+  if (sub.player_id) {
+    await notifyPlayers(adminClient, [sub.player_id], {
+      type: 'general',
+      title: 'Your payment receipt was not accepted',
+      body: why,
+      metadata: { kind: 'fee_submission_rejected', fee_submission_id: sub.id },
+    });
+  }
+  revalidate(fee);
+}
+
+const PROOF_BUCKET = 'fee-proofs';
+
+/**
+ * Erases the screenshot of a receipt a Google Form collected (00288): the
+ * object in fee-proofs, and every path to it on the submissions from that
+ * upload and on the upload's own record. The submissions and the fee stay.
+ * Removed before the paths are nulled, as eraseFeeProofs does, so a failed
+ * removal leaves the paths to try again with. The id is the only input.
+ */
+export async function eraseFormReceiptScreenshot(id: string): Promise<ActionResult> {
+  return runAction(() => eraseImpl(id));
+}
+
+async function eraseImpl(id: string): Promise<void> {
+  const { adminClient, actor, sub, fee } = await authorise(id);
+  if (!sub.import_receipt_id) {
+    throw new ExpectedError('Only a screenshot sent through a Google Form is erased here.');
+  }
+
+  const [siblings, upload] = await Promise.all([
+    adminClient
+      .from('fee_submissions')
+      .select('id, screenshot_path')
+      .eq('import_receipt_id', sub.import_receipt_id)
+      .not('screenshot_path', 'is', null),
+    adminClient
+      .from('registration_import_receipts')
+      .select('id, storage_path')
+      .eq('id', sub.import_receipt_id)
+      .maybeSingle(),
+  ]);
+  if (siblings.error) throw new Error(`Could not read the receipt's screenshots: ${siblings.error.message}`);
+  if (upload.error) throw new Error(`Could not read the form upload: ${upload.error.message}`);
+  const paths = new Set<string>(
+    ((siblings.data ?? []) as { screenshot_path: string }[]).map((row) => row.screenshot_path),
+  );
+  const stored = (upload.data as { storage_path: string | null } | null)?.storage_path;
+  if (stored) paths.add(stored);
+  if (paths.size === 0) throw new ExpectedError('That screenshot has already been erased.');
+
+  const { error: removeError } = await adminClient.storage.from(PROOF_BUCKET).remove([...paths]);
+  if (removeError) throw new Error(`The screenshot was not erased: ${removeError.message}`);
+
+  const { error: subError } = await adminClient
+    .from('fee_submissions')
+    .update({ screenshot_path: null })
+    .eq('import_receipt_id', sub.import_receipt_id);
+  if (subError) throw new Error(`The screenshot was removed but a receipt still names it: ${subError.message}`);
+  const { error: uploadError } = await adminClient
+    .from('registration_import_receipts')
+    .update({ storage_path: null })
+    .eq('id', sub.import_receipt_id);
+  if (uploadError) throw new Error(`The screenshot was removed but the form upload still names it: ${uploadError.message}`);
+
+  await logAdminAudit(
+    adminClient,
+    {
+      actor_id: actor.id as string,
+      action_type: 'fee_submission_screenshot_erased',
+      target_type: 'club_fee',
+      target_id: fee.id,
+      old_value: { screenshot: true },
+      new_value: { screenshot: false, fee_submission_id: sub.id, objects: paths.size },
+      reason: 'Form receipt screenshot erased on request',
+    },
+    { submissionId: sub.id },
+  );
   revalidate(fee);
 }
 

@@ -38,6 +38,12 @@ export interface FormBinding {
     attemptedAt: string | null;
     importedCount: number;
     error: string | null;
+    /**
+     * Uploaded receipts that did not reach the review (00288), by why: the
+     * file was too big, not an image or PDF, Drive refused it, it never
+     * downloaded, no fee matched, or the fee already had a receipt waiting.
+     */
+    receiptProblems: Record<string, number>;
   } | null;
 }
 
@@ -81,8 +87,12 @@ function readerOf(row: Record<string, unknown>): FormBinding['reader'] {
     attemptedAt: (row.poll_attempted_at as string | null) ?? null,
     importedCount: (row.poll_imported_count as number | null) ?? 0,
     error: (row.poll_error as string | null) ?? null,
+    receiptProblems: {},
   };
 }
+
+/** The receipt statuses the card reports: everything that did not reach a reviewer or a settled fee. */
+export const RECEIPT_PROBLEMS = ['too_large', 'bad_type', 'drive_forbidden', 'download_failed', 'no_fee', 'duplicate'];
 
 /** Every row this page needs, or bindings null before the migration. */
 export async function loadRegistrationImports(
@@ -125,6 +135,20 @@ export async function loadRegistrationImports(
     reader: readerMissing ? null : readerOf(b),
   }));
   if (bindings.length === 0) return { bindings, consumers, entries: [] };
+
+  // Before 00288 the table does not exist: no counts.
+  const problemsRes = await admin
+    .from('registration_import_receipts')
+    .select('status, registration_imports!inner(binding_id)')
+    .in('registration_imports.binding_id', bindings.map((b) => b.id))
+    .in('status', RECEIPT_PROBLEMS);
+  if (problemsRes.error && problemsRes.error.code !== MISSING) {
+    throw new Error(`Could not read the form receipts: ${problemsRes.error.message}`);
+  }
+  for (const row of (problemsRes.data ?? []) as unknown as { status: string; registration_imports: { binding_id: string } }[]) {
+    const reader = bindings.find((b) => b.id === row.registration_imports.binding_id)?.reader;
+    if (reader) reader.receiptProblems[row.status] = (reader.receiptProblems[row.status] ?? 0) + 1;
+  }
 
   const importsRes = await admin
     .from('registration_imports')

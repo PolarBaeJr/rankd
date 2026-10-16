@@ -348,9 +348,13 @@ export const config = {
   // exactly 200, so a 307 to /admin/login would report a working console as
   // unhealthy rather than being silently swallowed as it was under status<500.
   //
+  // tesseract/ is the self-hosted OCR (app/fees/receipt-ocr.ts): a worker and
+  // its wasm fetched by the browser, public files with nothing to gate, and a
+  // redirect to the login page in their place would only break the read.
+  //
   // Paths here are basePath-RELATIVE: Next strips /admin before matching.
   // No sw.js entry: the console registers no service worker (see app/layout.tsx).
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/|tesseract/).*)',
   ],
 };

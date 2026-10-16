@@ -3,7 +3,7 @@ import { Badge, Card, EmptyState, ResponsiveTable, TableCard, Atomic } from '@ba
 import { createAdminClient } from '@/lib/supabase-server';
 import { loadPendingSubmissions, type PendingSubmission } from '@/lib/fee-submissions';
 import { CardHeading } from './card-heading';
-import { SubmissionActions } from './submission-actions';
+import { KeptScreenshotActions, SubmissionActions } from './submission-actions';
 
 // PAYMENT RECEIPTS WAITING FOR AN EXEC (00248, 00253): dues and club events,
 // oldest first. "Paid by" is what the member's browser read off the receipt;
@@ -26,7 +26,11 @@ const paidBy = (method: string | null) =>
   method ? formatPaymentMethod(method) : <Badge variant="warning">Unclear</Badge>;
 
 export async function SubmittedCard() {
-  const submissions = await loadPendingSubmissions(createAdminClient(), 'club');
+  const admin = createAdminClient();
+  const [submissions, kept] = await Promise.all([
+    loadPendingSubmissions(admin, 'club'),
+    loadPendingSubmissions(admin, 'club', 'keptFromForm'),
+  ]);
 
   return (
     <Card padding={false}>
@@ -53,7 +57,41 @@ export async function SubmittedCard() {
           );
         })
       )}
+      {kept.length > 0 && <KeptScreenshots kept={kept} />}
     </Card>
+  );
+}
+
+// Confirmed receipts from a Google Form whose screenshot is still on file
+// (00288): kept as proof of payment, erased one by one when the person who
+// sent it asks through the privacy address. Erasing leaves the fee paid.
+function KeptScreenshots({ kept }: { kept: PendingSubmission[] }) {
+  return (
+    <section className="border-t border-[var(--border)]">
+      <div className="px-4 pt-4 pb-2">
+        <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+          Form screenshots on file <span className="font-normal text-[var(--text-muted)]">({kept.length})</span>
+        </h3>
+        <p className="text-xs text-[var(--text-muted)]">
+          Confirmed payments from a Google Form. Kept as proof of payment; erase one when its sender asks. The payment stays recorded.
+        </p>
+      </div>
+      <ul className="divide-y divide-[var(--border)]">
+        {kept.map((s) => (
+          <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[var(--text-primary)]">{s.playerName}</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                {[s.playerEmail, s.line, money(s.amountCents)].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+            <div className="flex items-center whitespace-nowrap">
+              <KeptScreenshotActions submissionId={s.id} memberName={s.playerName} proofHref={`/fees/proof/${s.id}`} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -74,7 +112,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
           badges={s.withdrawn ? <Badge variant="warning">Withdrawn</Badge> : undefined}
           fields={[
             { label: 'Paid by', value: paidBy(s.method) },
-            { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference}</Atomic> },
+            { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic> },
             { label: 'Sent', value: new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) },
           ]}
           actions={
@@ -87,6 +125,8 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
               method={s.method}
               feeType={s.feeType}
+              fromForm={s.fromForm}
+              readableScreenshot={s.readableScreenshot}
             />
           }
         />
@@ -136,7 +176,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               </td>
               <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{paidBy(s.method)}</td>
               <td className="px-4 py-3">
-                <Atomic className="font-mono text-xs">{s.reference}</Atomic>
+                <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic>
               </td>
               <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                 {new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' })}
@@ -151,6 +191,8 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
                   proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
                   method={s.method}
                   feeType={s.feeType}
+                  fromForm={s.fromForm}
+                  readableScreenshot={s.readableScreenshot}
                 />
               </td>
             </tr>

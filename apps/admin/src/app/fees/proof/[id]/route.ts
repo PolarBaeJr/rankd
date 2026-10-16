@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { browserReachableSignedUrl } from '@/lib/signed-url';
-import { submissionCapability } from '@/lib/fee-submissions';
+import { inlineProof, submissionCapability } from '@/lib/fee-submissions';
 
 /**
  * Open the screenshot a member sent with an e-transfer receipt (00248).
@@ -12,11 +12,14 @@ import { submissionCapability } from '@/lib/fee-submissions';
  * signing per click, and never cached. The capability that decides is the one
  * that settles the fee: club fees here, entry money for a tournament entry
  * (which also has its own route under /tournaments/[id]/fees/proof).
+ *
+ * `?inline=1` answers the image itself instead, under the same check, for the
+ * console's OCR of a form receipt (00288, inlineProof).
  */
 
 const PROOF_URL_TTL_SECONDS = 60;
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const viewer = await requireCapability('fees.page');
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(level, viewer);
@@ -40,6 +43,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!sub?.screenshot_path || !capability || !permits(level, permissions, capability)) {
     return new NextResponse('Not found', { status: 404 });
   }
+
+  if (new URL(request.url).searchParams.get('inline') === '1') return inlineProof(adminClient, sub.screenshot_path);
 
   const { data, error } = await adminClient.storage
     .from('fee-proofs')

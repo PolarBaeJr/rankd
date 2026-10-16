@@ -17,6 +17,7 @@ import {
   buildRegistrationPayload,
   formMappingSchema,
   normalizeRegistration,
+  receiptFileFor,
   scriptTimestamp,
   type FormMapping,
 } from '../registration-form-mapping';
@@ -45,6 +46,7 @@ const TOURNAMENT_MAPPING: FormMapping = {
       CATEGORY_QUESTION: 'Team category',
     },
   },
+  RECEIPT_QUESTION: '',
 };
 
 const CLUB_MAPPING: FormMapping = {
@@ -54,6 +56,7 @@ const CLUB_MAPPING: FormMapping = {
   EVENTS: {},
   DEFAULT_EVENT_ID: CLUB,
   PARTNERS: {},
+  RECEIPT_QUESTION: '',
 };
 
 /** A response as the two roads see it: titles with Apps Script values, and API answers by question id. */
@@ -256,5 +259,46 @@ describe('the mapping', () => {
         { a: ['first'], b: ['second'] },
       ),
     ).toEqual({ Name: ['second'] });
+  });
+});
+
+describe('the receipt question (00288)', () => {
+  it('parses a mapping saved before it existed, as no receipt question', () => {
+    const { RECEIPT_QUESTION: _unused, ...stored } = CLUB_MAPPING;
+    const parsed = formMappingSchema.safeParse(stored);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.RECEIPT_QUESTION).toBe('');
+  });
+
+  it('finds the upload by title, and nothing when the mapping names none', () => {
+    const questions = [
+      { questionId: 'qe', title: 'Email address' },
+      { questionId: 'qf', title: 'E-transfer screenshot' },
+    ];
+    const files = { qf: [{ fileId: 'drive-1', mimeType: 'image/png' }, { fileId: 'drive-2', mimeType: null }] };
+    const mapping = { ...CLUB_MAPPING, RECEIPT_QUESTION: 'E-transfer screenshot' };
+    expect(receiptFileFor(mapping, questions, files)).toEqual({ fileId: 'drive-1', mimeType: 'image/png' });
+    expect(receiptFileFor(CLUB_MAPPING, questions, files)).toBeNull();
+    expect(receiptFileFor(mapping, questions, {})).toBeNull();
+  });
+
+  it('leaves the payload, and so its hash, as it was', () => {
+    const questions = [
+      { questionId: 'qe', title: 'Email address' },
+      { questionId: 'qn', title: 'Full name' },
+      { questionId: 'qf', title: 'E-transfer screenshot' },
+    ];
+    const answers = { qe: ['pat@example.org'], qn: ['Pat Player'] };
+    const response = { responseId: 'r1', lastSubmittedTime: '2026-10-09T11:00:00Z' };
+    const without = buildRegistrationPayload(CLUB_MAPPING, 'form-1', response, answersByTitle(questions, answers));
+    const withReceipt = buildRegistrationPayload(
+      { ...CLUB_MAPPING, RECEIPT_QUESTION: 'E-transfer screenshot' },
+      'form-1',
+      response,
+      // A file answer never reaches answersByTitle: only text answers do.
+      answersByTitle(questions, answers),
+    );
+    expect(withReceipt).toEqual(without);
+    expect(JSON.stringify(withReceipt)).not.toContain('screenshot');
   });
 });
