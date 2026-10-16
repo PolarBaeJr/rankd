@@ -51,16 +51,18 @@ export async function eraseFeeProofs(
 
   // The form uploads: by the response's submitter, as the member or by email.
   const receiptIds = new Set<string>();
-  const submitters = [`submitter_player_id.eq.${playerId}`];
-  if (email) submitters.push(`submitter_email.eq.${JSON.stringify(email)}`);
-  const { data: receipts, error: receiptError } = await supabase
-    .from('registration_import_receipts')
-    .select('id, storage_path, registration_imports!inner(id)')
-    .or(submitters.join(','), { referencedTable: 'registration_imports' });
-  if (receiptError) return receiptError;
-  for (const r of (receipts ?? []) as { id: string; storage_path: string | null }[]) {
-    receiptIds.add(r.id);
-    if (r.storage_path) paths.add(r.storage_path);
+  const submitters: [string, string][] = [['submitter_player_id', playerId]];
+  if (email) submitters.push(['submitter_email', email]);
+  for (const [column, value] of submitters) {
+    const { data: receipts, error: receiptError } = await supabase
+      .from('registration_import_receipts')
+      .select('id, storage_path, registration_imports!inner(id)')
+      .eq(`registration_imports.${column}`, value);
+    if (receiptError) return receiptError;
+    for (const r of (receipts ?? []) as { id: string; storage_path: string | null }[]) {
+      receiptIds.add(r.id);
+      if (r.storage_path) paths.add(r.storage_path);
+    }
   }
 
   // The submissions on a named fee that carries the member's email.

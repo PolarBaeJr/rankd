@@ -356,8 +356,9 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     // erasure runs first (pinned above) and reads it itself.
     const src = readFileSync(join(REPO, 'supabase/functions/_shared/fee-proofs.ts'), 'utf8');
     expect(src).toContain(".from('players')");
-    expect(src).toContain('submitter_player_id.eq.');
-    expect(src).toContain('submitter_email.eq.');
+    expect(src).toContain("['submitter_player_id', playerId]");
+    expect(src).toContain("['submitter_email', email]");
+    expect(src).toContain('.eq(`registration_imports.${column}`, value)');
     expect(src).toContain(".eq('manual_email', email)");
     expect(src).toMatch(/from\('registration_import_receipts'\)\s*\.update\(\{ storage_path: null \}\)/);
   });

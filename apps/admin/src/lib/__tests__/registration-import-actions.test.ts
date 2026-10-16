@@ -161,6 +161,7 @@ describe('reading a form with Google (00287)', () => {
     EVENTS: { Singles: EVENT },
     DEFAULT_EVENT_ID: '',
     PARTNERS: {},
+    RECEIPT_QUESTION: 'E-transfer screenshot',
   };
 
   it('refuses a malformed id or mapping before asking for a capability', async () => {
