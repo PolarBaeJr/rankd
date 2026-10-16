@@ -29,6 +29,7 @@ function main(): void {
     anonKey: config.anonKey,
     dbJwt: config.dbJwt,
     fetch: (input, init) => fetch(input, init),
+    concurrency: config.upstreamConcurrency,
   });
   const handler = createHandler({ upstream, version });
   const server = createServer((req, res) => {

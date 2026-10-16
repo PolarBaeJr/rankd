@@ -32,7 +32,10 @@ import {
   fetchOpenChallenges,
   reportChallenge,
   signupStep,
+  submitReceipt,
+  fetchOwnFees,
   type ChallengeRefusal,
+  type ReceiptReply,
   type SignupReply,
   type SignupScreen,
   type CardFile,
@@ -248,10 +251,10 @@ export const COMMAND_DEFINITIONS = [
     // truncates in the client at the width of the input — people write one
     // sentence into it and stop. A paragraph box gets a reproduction.
     //
-    // The screenshot has to stay a command option, and that is a Discord
-    // limitation rather than a choice: A MODAL CANNOT TAKE A FILE. Text inputs
-    // are the only component a modal accepts, so the attachment is picked here,
-    // on the interaction before the modal, and carried across.
+    // The screenshot is a command option, picked on the interaction before
+    // the modal and carried across. When this was written a modal could only
+    // hold text inputs; Discord has since added a file upload component, so
+    // moving the picture into the modal is now possible, just not done.
     options: [
       {
         type: 11, // ATTACHMENT
@@ -264,7 +267,7 @@ export const COMMAND_DEFINITIONS = [
   {
     name: 'feedback',
     description: 'Tell the club what you think',
-    // Same shape as /bug: the words come from the modal, the picture cannot.
+    // Same shape as /bug: the words come from the modal, the picture from an option.
     // `about` stays a command option rather than moving into the modal, because
     // a modal's only component is a text input — there is no way to offer three
     // choices in one, and a free-text "what is this about" would be a fourth
@@ -924,6 +927,42 @@ export const COMMAND_DEFINITIONS = [
     // code comes back. NOT deferred: its first answer is a modal, which a
     // deferred interaction cannot open.
   },
+  {
+    name: 'receipt',
+    description: 'Send the receipt for a club fee you have paid',
+    // UNGATED, on /challenge's reasoning: the app acts as the member who typed
+    // it, resolved from their own linked Discord account, and runs the checks
+    // the Membership page runs. An unlinked caller is told to link first.
+    //
+    // ONE SLASH COMMAND, NOT A MODAL. Storing the screenshot takes the app
+    // longer than Discord's three seconds, so this is deferred, and a deferred
+    // interaction cannot open a modal. Every value fits an option: the fee is a
+    // picker of the caller's own unpaid fees, the reference is one short line.
+    options: [
+      {
+        type: 3, // STRING
+        name: 'fee',
+        description: 'Which fee you paid',
+        required: true,
+        autocomplete: true,
+      },
+      {
+        type: 11, // ATTACHMENT
+        name: 'screenshot',
+        description: 'A screenshot of the e-Transfer or Campus Rec receipt (JPEG, PNG or WebP, up to 8 MB)',
+        required: true,
+      },
+      {
+        type: 3,
+        name: 'reference',
+        description: 'The reference or receipt number on it',
+        required: true,
+        // The website's own bounds (feeSubmissionSchema).
+        min_length: 4,
+        max_length: 32,
+      },
+    ],
+  },
 ];
 
 /**
@@ -967,6 +1006,9 @@ export const DEFERRED_COMMANDS = new Set([
   // Opens no modal and answers ephemerally. Sending a challenge also sends an
   // email and a push, and either can take the app past three seconds.
   'challenge',
+  // Opens no modal and answers ephemerally. The app downloads and stores the
+  // screenshot before it answers.
+  'receipt',
 ]);
 
 /**
@@ -991,6 +1033,11 @@ export const LINKED_ACCOUNT_PICKERS = new Set(['forceunlink', 'forceupdate']);
  * LINKED_ACCOUNT_PICKERS' pattern, so index.ts routes on a set this file owns.
  */
 export const OPEN_CHALLENGE_PICKERS = new Set(['challenge']);
+
+/**
+ * Which commands' pickers list the CALLER'S OWN unpaid fees. Same pattern.
+ */
+export const OWN_FEE_PICKERS = new Set(['receipt']);
 
 /**
  * Who ran the command, and where.
@@ -5131,6 +5178,154 @@ export async function handleChallengeAutocomplete(
 }
 
 // ---------------------------------------------------------------------------
+// /receipt
+// ---------------------------------------------------------------------------
+//
+// A member sends the receipt for a club fee: the fee from a picker of their
+// own unpaid ones, the screenshot as an attachment, the reference as text. The
+// app does the rest exactly as the Membership page does (one pending receipt
+// per fee, the method and reference rules, the e-transfer address, the fees
+// switch), and it downloads the screenshot itself, from Discord's CDN only.
+//
+// THE CALLER IS THE MEMBER, read off the interaction, resolved by the app
+// through the link table. An unlinked caller is told to link; nothing is ever
+// matched by name or email.
+//
+// NOTHING IS POSTED IN A CHANNEL, and no reply repeats the amount, the
+// reference or the picture. Every reply is ephemeral (the deferral fixed it).
+
+const RECEIPT_MAX_BYTES = 8 * 1024 * 1024;
+const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+// An abort can fire after the app has stored the receipt, so this never says
+// nothing happened.
+const RECEIPT_UNKNOWN =
+  "Couldn't get an answer from the club app, so I can't tell whether your receipt went through. " +
+  'Check Membership on the club website before you send it again.';
+
+const RECEIPT_NOT_LINKED =
+  "Your Discord account isn't linked to a club account yet, so I can't tell whose receipt this is. " +
+  'Run `/link`, open the link it gives you and sign in on the club website, then send the receipt again.';
+
+/** The reply for a deferred command: plain content, only the caller sees it. */
+function receiptReply(content: string): BotResponse {
+  return { type: 4, data: { content, flags: 64, allowed_mentions: { parse: [] } } };
+}
+
+/** Turn a refusal into this file's own sentence. */
+export function receiptRefusalText(result: Exclude<ReceiptReply, { ok: true }>): string {
+  const passed = (fallback: string) => (result.message ? result.message.slice(0, 300) : fallback);
+  switch (result.refusal) {
+    case 'not_linked':
+      return RECEIPT_NOT_LINKED;
+    case 'lapsed':
+      return 'Your membership was paused for inactivity. Open the club website once to switch it back on, then try again.';
+    case 'standing':
+      return "Your account can't send receipts right now. The club website says why.";
+    case 'feature_off':
+      return 'Receipts are switched off in the club right now.';
+    case 'waiver':
+      return "Accept the club's current legal documents on the website first, then try again.";
+    case 'no_login':
+      return 'Your club account has no website sign-in yet. Sign in on the club website once, then try again.';
+    case 'invalid':
+      return passed('Pick the fee from the list.');
+    case 'rule':
+      return passed('The club app did not accept that receipt.');
+    case 'file':
+      switch (result.file) {
+        case 'too_large':
+          return 'That image is over 8 MB. Try a screenshot of just the confirmation.';
+        case 'not_image':
+          return 'That file is not a JPEG, PNG or WebP image.';
+        default:
+          return "I couldn't read that attachment. Attach the screenshot again and resend.";
+      }
+    default:
+      return "The club app said no, and this version of the bot doesn't know why. Try the Membership page on the website.";
+  }
+}
+
+export async function handleReceipt(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  if (!context.discordUserId) return receiptReply("I couldn't tell who ran that. Try again.");
+
+  const feeValue = option(options, 'fee');
+  const referenceValue = option(options, 'reference');
+  const attachmentId = option(options, 'screenshot');
+  const fee = typeof feeValue === 'string' ? feeValue.trim() : '';
+  const reference = typeof referenceValue === 'string' ? referenceValue.trim() : '';
+  if (!fee) return receiptReply('Pick the fee you paid from the list.');
+  if (!reference) return receiptReply('Enter the reference or receipt number.');
+
+  // The attachment's VALUE is an id; the file is in the resolved side table.
+  // These checks only make the common mistakes a friendly sentence. The app
+  // downloads the file and checks it again from its own bytes, so neither the
+  // type nor the size Discord reports here is trusted, and the filename is
+  // never read at all.
+  const file = attachmentId ? context.attachments?.[String(attachmentId)] : undefined;
+  if (!file?.url) return receiptReply('Attach a screenshot of your receipt.');
+  const declaredType = (file.content_type ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (declaredType && !RECEIPT_TYPES.includes(declaredType)) {
+    return receiptReply('That file is not a JPEG, PNG or WebP image.');
+  }
+  if ((file.size ?? 0) > RECEIPT_MAX_BYTES) {
+    return receiptReply('That image is over 8 MB. Try a screenshot of just the confirmation.');
+  }
+
+  let result: ReceiptReply;
+  try {
+    result = await submitReceipt({
+      discordUserId: context.discordUserId,
+      fee,
+      reference,
+      attachmentUrl: file.url,
+    });
+  } catch (error) {
+    if (error instanceof RateLimitedError) {
+      return receiptReply("You've sent several receipts in the last hour. Try again later.");
+    }
+    console.error('[bot] receipt failed:', error);
+    return receiptReply(RECEIPT_UNKNOWN);
+  }
+
+  if (!result.ok) return receiptReply(receiptRefusalText(result));
+  return receiptReply(
+    '**Receipt sent.** An exec checks it, and the Membership page on the club website shows when it is confirmed.'
+  );
+}
+
+/** The /receipt picker: the caller's own unpaid dues and club event fees. */
+export async function handleReceiptAutocomplete(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  if (!context.discordUserId) return empty;
+  const focused = options?.find((o) => o.focused);
+  if (focused?.name !== 'fee') return empty;
+
+  try {
+    const typed = String(focused.value ?? '').trim().toLowerCase();
+    const fees = await fetchOwnFees(context.discordUserId);
+    return {
+      type: 8,
+      data: {
+        choices: fees
+          .filter((fee) => !typed || fee.label.toLowerCase().includes(typed))
+          .slice(0, 25)
+          .map((fee) => ({ name: fee.label.slice(0, 100), value: fee.id.slice(0, 100) })),
+      },
+    };
+  } catch (error) {
+    console.error('[bot] receipt autocomplete failed:', error);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // /signup
 // ---------------------------------------------------------------------------
 //
@@ -5191,7 +5386,7 @@ export function openSignupModal(): BotResponse {
       custom_id: SIGNUP_DETAILS_MODAL,
       title: 'Join the club',
       components: [
-        input('email', 'Email', true, { min_length: 3, max_length: 254 }, 'We email you a code to finish'),
+        input('email', 'Email', true, { min_length: 3, max_length: 254 }, 'Use your school email if you have one. We email you a code.'),
         input('first_name', 'First name', true, { min_length: 1, max_length: 40 }),
         input('last_name', 'Last name', true, { min_length: 1, max_length: 40 }),
         // No min_length on an optional box: the app checks 2 to 40 when it is filled.
@@ -5512,6 +5707,8 @@ export async function dispatch(
         return await handleChallenge(options, context);
       case 'signup':
         return openSignupModal();
+      case 'receipt':
+        return await handleReceipt(options, context);
       default:
         return ephemeral('Unknown command.');
     }

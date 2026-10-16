@@ -1,17 +1,11 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
-import { verifyAuthenticationResponse } from '@simplewebauthn/server';
-import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@simplewebauthn/server';
-import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 import { parseOrThrow, AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
-import { createServiceRoleClient } from '@/lib/supabase-server';
-import { verifyPayload } from '@/lib/passkey/cookie';
-import { consumeChallenge } from '@/lib/passkey/challenge-store';
+import { verifyLoginAssertion } from '@/lib/passkey/login-assertion';
 import {
-  getRpId,
   getExpectedOrigin,
   isPasskeyConfigured,
   PASSKEY_CHALLENGE_COOKIE,
@@ -73,109 +67,24 @@ export async function POST(request: Request) {
   }
 
   const cookieStore = await cookies();
-  const token = cookieStore.get(PASSKEY_CHALLENGE_COOKIE)?.value;
-  const challenge = token ? await verifyPayload(token) : null;
-  if (!challenge || challenge.type !== 'login') return fail();
 
-  // CLAIM THE CHALLENGE, SERVER SIDE (00181).
-  //
-  // The cookie above proves the challenge was issued to this browser and is
-  // unexpired. It cannot prove it has not already been spent: clearing a cookie
-  // is a response header, so two requests carrying the same cookie and the same
-  // assertion, sent before either response lands, both got this far and both
-  // verified. The signature counter cannot catch that either — synced passkeys
-  // report 0 every time, so there is no regression to detect.
-  //
-  // One atomic UPDATE, bound to THIS flow's purpose so a challenge minted
-  // elsewhere cannot be redeemed here.
-  if (!(await consumeChallenge(createServiceRoleClient(), challenge.challenge as string, 'player_login'))) return fail();
-
-  const service = createServiceRoleClient();
-  const { data: stored } = await service
-    .from('passkey_credentials')
-    .select('id, credential_id, public_key, counter, transports, player_id')
-    .eq('credential_id', body.credential.id)
-    .maybeSingle();
-  if (!stored) return fail();
-
-  let verification;
-  try {
-    verification = await verifyAuthenticationResponse({
-      response: body.credential as unknown as AuthenticationResponseJSON,
-      expectedChallenge: challenge.challenge as string,
-      expectedOrigin: getExpectedOrigin(),
-      expectedRPID: getRpId(),
-      credential: {
-        id: stored.credential_id,
-        publicKey: isoBase64URL.toBuffer(stored.public_key),
-        counter: Number(stored.counter),
-        transports: (stored.transports ?? undefined) as AuthenticatorTransportFuture[] | undefined,
-      },
-      requireUserVerification: false,
-    });
-  } catch {
-    verification = null;
-  }
-  if (!verification?.verified) return fail();
-
-  // Counter regression = possible cloned authenticator. Synced passkeys
-  // (iCloud/Google) always report 0, so never fail on 0.
-  const newCounter = verification.authenticationInfo.newCounter;
-  if (newCounter > 0 && newCounter <= Number(stored.counter)) return fail();
-
-  const { data: player } = await service
-    .from('players')
-    .select('id, user_id, status')
-    .eq('id', stored.player_id)
-    .maybeSingle();
-  if (!player?.user_id) return fail();
-
-  // The canonical address lives on the auth user, not players.email — the
-  // session must be minted for whatever GoTrue actually knows this account as.
-  const { data: authUser, error: authErr } = await service.auth.admin.getUserById(player.user_id);
-  const email = authUser?.user?.email;
-  if (authErr || !email) return fail();
-  if (authUser.user?.banned_until) return fail(403);
-
-  // COMPARE AND SWAP ON THE COUNTER WE VERIFIED AGAINST, and only issue a
-  // session once exactly one row has moved.
-  //
-  // This was a blind `WHERE id = ...` whose result was never inspected, so a
-  // failed write still handed out the cookie: the stored counter stayed where
-  // it was, and the next replay of the same assertion compared against the
-  // same old value and passed the regression check again. The whole point of
-  // persisting the counter is that it moves.
-  //
-  // The predicate also closes the concurrent case the audit describes — two
-  // assertions verified at once both compared against the same stored value,
-  // and both wrote. Now the second finds the row already moved and is refused.
-  //
-  // Zero-counter authenticators (iCloud- and Google-synced passkeys always
-  // report 0) are NOT protected by this, because 0 -> 0 is a legitimate write
-  // that any number of replays would also satisfy. That class is covered by
-  // single-use challenges (00181), not by the counter.
-  const { data: counterRows, error: counterErr } = await service
-    .from('passkey_credentials')
-    .update({ counter: newCounter, last_used_at: new Date().toISOString() })
-    .eq('id', stored.id)
-    .eq('counter', Number(stored.counter))
-    .select('id');
-  if (counterErr || !counterRows || counterRows.length === 0) {
-    const response = NextResponse.json({ error: 'Passkey verification failed' }, { status: 400 });
+  // The whole verification (challenge claim, signature, counter CAS, minting
+  // the single-use token) lives in lib/passkey/login-assertion.ts, shared with
+  // the native-app route. This route passes the WEB origin only; the Android
+  // apk-key-hash origins are the app route's alone, so an assertion made
+  // inside a native app can never mint a browser cookie session here.
+  const result = await verifyLoginAssertion({
+    credential: body.credential,
+    challengeToken: cookieStore.get(PASSKEY_CHALLENGE_COOKIE)?.value,
+    tokenType: 'login',
+    expectedOrigin: getExpectedOrigin(),
+  });
+  if (!result.ok) {
+    const response = NextResponse.json({ error: result.message }, { status: result.status });
     clearChallengeCookie(response);
     return response;
   }
-
-  // GoTrue has no WebAuthn grant, so a session is minted the supported way:
-  // generateLink produces a single-use token WITHOUT sending mail, and
-  // verifyOtp redeems it on a cookie-writing client. The token never leaves
-  // the server.
-  const { data: link, error: linkErr } = await service.auth.admin.generateLink({
-    type: 'magiclink',
-    email,
-  });
-  const hashedToken = link?.properties?.hashed_token;
-  if (linkErr || !hashedToken) return fail(500);
+  const hashedToken = result.hashedToken;
 
   const response = NextResponse.json({ ok: true });
   clearChallengeCookie(response);

@@ -313,6 +313,7 @@ describe('what may go in a baseline', () => {
       'page.access.leaderboard',
       'page.access.membership',
       'page.access.my_stats',
+      'page.access.predictions',
       'page.access.sessions',
       'page.access.socials',
       'page.access.tournaments',

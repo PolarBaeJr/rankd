@@ -9,13 +9,13 @@
   "scripts": {
     "dev:player": "npm run dev --workspace=apps/player",
     "dev:admin": "npm run dev --workspace=apps/admin",
-    "dev": "npx turbo run dev",
+    "dev": "npx turbo run dev --filter=!data-api-rs",
     "build": "npx turbo run build",
-    "lint": "npx turbo run lint",
-    "type-check": "npx turbo run type-check",
+    "lint": "npx turbo run lint --filter=!data-api-rs",
+    "type-check": "npx turbo run type-check --filter=!data-api-rs",
     "//gen:types": "The committed database.gen.ts is generated from PRODUCTION, so this names the production profile. Profiles live in scripts/gen-db-types.profiles.json, which is not tracked because it names real hosts; copy scripts/gen-db-types.profiles.example.json to create it. The generated header prints this same command, so `npm run gen:types` and the header always agree. To read a different database, pass --profile <name> (or explicit flags) to the script rather than editing this line.",
     "gen:types": "node scripts/gen-db-types.mjs --profile production",
-    "test": "npx turbo run test"
+    "test": "npx turbo run test --filter=!data-api-rs"
   },
   "packageManager": "npm@11.17.0",
   "//engines": "Node 24 (Krypton), the LTS line, supported to 2028-04-30. Node 20 went end-of-life 2026-04-30. Kept in lockstep with .nvmrc, the Dockerfile's node:24-bookworm-slim and @types/node ^24; .npmrc sets engine-strict=true so a mismatched Node fails `npm install` loudly instead of drifting. Pinned to the major only — patch upgrades inside 24.x are wanted. packageManager matches the npm that node:24-bookworm-slim ships, so Corepack (if ever enabled) does not download a different one.",

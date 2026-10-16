@@ -80,6 +80,8 @@ describe('the middleware skips the auth round trip on public paths', () => {
     '/unsubscribe',
     '/api/calendar/abc',
     '/api/passkey/login',
+    '/api/passkey/app/login/verify',
+    '/.well-known/assetlinks.json',
     '/api/discord/handles',
     '/tournaments/checkin',
     '/guest-waiver',
@@ -131,7 +133,7 @@ describe('the middleware skips the auth round trip on public paths', () => {
 describe('and still runs it everywhere else', () => {
   // THE CONTROL FOR THE ABOVE. Without these, `not.toHaveBeenCalled()` would
   // also pass if the mock were misnamed and the spy never wired to anything.
-  const gatedPaths = ['/feed', '/profile', '/checkin/abc', '/link/abc', '/api/sessions'];
+  const gatedPaths = ['/feed', '/profile', '/checkin/abc', '/link/abc', '/api/sessions', '/api/passkey/app/register/options'];
 
   it.each(gatedPaths)('builds a Supabase client for %s', async (path) => {
     await middleware(request(path));

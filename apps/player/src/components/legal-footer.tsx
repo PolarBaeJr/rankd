@@ -69,6 +69,9 @@ export function LegalFooter({ socials = null }: { socials?: FooterSocials | null
           {LEGAL_DOCUMENT_SHORT_LABELS[document]}
         </Link>
       ))}
+      <Link href="/whats-new" className="muted" style={linkStyle}>
+        What&apos;s new
+      </Link>
       <span className="muted" style={{ fontSize: 12, width: '100%', marginTop: 4 }}>
         Club Ladder · Example Sports Centre
       </span>

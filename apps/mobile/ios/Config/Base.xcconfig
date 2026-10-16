@@ -1,0 +1,22 @@
+// Build settings every configuration shares. The values the app needs to reach
+// the club live in Local.xcconfig (gitignored), included last so they win.
+//
+// Addresses carry NO scheme: xcconfig reads "//" as the start of a comment, so
+// Info.plist prepends https:// itself. The Supabase address may carry a path
+// prefix (host/prefix); the site address is a host only, because the
+// associated-domains entitlement names it.
+
+BADMINTON_SUPABASE_ADDRESS =
+BADMINTON_SUPABASE_ANON_KEY =
+BADMINTON_SITE_ADDRESS =
+// The passkey relying party: a host only. Set it to the options.rpId the
+// website returns when that differs from the site host.
+BADMINTON_PASSKEY_RP_ID = $(BADMINTON_SITE_ADDRESS)
+DEVELOPMENT_TEAM =
+// Empty for unsigned simulator builds, which then carry no capabilities.
+BADMINTON_ENTITLEMENTS_FILE =
+// Empty, or ?mode=developer to test universal links against a staging AASA
+// without Apple's CDN.
+BADMINTON_APPLINKS_MODE =
+
+#include? "Local.xcconfig"

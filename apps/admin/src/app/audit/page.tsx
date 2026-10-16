@@ -4,7 +4,6 @@ import { PageHeader } from '@badminton/ui';
 import { selectInChunks } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
-import { AuditActivityChart } from './activity-chart';
 import { LogTypeSelect } from './log-type-select';
 import { countDegraded } from '@/lib/audit-log-view';
 import { resolveAuditWindow } from '@/lib/audit-scope';
@@ -173,12 +172,6 @@ export default async function AuditPage({
   if (revealEmails) exportQuery.set('emails', '1');
   const exportHref = withBase(`/api/audit/export?${exportQuery.toString()}`);
 
-  const chip =
-    'whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors';
-  const chipOff =
-    'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]';
-  const chipOn = 'border-[var(--color-accent)] text-[var(--color-accent)]';
-
   // The emails toggle COPIES the incoming params and flips one, rather than
   // rebuilding the URL from the handful it happens to know about. Rebuilding is
   // correct only for as long as this list stays complete, and the moment a
@@ -239,77 +232,83 @@ export default async function AuditPage({
         . An entry lost outright leaves no row at all, so it cannot appear here.
       </p>
 
-      {/* Above the list and outside it: the shape of the whole scope is what
-          makes it navigation, and a chart sitting UNDER the tab filter while
-          ignoring it would read as a bug. Folds the rows already fetched — no
-          query of its own. See ./activity-chart.tsx. */}
-      <AuditActivityChart logs={rows} scopeLabel={scopeLabel} />
-
       <AuditList
         logs={withSubjects}
         scopeLabel={scopeLabel}
-        controls={
-          // Rendered here and passed down so the whole control band is one row:
-          // the season picker is driven by the URL (it re-queries on the server),
-          // while the tab, search and sort are client state over the rows it
-          // returned. Two different mechanisms, one line of controls.
+        // Rendered here and passed down: the season picker is driven by the URL
+        // (it re-queries on the server), while the tab, search and sort are
+        // client state over the rows it returned.
+        scope={
           <>
-            <SeasonSelect seasons={allSeasons} selected={selectedSeason} basePath="/audit" />
+            <SeasonSelect
+              seasons={allSeasons}
+              selected={selectedSeason}
+              basePath="/audit"
+              className="rounded-md text-xs"
+            />
             <Link
               href={fullHistory ? '/audit' : '/audit?range=all'}
-              className={`${chip} ${fullHistory ? chipOn : chipOff}`}
+              className="inline-flex h-9 items-center whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-xs text-[var(--text-muted)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]"
             >
-              {fullHistory ? 'Back to season' : 'Full history →'}
+              {fullHistory ? 'Back to season' : 'Full history'}
             </Link>
-
-            {/* THE EXPORT BAND, drawn only for somebody who may run a download.
-                Its own column inside the control row so the one line of copy
-                sits under the controls it explains rather than under the whole
-                band. */}
-            {canExport && (
-              <div className="flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <LogTypeSelect options={exportOptions} selected={selectedLogType} />
-
-                  {/* The email opt-in, as a URL parameter rather than client
-                      state: it keeps the band server-rendered, and it makes a
-                      particular export a link somebody can send. Offered only
-                      alongside a type that HAS emails, because the column comes
-                      from the sign-in log and nowhere else. */}
-                  {canSeeSignins && wantsSignins && (
-                    <Link href={emailsHref} className={`${chip} ${revealEmails ? chipOn : chipOff}`}>
-                      {revealEmails ? 'Emails included' : 'Include emails'}
-                    </Link>
-                  )}
-
-                  {/* A PLAIN ANCHOR THROUGH withBase(), not a <Link> and not a
-                      bare '/api/...' string. Next prefixes <Link> and the
-                      router but never a raw string, and the console is mounted
-                      at /admin on the PLAYER app's origin: an unprefixed path
-                      here is not a 404, it is a live route on a different
-                      container. See lib/base-path.ts. */}
-                  {signinsMissing ? (
-                    <span className={`${chip} border-[var(--border)] text-[var(--text-muted)]`}>
-                      Download unavailable
-                    </span>
-                  ) : (
-                    <a href={exportHref} className={`${chip} ${chipOff}`}>
-                      Download CSV
-                    </a>
-                  )}
-                </div>
-
-                {/* THE SELECTOR IS HONEST ONLY IF THE PAGE SAYS WHAT IT DOES
-                    NOT CHANGE. It sits in a row of filters that all rewrite the
-                    table, and this one does not touch it. */}
-                <p className="text-[11px] leading-tight text-[var(--text-muted)]">
-                  {signinsMissing
-                    ? 'Sign-ins need migration 00257, which has not been applied yet - the other types still download.'
-                    : 'The list below always shows console edits. The selector scopes the download.'}
-                </p>
-              </div>
-            )}
           </>
+        }
+        // THE EXPORT UNIT, drawn only for somebody who may run a download: the
+        // type, the email opt-in and the download, joined into one control.
+        exportControls={
+          canExport ? (
+            <div className="inline-flex h-9 items-stretch rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] [&>*+*]:border-l [&>*+*]:border-[var(--border)]">
+              <LogTypeSelect
+                options={exportOptions}
+                selected={selectedLogType}
+                triggerClassName="h-full rounded-none rounded-l-md border-0"
+              />
+
+              {/* The email opt-in, as a URL parameter rather than client
+                  state: it keeps the band server-rendered, and it makes a
+                  particular export a link somebody can send. Offered only
+                  alongside a type that HAS emails, because the column comes
+                  from the sign-in log and nowhere else. */}
+              {canSeeSignins && wantsSignins && (
+                <Link
+                  href={emailsHref}
+                  className={`inline-flex items-center whitespace-nowrap px-3 text-xs transition-colors ${revealEmails ? 'text-[var(--color-accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                >
+                  {revealEmails ? 'Emails included' : 'Include emails'}
+                </Link>
+              )}
+
+              {/* A PLAIN ANCHOR THROUGH withBase(), not a <Link> and not a
+                  bare '/api/...' string. Next prefixes <Link> and the
+                  router but never a raw string, and the console is mounted
+                  at /admin on the PLAYER app's origin: an unprefixed path
+                  here is not a 404, it is a live route on a different
+                  container. See lib/base-path.ts. */}
+              {signinsMissing ? (
+                <span className="inline-flex items-center whitespace-nowrap px-3 text-xs text-[var(--color-warning)]">
+                  Download unavailable
+                </span>
+              ) : (
+                <a
+                  href={exportHref}
+                  className="inline-flex items-center whitespace-nowrap rounded-r-md px-3 text-xs font-semibold text-[var(--text-primary)] transition-colors hover:bg-[var(--border-hover)]"
+                >
+                  Download CSV
+                </a>
+              )}
+            </div>
+          ) : null
+        }
+        // THE SELECTOR IS HONEST ONLY IF THE PAGE SAYS WHAT IT DOES NOT
+        // CHANGE. It sits beside filters that all rewrite the table, and this
+        // one does not touch it.
+        exportNote={
+          canExport
+            ? signinsMissing
+              ? 'Sign-ins need migration 00257, which has not been applied yet. The other types still download.'
+              : 'The list always shows console edits. The selector scopes the download.'
+            : null
         }
       />
     </div>

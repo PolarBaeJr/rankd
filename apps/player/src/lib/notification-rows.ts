@@ -220,6 +220,16 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
       if (str(metadata, 'kind') === 'fee_submission_rejected' || str(metadata, 'kind') === 'fee_payment_reminder') {
         return { href: '/membership', label: 'View' };
       }
+      // A form response used this member's email (00283). The entry waits for
+      // them, so the link goes to the page where they confirm it or say it
+      // was not them. Checked before the tournament link, which the same row
+      // also carries.
+      if (str(metadata, 'kind') === 'registration_import_confirm') {
+        const entryId = str(metadata, 'entry_id');
+        return entryId && isUuid(entryId)
+          ? { href: `/registrations/${entryId}`, label: 'Confirm' }
+          : { href: '/notifications', label: 'View' };
+      }
       if (challengeId) return { href: `/challenges/${challengeId}`, label: 'View' };
       if (tournamentId) return event('View');
       if (sessionId) return sessionLink;

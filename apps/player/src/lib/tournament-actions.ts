@@ -17,6 +17,7 @@ import {
   categoryRefusalMessage,
   toCompetitionCategory,
   ExpectedError,
+  isUuid,
   formatWindowInstant,
   windowState,
   type TournamentEventType,
@@ -37,6 +38,12 @@ import {
   settleWaitlistPromotions,
   type WaitlistPromotion,
 } from './event-waitlist';
+import {
+  loadOwnImportEntry,
+  pairMutualImportEntries,
+  settleImportEntry,
+  settleRefusal,
+} from './registration-import';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail
@@ -455,6 +462,63 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   await ensureEntryFees(service, event.tournament_id, [player.id]);
 
   revalidateTournamentPaths(event.tournament_id, eventId);
+}
+
+export interface ConfirmImportResult {
+  status: 'entered' | 'awaiting_partner';
+  paired: boolean;
+}
+
+/**
+ * Confirm a tournament entry a Google Form response asked for (00283).
+ *
+ * The entry id is the only thing the client names, and it is checked against
+ * the signed-in member: an id that is not theirs reads as not found. The entry
+ * itself is made by registerForEventImpl, the member's own path, so every gate
+ * a member meets on the event page (waiver, legal documents, membership,
+ * category, window, the solo-doubles acknowledgement) is met here too.
+ *
+ * Settle is asked first: a member who already entered the event on their own
+ * is confirmed without a second entry attempt.
+ */
+export async function confirmImportedTournamentEntry(
+  entryId: string,
+  opts?: RegisterOptions,
+): Promise<ActionResult<ConfirmImportResult>> {
+  return runAction(() => confirmImportedTournamentEntryImpl(entryId, opts));
+}
+
+async function confirmImportedTournamentEntryImpl(
+  entryId: string,
+  opts?: RegisterOptions,
+): Promise<ConfirmImportResult> {
+  if (!isUuid(entryId)) throw new ExpectedError('That entry could not be found.');
+  const player = await requirePlayer();
+  const service = createServiceRoleClient();
+  const entry = await loadOwnImportEntry(service, entryId, player.id);
+  if (!entry.tournament_event_id) throw new ExpectedError('That entry could not be found.');
+  if (entry.status !== 'awaiting_member') throw new ExpectedError('This entry is no longer waiting for you.');
+
+  let settled = await settleImportEntry(service, entryId, player.id);
+  if (!settled.ok && settled.reason === 'not_entered') {
+    // Only the two flags the member's own dialog would send, never anything
+    // else from the client.
+    await registerForEventImpl(entry.tournament_event_id, {
+      eventWaiverAccepted: opts?.eventWaiverAccepted === true,
+      soloEntryAcknowledged: opts?.soloEntryAcknowledged === true,
+    });
+    settled = await settleImportEntry(service, entryId, player.id);
+  }
+  if (!settled.ok) throw new ExpectedError(settleRefusal(settled));
+
+  let paired = false;
+  if (settled.partner_entry_id && settled.partner_player_id && isUuid(settled.partner_player_id)) {
+    paired = await pairMutualImportEntries(service, entryId, player.id, settled.partner_player_id);
+  }
+  return {
+    status: paired || settled.status === 'entered' ? 'entered' : 'awaiting_partner',
+    paired,
+  };
 }
 
 /**

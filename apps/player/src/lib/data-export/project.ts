@@ -181,6 +181,34 @@ export function truncateEndpoint(endpoint: string | null | undefined): string | 
  * The a/b columns never ship. `mine`/`theirs` is what the member asked for
  * anyway, and it cannot be got wrong silently the way a raw pair of columns can.
  */
+/**
+ * A data_api_predictions row (00282), rewritten so the requester's side comes
+ * first. The stored row is in a canonical order (side1 holds the smaller first
+ * uuid), so which side the member is on is effectively random, the same trap
+ * as the pair-stats tables. The consumer, key and model never ship.
+ */
+export function rewritePredictionRelative(
+  row: Record<string, unknown>,
+  selfId: string,
+  pseudonyms: PseudonymAllocator,
+): Record<string, unknown> {
+  const side1 = [row.side1_p1, row.side1_p2] as (string | null)[];
+  const side2 = [row.side2_p1, row.side2_p2] as (string | null)[];
+  const selfIsSide1 = side1.includes(selfId);
+  const mine = selfIsSide1 ? side1 : side2;
+  const theirs = selfIsSide1 ? side2 : side1;
+  const p = Number(row.side1_win_probability);
+  return {
+    format: row.format,
+    // Four places, as stored (numeric(5,4)), so 1 - p carries no float noise.
+    my_side_win_probability: selfIsSide1 ? p : Number((1 - p).toFixed(4)),
+    partner: pseudonyms.forMember(mine.find((id) => id && id !== selfId) ?? null),
+    opponents: theirs.filter((id): id is string => !!id).map((id) => pseudonyms.forMember(id)),
+    made_at: row.made_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export function rewriteRequesterRelative(
   row: Record<string, unknown>,
   selfId: string,

@@ -12,7 +12,13 @@ const base = { SUPABASE_URL: 'http://kong:8000/', SUPABASE_ANON_KEY: 'anon', DAT
 describe('loadConfig', () => {
   it('accepts a reader JWT and defaults the port', () => {
     const config = loadConfig(base);
-    expect(config).toEqual({ supabaseUrl: 'http://kong:8000', anonKey: 'anon', dbJwt: READER, port: 8080 });
+    expect(config).toEqual({
+      supabaseUrl: 'http://kong:8000',
+      anonKey: 'anon',
+      dbJwt: READER,
+      port: 8080,
+      upstreamConcurrency: 16,
+    });
     expect(loadConfig({ ...base, PORT: '9000' }).port).toBe(9000);
   });
 
@@ -39,6 +45,19 @@ describe('loadConfig', () => {
   it('refuses a bad URL or port', () => {
     expect(() => loadConfig({ ...base, SUPABASE_URL: 'kong' })).toThrow(ConfigError);
     expect(() => loadConfig({ ...base, PORT: 'eighty' })).toThrow(ConfigError);
+  });
+
+  it('reads DATA_API_UPSTREAM_CONCURRENCY, 16 when unset or blank', () => {
+    expect(loadConfig({ ...base, DATA_API_UPSTREAM_CONCURRENCY: '4' }).upstreamConcurrency).toBe(4);
+    expect(loadConfig({ ...base, DATA_API_UPSTREAM_CONCURRENCY: ' 1024 ' }).upstreamConcurrency).toBe(1024);
+    expect(loadConfig({ ...base, DATA_API_UPSTREAM_CONCURRENCY: '  ' }).upstreamConcurrency).toBe(16);
+    expect(loadConfig({ ...base, DATA_API_UPSTREAM_CONCURRENCY: '0x10' }).upstreamConcurrency).toBe(16);
+  });
+
+  it.each(['0', '-1', '1025', '2.5', 'many', '1e9'])('refuses DATA_API_UPSTREAM_CONCURRENCY=%s', (value) => {
+    expect(() => loadConfig({ ...base, DATA_API_UPSTREAM_CONCURRENCY: value })).toThrow(
+      new ConfigError('DATA_API_UPSTREAM_CONCURRENCY must be an integer between 1 and 1024'),
+    );
   });
 });
 

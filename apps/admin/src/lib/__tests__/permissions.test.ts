@@ -133,6 +133,8 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   // there is no read-only view for them either.
   { path: '/ratings', admin: true, exec: false, trainer: false },
   { path: '/accounts', admin: true, exec: false, trainer: false },
+  // Club changes (00286): admin-only, in no baseline.
+  { path: '/club-changes', admin: true, exec: false, trainer: false },
   // Admin-only sub-route under an exec-allowed section.
   { path: '/tournaments/abc-123/fees', admin: true, exec: false, trainer: false },
 ];
@@ -226,6 +228,7 @@ describe('a page-level capability matches what its route resolves to', () => {
     { path: '/disputes', capability: 'disputes.page' },
     { path: '/walkovers', capability: 'walkovers.page' },
     { path: '/audit', capability: 'audit.page' },
+    { path: '/club-changes', capability: 'changelog.page' },
     // The guest waiver list. Prefix-matched to '/legal', the same way: it is
     // the Legal section read from another page, not a section of its own.
     { path: '/legal/guests', capability: 'legal.page' },

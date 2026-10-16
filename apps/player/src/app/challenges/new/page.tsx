@@ -4,6 +4,7 @@ import { PageHeader } from '@badminton/ui';
 import { getViewer } from '@/lib/supabase-server';
 import { getRatingSettings } from '@/lib/rating-settings';
 import { listChallengeableOpponents } from '@/lib/challengeable-opponents';
+import { getMyPredictions, predictionsVisible } from '@/lib/predictions';
 import NewChallengeClient from './new-challenge-client';
 
 // Server wrapper so ?opponent= can be read without useSearchParams(), which in
@@ -61,11 +62,17 @@ export default async function NewChallengePage({
   // expressible on the server. See challengeable-opponents.ts.
   const opponents = await listChallengeableOpponents(me?.id);
 
+  // Every Data API prediction naming this member, handed down whole so the
+  // form can show one the moment the matchup is picked, with no round trip.
+  const predictions = me && (await predictionsVisible(me)) ? await getMyPredictions() : [];
+
   return (
     <NewChallengeClient
       initialOpponentId={isUuid(opponent) ? opponent : undefined}
       ratingSettings={ratingSettings}
       opponents={opponents}
+      myId={me?.id}
+      predictions={predictions}
     />
   );
 }

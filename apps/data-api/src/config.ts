@@ -13,11 +13,17 @@
 
 export const READER_ROLE = 'data_api_reader';
 
+/** How many PostgREST calls may be in flight at once (upstream.ts). */
+export const UPSTREAM_CONCURRENCY_ENV = 'DATA_API_UPSTREAM_CONCURRENCY';
+export const DEFAULT_UPSTREAM_CONCURRENCY = 16;
+export const MAX_UPSTREAM_CONCURRENCY = 1024;
+
 export interface Config {
   supabaseUrl: string;
   anonKey: string;
   dbJwt: string;
   port: number;
+  upstreamConcurrency: number;
 }
 
 export class ConfigError extends Error {}
@@ -71,10 +77,21 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     throw new ConfigError('PORT must be an integer between 1 and 65535');
   }
 
+  const rawConcurrency = env[UPSTREAM_CONCURRENCY_ENV];
+  const upstreamConcurrency = rawConcurrency?.trim() ? Number(rawConcurrency) : DEFAULT_UPSTREAM_CONCURRENCY;
+  if (
+    !Number.isInteger(upstreamConcurrency) ||
+    upstreamConcurrency < 1 ||
+    upstreamConcurrency > MAX_UPSTREAM_CONCURRENCY
+  ) {
+    throw new ConfigError(`${UPSTREAM_CONCURRENCY_ENV} must be an integer between 1 and ${MAX_UPSTREAM_CONCURRENCY}`);
+  }
+
   return {
     supabaseUrl: rawUrl.replace(/\/+$/, ''),
     anonKey: env.SUPABASE_ANON_KEY!.trim(),
     dbJwt,
     port,
+    upstreamConcurrency,
   };
 }

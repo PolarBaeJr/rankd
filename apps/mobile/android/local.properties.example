@@ -1,0 +1,12 @@
+# Copy to local.properties (gitignored) and fill in. Public values only: the
+# project URL and the anon key, which every member's browser already holds.
+# Never the service role key.
+sdk.dir=/path/to/Android/sdk
+badminton.supabaseUrl=
+badminton.supabaseAnonKey=
+# Optional. The https base URL of the club website (the player site, not
+# Supabase), from the SAME environment as badminton.supabaseUrl: a passkey
+# session minted by one environment's website is useless against another's
+# Supabase. For production, https://example.com. Empty hides passkey
+# sign-in; email codes still work.
+badminton.siteUrl=

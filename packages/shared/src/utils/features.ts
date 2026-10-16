@@ -173,6 +173,21 @@ export const FEATURES = [
     adminRoutes: ['/legal/guests'],
     defaultEnabled: false,
   },
+  // No route of its own: the cards sit on the challenge screens of a member
+  // who plays in the challenge, and each one asks the switch itself (player
+  // lib/predictions.ts).
+  {
+    id: 'predictions',
+    label: 'Match predictions',
+    summary: "Win predictions on a member's own challenges",
+    description:
+      'Shows win predictions posted through the Data API. Predictions never change ratings.',
+    offNote:
+      ' Off hides the prediction cards on challenges. Predictions a Data API key has already posted are kept.',
+    playerRoutes: [],
+    adminRoutes: [],
+    defaultEnabled: false,
+  },
 ] as const satisfies readonly FeatureDefinition[];
 
 export type FeatureId = (typeof FEATURES)[number]['id'];

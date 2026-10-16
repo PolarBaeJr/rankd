@@ -6,8 +6,10 @@ import {
   DEFERRED_COMMANDS,
   LINKED_ACCOUNT_PICKERS,
   OPEN_CHALLENGE_PICKERS,
+  OWN_FEE_PICKERS,
   dispatch,
   handleChallengeAutocomplete,
+  handleReceiptAutocomplete,
   handleLinkedAccountAutocomplete,
   handleSignupInteraction,
   isSignupInteraction,
@@ -961,12 +963,15 @@ const server = createServer(async (req, res) => {
       guildId: interaction.guild_id ?? null,
     };
     try {
-      // /challenge report lists the caller's own open challenges, so it is
-      // told who is asking, as the linked-account picker is.
+      // /challenge report lists the caller's own open challenges, and /receipt
+      // the caller's own unpaid fees, so each is told who is asking, as the
+      // linked-account picker is.
       const answered = await Promise.race([
         OPEN_CHALLENGE_PICKERS.has(interaction.data.name)
           ? handleChallengeAutocomplete(options, context)
-          : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
+          : OWN_FEE_PICKERS.has(interaction.data.name)
+            ? handleReceiptAutocomplete(options, context)
+            : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
             ? handleLinkedAccountAutocomplete(options, context)
             : handleProfileAutocomplete(options),
         new Promise<{ type: number; data: { choices: [] } }>((resolve) =>

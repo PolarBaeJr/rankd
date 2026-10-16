@@ -11,7 +11,8 @@ Consumer-facing documentation is served by the service itself at
 `GET /documentations` (for example `https://api.example.com/documentations`):
 one self-contained HTML page, no key, from `src/docs-page.ts`. Tests fail when
 a route, scope, query parameter or error code in `src/server.ts` or
-`src/params.ts` is missing from it or from `API.md`.
+`src/params.ts` is missing from it or from `API.md`. `GET /changelog` is the
+keyless list of what changed in each version, from `src/changelog-page.ts`.
 
 The routes live in one table, `ROUTES` in `src/server.ts`: template, scope,
 accepted parameters, and whether unknown parameters are refused. Parameter
@@ -46,6 +47,9 @@ key. It calls these functions and nothing else:
 | `data_api_tournament_draw` | 00266, 00270 | `/v1/tournaments/:id/events/:event_id` |
 | `data_api_sessions` | 00266 | `/v1/sessions` |
 | `data_api_club_events` | 00266 | `/v1/events` |
+| `data_api_write_predictions` | 00282, 00283 | `POST /v1/predictions` |
+| `data_api_delete_predictions` | 00282, 00283 | `DELETE /v1/predictions` |
+| `data_api_import_registration` | 00283, 00284, 00287 | `POST /v1/registrations` (00287: the key check, then the shared `registration_import_apply`) |
 
 Every match-reading function goes through ONE internal gate,
 `data_api_match_rows()`, which unions club and tournament matches and keeps a
@@ -69,6 +73,7 @@ Names only. Values live in the deployment's secret store, never in the repo.
 | `SUPABASE_ANON_KEY` | sent as the `apikey` header Kong requires |
 | `DATA_API_DB_JWT` | a long-lived JWT with `role: data_api_reader`, sent as `Authorization: Bearer` |
 | `PORT` | optional, default `8080` |
+| `DATA_API_UPSTREAM_CONCURRENCY` | optional, default `16`: the most PostgREST calls in flight at once, 1 to 1024 |
 
 The service refuses to start if any of the first three is missing, or if
 `DATA_API_DB_JWT` does not decode to `role: data_api_reader`. That second check
@@ -130,12 +135,47 @@ secret invalidates this token along with every other.
 - **Verification cache.** Positive results are cached 30 seconds per key hash
   (API.md: a revoked key stops working within 30 seconds), negative results 5
   seconds, at most 1000 entries. Upstream failures are never cached.
-- **Read cache.** Every read RPC is cached 15 seconds by function name and
-  exact arguments, at most 1000 entries (`src/rpc-cache.ts`). Identical calls
-  in flight share one database call, so a burst of the same request costs one
-  scan of the match history rather than one each. The consumer id is always an
-  argument, so one consumer never receives another's refs. Failures are
-  dropped as they settle. Key verification is not routed through it.
+- **Read cache.** Every read RPC is cached by consumer, function name and
+  arguments (`src/rpc-cache.ts`). The arguments are the query parameters after
+  `params.ts` has normalised them (uuids lower-cased, timestamps rewritten in
+  ISO form), so the same request spelled differently is one
+  entry. The TTL is per function, counted from the call:
+
+  | TTL | Functions |
+  | --- | --- |
+  | 60 s | players, player_by_ref, player_published, active_season, matches, match_by_ref, head_to_head, player_seasons, rating_history, seasons, season_header, season_standings |
+  | 30 s | tournaments, tournament_events(_v2), tournament_entrants(_v2), tournament_draw(_v2), sessions, club_events, and any function not in the table |
+
+  Settled history (results, ratings, the roster) changes on a scale of hours;
+  tournaments and the schedule move during an event, so they get the shorter
+  TTL. It is bounded at 2000 entries and 32 MiB of upstream body bytes, least
+  recently used out first; an answer bigger than the whole budget is served and
+  not kept. The byte bound counts the JSON as received; the parsed rows it
+  keeps can take more than that in memory. Identical calls in flight share one database call (single flight),
+  so a burst of the same request costs one scan of the match history rather
+  than one each. The consumer id is part of the key and always an argument, so
+  one consumer never receives another's refs. Failures are dropped as they
+  settle, so a degraded answer is never cached: the `season: null` fallback of
+  `/v1/players` comes from a failed `data_api_active_season` call, which is not
+  kept, and the next request asks again. A registration import, whatever it
+  answered and also when it failed, drops that consumer's
+  `tournament_entrants`, `tournament_entrants_v2` and `club_events` entries,
+  in flight ones included; no read function reads predictions, so a prediction
+  write drops nothing. The schedule routes without `from`/`to` default their
+  window to the clock in milliseconds, so they effectively miss every time.
+  Freshness, which API.md and the page state: at most 60 seconds, so a
+  member's opt-out or deletion request reaches the feed within 60 seconds.
+- **Single-flight key verification.** Concurrent requests with the same key
+  hash share one `data_api_verify_key` call; its answer fills the verification
+  cache. A failure is shared with the requests waiting on it and not kept. Each
+  refused request still spends the failed-lookup budget.
+- **Upstream concurrency cap.** At most `DATA_API_UPSTREAM_CONCURRENCY`
+  (default 16, 1 to 1024) PostgREST calls are in flight per process, the key
+  check included; the rest wait in a first-come queue. The 5 second timeout
+  starts before the queue, so time spent waiting counts: a call still queued
+  or in flight at 5 seconds fails as any timeout does, `503
+  {"error":"unavailable"}` with no Retry-After and an `upstream_failed` line
+  with `upstream_status` 0.
 - **Rate limits are per process.** 60 requests a minute per key, and 30 failed
   lookups a minute per client address. The edge proxy is the primary limiter;
   replicas each get their own budget.
@@ -151,8 +191,14 @@ secret invalidates this token along with every other.
 - **Paging** asks the database for `limit + 1` rows and sets `next_offset` only
   when the extra row came back, so there is never a count query.
 - **Check order** is route, method, key, rate, scope, query parameters (400),
-  path format (404), database. A malformed ref or id never reaches the
-  database.
+  path format (404), then for a write the body (415, 413, 400), database. A
+  malformed ref or id never reaches the database.
+- **Writes** (`/v1/predictions`, scope `predictions:write`) bypass the read
+  cache and send the key HASH, not the consumer id: the write and delete
+  functions re-check the key, its scope, revocation and expiry themselves,
+  because the verification cache may be up to 30 seconds stale. A `key`
+  refusal from the database is answered `401`. A batch is one request against
+  the rate limit.
 
 ## Known gaps
 

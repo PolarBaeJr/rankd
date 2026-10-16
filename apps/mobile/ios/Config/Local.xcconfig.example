@@ -1,0 +1,17 @@
+// Copy to Local.xcconfig (gitignored) and fill in, or run
+// scripts/config-from-android.sh to write it from ../android/local.properties.
+//
+// Hosts only, no https:// (xcconfig reads "//" as a comment). The anon key is
+// the PUBLIC one the website already ships to every browser. Never the service
+// role key.
+
+BADMINTON_SUPABASE_ADDRESS = db.example.invalid
+BADMINTON_SUPABASE_ANON_KEY = YOUR_ANON_KEY
+// Optional: the club website host. Empty hides passkey sign-in.
+BADMINTON_SITE_ADDRESS = site.example.invalid
+// BADMINTON_PASSKEY_RP_ID = site.example.invalid
+
+// Only for a signed device build with passkeys and universal links:
+// DEVELOPMENT_TEAM = ABCDE12345
+// BADMINTON_ENTITLEMENTS_FILE = ClubLadder/ClubLadder.entitlements
+// BADMINTON_APPLINKS_MODE = ?mode=developer

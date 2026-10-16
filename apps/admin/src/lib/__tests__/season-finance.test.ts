@@ -99,6 +99,24 @@ describe('getSeasonFinances', () => {
     expect(f.netCents).toBe(-7000);
   });
 
+  // Dues paid on the Campus Rec website went to Campus Rec, not to the club, so they
+  // do not lift the net. The members are still paid; the money is just not
+  // the club's to spend. It travels beside the net as its own figure.
+  it('leaves money Campus Rec collected out of the net', async () => {
+    const client = makeClient({
+      dues: [
+        { amount_cents: 20000, method: 'e_transfer' },
+        { amount_cents: 6000, method: 'sfu_rec' },
+      ],
+      expense: [{ amount_cents: 8400, category: 'shuttles' }],
+    });
+
+    const f = await getSeasonFinances(client as never, SEASON);
+    expect(f.income.totalCents).toBe(20000);
+    expect(f.income.collectedBySfuRecCents).toBe(6000);
+    expect(f.netCents).toBe(11600);
+  });
+
   // Other income is money in and must lift the net. It reaches this helper
   // through getSeasonIncome, so this also pins that the two helpers are wired
   // together rather than each reading its own subset of the ledgers.

@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 let linkRow: Record<string, unknown> | null = null;
 let linkError: { message: string } | null = null;
 let featureOn = true;
+const featuresAsked: string[] = [];
 let legalGate: { status: 'ok'; missing: string[] } | { status: 'unavailable' } = { status: 'ok', missing: [] };
 
 vi.mock('@/lib/supabase-server', () => ({ createServiceRoleClient: vi.fn(), getCurrentPlayer: vi.fn() }));
@@ -18,7 +19,8 @@ vi.mock('@badminton/shared/src/push/send', () => ({ sendPushToPlayers: vi.fn() }
 vi.mock('@/lib/feature-gate', async () => {
   const { ExpectedError } = await import('@badminton/shared');
   return {
-    assertFeatureOn: vi.fn(async () => {
+    assertFeatureOn: vi.fn(async (feature: string) => {
+      featuresAsked.push(feature);
       if (!featureOn) throw new ExpectedError('Challenges are switched off');
     }),
   };
@@ -43,6 +45,7 @@ beforeEach(() => {
   linkRow = { player_id: 'player-me', players: MEMBER };
   linkError = null;
   featureOn = true;
+  featuresAsked.length = 0;
   legalGate = { status: 'ok', missing: [] };
 });
 
@@ -100,5 +103,32 @@ describe('resolveDiscordPlayer', () => {
   it('answers unavailable when the legal documents cannot be read', async () => {
     legalGate = { status: 'unavailable' };
     expect(await resolveDiscordPlayer(client, '111111')).toEqual({ ok: false, refusal: 'unavailable' });
+  });
+
+  it('checks the challenges switch by default', async () => {
+    await resolveDiscordPlayer(client, '111111');
+    expect(featuresAsked).toEqual(['challenges']);
+  });
+
+  it('runs a fee receipt\'s checks: the fees switch and no legal documents, as the web action does', async () => {
+    legalGate = { status: 'ok', missing: ['waiver'] };
+    expect(await resolveDiscordPlayer(client, '111111', { feature: 'fees', waiver: false })).toEqual({
+      ok: true,
+      player: MEMBER,
+    });
+    expect(featuresAsked).toEqual(['fees']);
+
+    featureOn = false;
+    expect(await resolveDiscordPlayer(client, '111111', { feature: 'fees', waiver: false })).toEqual({
+      ok: false,
+      refusal: 'feature_off',
+    });
+  });
+
+  it('still refuses standing and lapsed members on the receipt checks', async () => {
+    linkRow = { player_id: 'player-me', players: { ...MEMBER, is_banned: true } };
+    expect(await resolveDiscordPlayer(client, '111111', { feature: 'fees', waiver: false })).toEqual({ ok: false, refusal: 'standing' });
+    linkRow = { player_id: 'player-me', players: { ...MEMBER, active_flag: false } };
+    expect(await resolveDiscordPlayer(client, '111111', { feature: 'fees', waiver: false })).toEqual({ ok: false, refusal: 'lapsed' });
   });
 });

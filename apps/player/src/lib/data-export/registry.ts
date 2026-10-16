@@ -423,6 +423,50 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     withheldColumns: ['resolved_by'],
     why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
   },
+  data_api_predictions: {
+    playerColumns: ['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2'],
+    disposition: 'project',
+    // The consumer and the key are the club's arrangement with an outside
+    // party, not the member's data. The model name is withheld by the club's
+    // decision: it identifies the consumer as surely as the consumer id would.
+    withheldColumns: ['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2', 'consumer_id', 'key_id', 'model'],
+    why: 'Win predictions an outside model made about matchups you are in, rewritten so the probability is your side\'s chance. Your partner and opponents appear as pseudonyms. Which outside party made each prediction is withheld. Predictions never changed your rating.',
+  },
+  // Google Form registrations (00283). The member's own form responses, and
+  // what became of each entry in them. The emails and names a response
+  // carried are not kept for members at all (a CHECK forbids it), and the
+  // ones typed for a partner are withheld: they are somebody else's.
+  registration_imports: {
+    playerColumns: ['submitter_player_id'],
+    disposition: 'project',
+    // key_id is the club's arrangement with its own form script; payload_hash
+    // is a digest of the response body and says nothing on its own.
+    withheldColumns: ['submitter_player_id', 'key_id', 'payload_hash', 'submitter_name', 'submitter_email'],
+    why: 'Every Google Form response of yours the club imported, when it arrived, and the answer the form was given.',
+  },
+  registration_import_entries: {
+    playerColumns: ['entrant_id', 'requested_partner_id', 'undone_by'],
+    disposition: 'project',
+    // A row where somebody else named you as their partner is theirs: you get
+    // that it exists and what became of it, never who they are. The officer
+    // who undid an entry is a role, as everywhere else.
+    withheldColumns: [
+      'entrant_id',
+      'requested_partner_id',
+      'undone_by',
+      'external_name',
+      'external_email',
+      'partner_name',
+      'partner_email',
+      'confirm_email_error',
+    ],
+    why: 'Each entry your form responses asked for, whether it was entered, waited for you or your partner, or was refused or undone, and entries another member\'s form named you as their partner in, without saying who they are.',
+  },
+  registration_import_forms: {
+    playerColumns: ['created_by'],
+    disposition: 'counted',
+    why: 'Google Forms you bound to a tournament or club event, as an officer. Counted rather than listed: the binding is a club object.',
+  },
   legacy_tournament_participants: {
     playerColumns: ['player_id', 'partner_id'],
     disposition: 'project',
@@ -588,6 +632,19 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     playerColumns: ['created_by', 'updated_by'],
     disposition: 'counted',
     why: 'Permission templates you created or edited, as an officer. Counted rather than listed. The permissions YOUR account holds are in your players row above.',
+  },
+  club_change_drafts: {
+    // Bare uuids with no foreign key (00286), so the officer who made a change
+    // can be deleted without losing the line.
+    playerColumns: ['first_actor_id', 'last_actor_id'],
+    disposition: 'counted',
+    why: 'Club change lines waiting to be posted that your edits as an officer started or last changed. Counted rather than listed, for the same reason.',
+  },
+  club_change_entries: {
+    // A bare uuid with no foreign key (00286).
+    playerColumns: ['posted_by'],
+    disposition: 'counted',
+    why: 'Club change entries you posted to members, as an officer. Counted rather than listed: the entries are club-wide.',
   },
   event_waiver_templates: {
     playerColumns: ['updated_by'],
@@ -819,6 +876,10 @@ export const NON_FK_PLAYER_TABLES: Record<string, string> = {
     'A bare `user_id uuid` (the auth user id) with no foreign key (00262), and only for people with console access.',
   tournament_bonus_grants:
     '`subject_id uuid NOT NULL`, "Deliberately not a foreign key" (00188:43-58): a players.id for a rating grant, a tournament_participants.id for a participant credit.',
+  club_change_drafts:
+    'Bare `first_actor_id` and `last_actor_id` uuids with no foreign key (00286): the officer whose edit started or last changed a pending line.',
+  club_change_entries:
+    'A bare `posted_by` uuid with no foreign key (00286): the officer who posted the entry.',
 };
 
 /**
@@ -861,6 +922,10 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
     'A rate-limit ledger for Discord /signup, purged after a day, no player id. The email is kept only as a digest (00281).',
   guest_waiver_signings:
     'Waiver signings by guests who are not members and have no account. There is no member column; it holds non-members\' names and emails, which a member export cannot reach.',
+  guest_waiver_invites:
+    'Waiver emails owed to non-members a form entered (00283). No member column; it holds non-members\' emails, which a member export cannot reach.',
+  club_event_external_signups:
+    'Non-members a form signed up for a club event (00284). No member column; it holds non-members\' names and emails.',
 };
 
 /**

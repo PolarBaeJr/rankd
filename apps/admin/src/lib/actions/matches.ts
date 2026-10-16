@@ -312,6 +312,8 @@ async function updateRepeatChallengeSettingsImpl(input: RepeatChallengeSettings,
 
   const { data: written, error: writeError } = await adminClient
     .from('platform_settings')
+    // Club changes (00286) draft a line only from a write that sets updated_by
+    // and moves updated_at. Keep both.
     .update({ value: next, updated_by: admin.id, updated_at: new Date().toISOString() })
     .eq('key', 'rating_defaults')
     .eq('updated_at', row.updated_at)

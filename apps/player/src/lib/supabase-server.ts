@@ -5,6 +5,7 @@ import { cache } from 'react';
 import { VIEWER_HEADER, readViewer } from './verified-viewer';
 import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
+import { appActorStore } from './app-actor';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied to the clients here — typed clients flip many `select('*, foo(*)')`
@@ -20,6 +21,11 @@ export function createServiceRoleClient() {
 }
 
 export async function createServerSupabaseClient() {
+  // A native app request (/api/app/*): the member's bearer client, and no
+  // cookies at all. Checked first, so cookies() is never touched for it.
+  const actor = appActorStore.getStore();
+  if (actor) return actor.supabase;
+
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -112,7 +118,12 @@ async function verifiedUserId(): Promise<string | null> {
 }
 
 async function loadViewer() {
-  const userId = await verifiedUserId();
+  // The native app's user was verified by resolveAppActor. Its client carries
+  // the bearer as a global header and has no session, so an arg-less getUser()
+  // on it would find nobody. Checked first: an app request carries no cookie,
+  // so the middleware never forwards an id for one.
+  const actor = appActorStore.getStore();
+  const userId = actor ? actor.user.id : await verifiedUserId();
   if (!userId) return { user: null, player: null };
   const user = { id: userId };
 

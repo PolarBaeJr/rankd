@@ -59,6 +59,20 @@ interface Props {
   // Category changes waiting for approval (00279), so a team's cell can say
   // one is pending. null before that migration.
   categoryRequests?: CategoryRequest[] | null;
+  // Entries a Google Form made (00283), by participant or pair id, with the
+  // import's status. Empty or absent: no badges.
+  imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
+}
+
+// A small tag beside an entry a Google Form made. "Awaiting partner" is a
+// member who confirmed and is waiting for the partner they named to confirm.
+function ImportedTag({ status }: { status: 'entered' | 'awaiting_partner' | undefined }) {
+  if (!status) return null;
+  return (
+    <span className="ml-2 inline-block rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+      {status === 'awaiting_partner' ? 'Form: awaiting partner' : 'Form'}
+    </span>
+  );
 }
 
 // Raw enum values ("checked_in") leaked straight into the table. Underscores
@@ -304,7 +318,7 @@ function CategoryCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -1174,6 +1188,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     <span className="text-sm font-medium text-[var(--text-primary)]">
                       {pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`}
                     </span>
+                    <ImportedTag status={imported?.[pair.id]} />
                     {pair.external1_name != null && pair.pair_name !== `${pair.external1_name} / ${pair.external2_name}` && (
                       <span className="block text-xs text-[var(--text-muted)]">
                         {pair.external1_name} / {pair.external2_name}
@@ -1246,6 +1261,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       <div className="flex items-center gap-2.5">
                         <AvatarChip name={player?.full_name ?? ''} src={player?.avatar_url} size="sm" id={player?.id} />
                         <span className="text-sm font-medium text-[var(--text-primary)]">{player?.full_name ?? 'Unknown'}</span>
+                        <ImportedTag status={imported?.[p.id]} />
                       </div>
                     </td>
                     {waiverStates && (
@@ -1418,6 +1434,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       <div className="flex items-center gap-2.5">
                         <AvatarChip name={p.player?.full_name ?? ''} src={p.player?.avatar_url} size="sm" id={p.player?.id} />
                         <span className="text-sm font-medium text-[var(--text-primary)]">{unpairedName(p)}</span>
+                        <ImportedTag status={imported?.[p.id]} />
                       </div>
                     </td>
                     {waiverStates && (

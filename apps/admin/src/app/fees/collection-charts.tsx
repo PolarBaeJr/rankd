@@ -3,10 +3,10 @@ import {
   buildRunningAreaPath,
   buildRunningPath,
   buildRunningTotal,
-  buildSplit,
   computeRunningScale,
   type Payment,
 } from '@/lib/charts';
+import { DUES_SPLIT_LABELS, buildDuesSplit } from '@/lib/dues-split';
 import {
   ChartFigure,
   ChartNote,
@@ -54,6 +54,7 @@ export function CollectionCharts({
   seasonName,
   isPast,
   collectedCents,
+  sfuRecCents = 0,
   outstandingCents,
   payments,
 }: {
@@ -63,6 +64,12 @@ export function CollectionCharts({
   /** Every paid dues row, summed. The same set, and the same fold, the
    *  dashboard's dues figure comes from, so the two cannot disagree. */
   collectedCents: number;
+  /**
+   * Paid dues Campus Rec collected, from the same fold (LedgerRead.collectedBySfuRec).
+   * Not in `collectedCents` or `payments`; drawn as its own segment so the
+   * billable total still counts those members as paid. See lib/dues-split.ts.
+   */
+  sfuRecCents?: number;
   /**
    * What is still owed, or NULL when the question cannot be answered honestly.
    *
@@ -79,13 +86,11 @@ export function CollectionCharts({
   /** The dated amounts behind `collectedCents`, for the curve. */
   payments: Payment[];
 }) {
-  const split =
+  const dues =
     outstandingCents === null
       ? null
-      : buildSplit([
-          { label: 'Collected', value: collectedCents },
-          { label: 'Still owed', value: outstandingCents },
-        ]);
+      : buildDuesSplit({ collectedCents, sfuRecCents, outstandingCents });
+  const split = dues?.split ?? null;
 
   const points = buildRunningTotal(payments, clubDayOf);
   const scale = computeRunningScale(points, RUNNING_BOX);
@@ -104,6 +109,13 @@ export function CollectionCharts({
         {split === null ? (
           <div className="space-y-2">
             <ChartFigure label="Collected" value={money(collectedCents)} tone="var(--color-success)" />
+            {sfuRecCents > 0 && (
+              <ChartFigure
+                label={DUES_SPLIT_LABELS.sfuRec}
+                value={money(sfuRecCents)}
+                tone="var(--color-info)"
+              />
+            )}
             <ChartNote>
               {seasonName} is closed, so what is still owed cannot be worked out from the
               current roster. This is what was taken in.
@@ -120,24 +132,27 @@ export function CollectionCharts({
             <ChartFigure
               label="Billable this season"
               value={money(split.total)}
-              sub={`${Math.round(split.segments[0]!.pct)}% of the term's dues are in.`}
+              sub={`${Math.round(dues!.paidPct)}% of the term's dues are in.`}
             />
             {/* Collected plus still owed IS a real quantity — the season's
                 billable total — which is what makes this a split rather than
                 two bars. The two tones are the ones the console already uses
                 for the pair: money in is success, money owed is the warning
-                tone the Outstanding stat cell turns. */}
-            <SplitBar
-              split={split}
-              tones={['var(--color-success)', 'var(--color-warning)']}
-              format={money}
-            />
+                tone the Outstanding stat cell turns. Dues Campus Rec collected,
+                when there are any, are a third segment in the neutral tone:
+                paid, but not the club's money. See lib/dues-split.ts. */}
+            <SplitBar split={split} tones={dues!.tones} format={money} />
           </>
         )}
 
         <div className="space-y-3 border-t border-[var(--border)] pt-4">
           <p className={MICRO}>When it came in</p>
-          {payments.length === 0 ? (
+          {payments.length === 0 && sfuRecCents > 0 ? (
+            <ChartNote>
+              Every dues payment recorded against {seasonName} so far was collected by
+              Campus Rec, so there is nothing the club collected to chart yet.
+            </ChartNote>
+          ) : payments.length === 0 ? (
             <ChartNote>
               No dues have been recorded against {seasonName} yet. The line starts once two
               days of payments exist.
@@ -150,7 +165,7 @@ export function CollectionCharts({
               areaPath={buildRunningAreaPath(points, scale)}
               tone="var(--color-success)"
               noun={['payment', 'payments']}
-              label={`Dues collected for ${seasonName}: ${money(collectedCents)} across ${points.length} days, running total.`}
+              label={`Dues the club collected for ${seasonName}: ${money(collectedCents)} across ${points.length} days, running total.`}
             />
           ) : (
             <ChartNote>

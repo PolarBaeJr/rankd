@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The session file is ciphertext under a Keystore key that never leaves this
+     device, so a copy restored elsewhere could not be read anyway. Leave it out
+     of both, rather than restore a file that reads as signed out. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="session.bin" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="session.bin" />
+    </device-transfer>
+</data-extraction-rules>

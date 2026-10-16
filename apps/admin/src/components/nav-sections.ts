@@ -17,6 +17,7 @@ import {
   FileSignature,
   FileCheck,
   Camera,
+  History,
 } from 'lucide-react';
 import {
   canAccess,
@@ -29,7 +30,7 @@ import {
 // Deep and type-only, NOT the '@badminton/ui' barrel: that loads every
 // component in the package, and this module is imported by tests that must not
 // need a DOM.
-import type { NavEntry } from '@badminton/ui/src/nav-groups';
+import type { NavEntry, NavNest } from '@badminton/ui/src/nav-groups';
 // Deep for the same reason: the registry has no imports of its own.
 import { adminFeatureFor, type FeatureFlags } from '@badminton/shared/src/utils/features';
 
@@ -97,6 +98,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       // Platform configuration, split out of /settings — which stays trainer-level
       // for passkey enrolment and no longer carries any of it.
       { href: '/ratings', label: 'Ratings', icon: Gauge, area: 'ratings' },
+      { href: '/club-changes', label: 'Club changes', icon: History, area: 'changelog' },
       { href: '/accounts', label: 'Accounts', icon: UserCog, area: 'accounts' },
       { href: '/legal', label: 'Legal', icon: Scale, area: 'legal' },
       { href: '/legal/signatures', label: 'Member signatures', icon: FileCheck, area: 'legal' },
@@ -135,6 +137,10 @@ export function openableSections(
 // load rather than quietly dropping a link. nav-layout.test.ts checks that
 // every item appears exactly once.
 //
+// A group can also fold rows under a parent row (`nest`), which the menu draws
+// as one entry that opens. The group's items stay flat and in display order,
+// so NAV_SECTIONS and everything that walks the layout is unaffected.
+//
 // A new destination in a group is one href added to its list.
 const byHref = new Map(NAV_SECTIONS.flatMap((section) => section.items).map((item) => [item.href, item]));
 
@@ -144,18 +150,27 @@ function navItem(href: string): NavItem {
   return item;
 }
 
-const group = (id: string, label: string, hrefs: string[]): NavEntry<NavItem> => ({
-  kind: 'group',
-  group: { id, label, items: hrefs.map(navItem) },
-});
+const group = (id: string, label: string, hrefs: string[], nest?: NavNest[]): NavEntry<NavItem> => {
+  // Checked like the hrefs, so a typo in a nest throws at load as well.
+  for (const n of nest ?? []) [n.parent, ...n.children].forEach(navItem);
+  return {
+    kind: 'group',
+    group: { id, label, items: hrefs.map(navItem), ...(nest ? { nest } : {}) },
+  };
+};
 
 export const NAV_LAYOUT: NavEntry<NavItem>[] = [
   { kind: 'link', item: navItem('/dashboard') },
   group('play', 'Play', ['/sessions', '/matches', '/seasons']),
   group('events', 'Events', ['/tournaments', '/events']),
   group('members', 'Members', ['/players', '/permissions', '/accounts']),
-  group('club', 'Club', ['/announcements', '/fees', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent']),
-  group('system', 'System', ['/ratings', '/audit']),
+  group(
+    'club',
+    'Club',
+    ['/announcements', '/fees', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'],
+    [{ parent: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] }],
+  ),
+  group('system', 'System', ['/ratings', '/club-changes', '/audit']),
   { kind: 'link', item: navItem('/settings') },
 ];
 

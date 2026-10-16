@@ -3,7 +3,6 @@ import { Card } from '@badminton/ui';
 import { formatExpenseCategory, formatOtherIncomeCategory } from '@badminton/shared';
 import {
   buildBars,
-  buildSplit,
   buildRunningAreaPath,
   buildRunningPath,
   buildRunningTotal,
@@ -11,6 +10,7 @@ import {
   type Payment,
 } from '@/lib/charts';
 import type { LedgerRead } from '@/lib/season-income';
+import { DUES_SPLIT_LABELS, buildDuesSplit } from '@/lib/dues-split';
 import type { SeasonExpenses } from '@/lib/season-finance';
 import {
   BarRows,
@@ -265,23 +265,27 @@ export function OtherIncomePanel({
  *
  * The percentages are of that billable total and are printed beside each
  * figure, so nobody has to measure a 6% sliver by eye.
+ *
+ * Dues Campus Rec collected are a third segment when there are any: those members
+ * are paid, but the money is not the club's. See lib/dues-split.ts.
  */
 export function ClubFeePanel({
   season,
   collectedCents,
+  sfuRecCents = 0,
   outstandingCents,
 }: {
   season: PanelSeason | null;
   collectedCents: number | null;
+  /** LedgerRead.collectedBySfuRec off the same dues read as collectedCents. */
+  sfuRecCents?: number;
   outstandingCents: number | null;
 }) {
-  const split =
+  const dues =
     collectedCents === null || outstandingCents === null
       ? null
-      : buildSplit([
-          { label: 'Collected', value: collectedCents },
-          { label: 'Still owed', value: outstandingCents },
-        ]);
+      : buildDuesSplit({ collectedCents, sfuRecCents, outstandingCents });
+  const split = dues?.split ?? null;
 
   return (
     <Card padding={false}>
@@ -301,16 +305,13 @@ export function ClubFeePanel({
             <ChartFigure
               label="Billable this season"
               value={money(split.total)}
-              sub={`${Math.round(split.segments[0]!.pct)}% of the term's dues are in.`}
+              sub={`${Math.round(dues!.paidPct)}% of the term's dues are in.`}
             />
-            {/* Two tones, and they are the two the console already uses for this
-                pair: money in is success, money still owed is the warning tone —
-                the same tone the Fees outstanding stat cell turns above. */}
-            <SplitBar
-              split={split}
-              tones={['var(--color-success)', 'var(--color-warning)']}
-              format={money}
-            />
+            {/* The tones the console already uses for this pair: money in is
+                success, money still owed is the warning tone the Fees
+                outstanding stat cell turns above. Campus Rec money, when there is
+                some, sits between them in the neutral tone. */}
+            <SplitBar split={split} tones={dues!.tones} format={money} />
           </Link>
         )}
       </div>
@@ -332,11 +333,14 @@ export function NetPositionPanel({
   incomeCents,
   expenseCents,
   netCents,
+  collectedBySfuRecCents = 0,
 }: {
   season: PanelSeason | null;
   incomeCents: number;
   expenseCents: number;
   netCents: number;
+  /** SeasonIncome.collectedBySfuRecCents. In neither incomeCents nor netCents. */
+  collectedBySfuRecCents?: number;
 }) {
   const bars = buildBars([
     { label: 'In', cents: incomeCents },
@@ -362,6 +366,18 @@ export function NetPositionPanel({
             <BarRows rows={bars.slice(0, 1)} tone="var(--color-success)" />
             <BarRows rows={bars.slice(1)} tone="var(--color-danger)" />
           </div>
+          {/* Paid fees Campus Rec took rather than the club. Beside the bars, not
+              one of them: it is not money in, so it must not share their scale
+              or read as part of the net. Only when there is some. */}
+          {collectedBySfuRecCents > 0 && (
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-[var(--border)] pt-4">
+              <span className={MICRO}>{DUES_SPLIT_LABELS.sfuRec}</span>
+              <span className="font-mono text-sm font-medium text-[var(--text-secondary)]">
+                {money(collectedBySfuRecCents)}
+              </span>
+              <p className="w-full text-xs text-[var(--text-muted)]">Not counted in In or Net.</p>
+            </div>
+          )}
         </Link>
       ) : (
         <div className="px-4 py-4">

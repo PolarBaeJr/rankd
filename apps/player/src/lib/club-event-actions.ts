@@ -6,6 +6,7 @@ import { ExpectedError, isUuid } from '@badminton/shared';
 import { createServiceRoleClient } from './supabase-server';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 import { assertFeatureOn } from './feature-gate';
+import { loadOwnImportEntry, settleImportEntry, settleRefusal } from './registration-import';
 
 // SIGNING UP FOR A CLUB EVENT (00244). The event id is the only parameter: the
 // member is always the one requirePlayer() resolves, never a POST field. Both
@@ -44,6 +45,31 @@ async function signUpImpl(eventId: string): Promise<void> {
   });
   settle('signUpForClubEvent', data, error);
   revalidateClubEventPaths(eventId);
+}
+
+/**
+ * Confirm a club event sign-up a Google Form response asked for (00283). The
+ * entry id is checked against the signed-in member, and the sign-up itself is
+ * signUpImpl, the member's own path, so the fee trigger and every gate apply.
+ */
+export async function confirmImportedClubEventEntry(entryId: string): Promise<ActionResult> {
+  return runAction(() => confirmImportedClubEventEntryImpl(entryId));
+}
+
+async function confirmImportedClubEventEntryImpl(entryId: string): Promise<void> {
+  if (!isUuid(entryId)) throw new ExpectedError('That entry could not be found.');
+  const player = await requirePlayer();
+  const service = createServiceRoleClient();
+  const entry = await loadOwnImportEntry(service, entryId, player.id);
+  if (!entry.club_event_id) throw new ExpectedError('That entry could not be found.');
+  if (entry.status !== 'awaiting_member') throw new ExpectedError('This entry is no longer waiting for you.');
+
+  let settled = await settleImportEntry(service, entryId, player.id);
+  if (!settled.ok && settled.reason === 'not_entered') {
+    await signUpImpl(entry.club_event_id);
+    settled = await settleImportEntry(service, entryId, player.id);
+  }
+  if (!settled.ok) throw new ExpectedError(settleRefusal(settled));
 }
 
 export async function withdrawFromClubEvent(eventId: string): Promise<ActionResult> {

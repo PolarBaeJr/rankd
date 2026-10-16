@@ -30,6 +30,7 @@ import { settingsForSection } from '@/lib/platform-setting-sections';
 import { withSeededSettings } from '@/lib/platform-setting-fields';
 import { FEATURES, FEATURES_SETTING_KEY, parseFeatureFlags } from '@badminton/shared/src/utils/features';
 import { DataApiKeysCard } from './DataApiKeysCard';
+import { AccountsRail, type AccountsRailSection } from './accounts-rail';
 
 // TWO QUESTIONS, ONE PAGE, AND THEY ARE BOTH CALLED "ACCOUNTS".
 //
@@ -289,7 +290,7 @@ export default async function AccountsPage() {
 
   // The rail lists what is actually on the page, so a withheld section never
   // leaves a link to nothing.
-  const sections: { id: string; label: string; sub: string; badge?: string; tone?: 'success' | 'warning' }[] = [
+  const sections: AccountsRailSection[] = [
     ...(showPlatformSettings
       ? [
           {
@@ -347,29 +348,8 @@ export default async function AccountsPage() {
       />
 
       <div className="grid items-start gap-6 lg:grid-cols-[200px_minmax(0,1fr)] xl:grid-cols-[200px_minmax(0,1fr)_300px]">
-        {/* LEFT — section rail. The same sticky rail /settings uses; its rule in
-            globals.css must not set `display`, so visibility stays on these
-            utilities. */}
-        {/* Guarded on the count, not just on `lg`: a viewer holding neither
-            capability gets no sections at all, and an empty bordered nav is the
-            blank panel that reads as broken. */}
-        <nav
-          className={`settings-rail is-pill gap-1 lg:flex-col lg:sticky lg:self-start ${
-            sections.length > 0 ? 'hidden lg:flex' : 'hidden'
-          }`}
-        >
-          {sections.map((section, index) => (
-            <a key={section.id} href={`#${section.id}`} className={index === 0 ? 'active' : undefined}>
-              <span className="min-w-0">
-                <span className="rail-label block">{section.label}</span>
-                <span className="rail-sub block">{section.sub}</span>
-              </span>
-              {section.badge && (
-                <span className={`rail-badge${section.tone ? ` is-${section.tone}` : ''}`}>{section.badge}</span>
-              )}
-            </a>
-          ))}
-        </nav>
+        {/* LEFT: section rail, client-side so the highlight follows the page. */}
+        <AccountsRail sections={sections} />
 
         {/* MIDDLE */}
         <div className="flex min-w-0 flex-col gap-5">

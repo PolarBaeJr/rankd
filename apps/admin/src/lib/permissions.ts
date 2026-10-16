@@ -156,6 +156,9 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // section. The settings FORM on both is its own area, `platform.page`.
   '/ratings': 'ratings.page',
   '/accounts': 'accounts.page',
+  // Club changes (00286): the draft lines that officer edits write, and the
+  // posting of them. Admin-only: changelog.page is in no baseline.
+  '/club-changes': 'changelog.page',
   // Execs run the roster: approve, edit, ban/unban, varsity notes. Granting
   // exec/admin is NOT part of that — the per-field split lives in
   // ./player-field-access.ts, and destructive actions (remove, merge) ask for

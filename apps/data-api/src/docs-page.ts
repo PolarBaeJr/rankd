@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 // route, scope, query parameter or error code is missing from this page.
 //
 // The CSP allows exactly this one stylesheet by hash, so the page must carry
-// no other <style> block and no style="" attribute.
+// no other <style> block and no style="" attribute. The changelog page
+// (changelog-page.ts) shares the stylesheet and the CSP.
 
 const STYLE = `
 :root { color-scheme: light dark; --bg: #ffffff; --fg: #1b1f24; --mute: #57606a; --line: #d0d7de; --code-bg: #f3f5f7; --accent: #b5121b; }
@@ -35,7 +36,10 @@ nav { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem 1rem; 
 nav ol { margin: 0.25rem 0 0; padding-left: 1.25rem; }
 td code { white-space: nowrap; }
 .note { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 0.9rem; color: var(--mute); }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 0.9em; }
 `;
+
+export const PAGE_STYLE = STYLE;
 
 export const DOCS_STYLE_HASH = `sha256-${createHash('sha256').update(STYLE).digest('base64')}`;
 
@@ -65,7 +69,7 @@ export const DOCS_HTML = `<!doctype html>
 <body>
 <main>
 <h1>Club Ladder Data API</h1>
-<p class="lede">A read-only, key-authenticated JSON feed of pseudonymous ratings, match history, seasons, tournaments and the schedule of the club.</p>
+<p class="lede">A key-authenticated JSON feed of pseudonymous ratings, match history, seasons, tournaments and the schedule of the club, and two writes: head-to-head win predictions, and registrations from the club's own sign-up forms.</p>
 
 <nav aria-label="Contents">
 <strong>Contents</strong>
@@ -79,9 +83,12 @@ export const DOCS_HTML = `<!doctype html>
 <li><a href="#endpoints">Endpoints</a></li>
 <li><a href="#fields">Player fields</a></li>
 <li><a href="#match-fields">Match fields</a></li>
+<li><a href="#predictions">Predictions</a></li>
+<li><a href="#registrations">Registrations</a></li>
 <li><a href="#errors">Errors and status codes</a></li>
 <li><a href="#rate-limits">Rate limits</a></li>
 <li><a href="#versioning">Versioning and stability</a></li>
+<li><a href="#changelog">Changelog</a></li>
 <li><a href="#data-handling">Data handling</a></li>
 <li><a href="#contact">Contact</a></li>
 </ol>
@@ -97,10 +104,10 @@ export const DOCS_HTML = `<!doctype html>
 <tr><th>Environment</th><th>Base URL</th></tr>
 <tr><td>Production</td><td><code>${API}</code></td></tr>
 </table>
-<p>All responses except this page are JSON (<code>application/json; charset=utf-8</code>) and are sent with <code>Cache-Control: no-store</code>. Every timestamp is ISO 8601 UTC to the second, for example <code>2026-10-02T18:30:12Z</code>. Dates without a time (<code>start_date</code>, a session's <code>date</code>) are <code>YYYY-MM-DD</code> in the club's local calendar.</p>
+<p>All responses except this page and <code>/changelog</code> are JSON (<code>application/json; charset=utf-8</code>) and are sent with <code>Cache-Control: no-store</code>. Every timestamp is ISO 8601 UTC to the second, for example <code>2026-10-02T18:30:12Z</code>. Dates without a time (<code>start_date</code>, a session's <code>date</code>) are <code>YYYY-MM-DD</code> in the club's local calendar.</p>
 
 <h2 id="authentication">Authentication</h2>
-<p>Every endpoint except <code>/health</code> and this page needs a key, sent in the <code>Authorization</code> header:</p>
+<p>Every endpoint except <code>/health</code>, this page and <code>/changelog</code> needs a key, sent in the <code>Authorization</code> header:</p>
 <pre><code>Authorization: Bearer clubld_&lt;43 characters&gt;</code></pre>
 <ul>
 <li>A key is <code>clubld_</code> followed by exactly 43 characters from <code>A-Z a-z 0-9 _ -</code>.</li>
@@ -111,7 +118,7 @@ export const DOCS_HTML = `<!doctype html>
 <p><strong>Revocation.</strong> Verification results are cached briefly. A revoked or expired key, or a scope change, takes effect within 30 seconds. A key that was rejected (for example, used a moment before it was minted) keeps being rejected for up to 5 seconds.</p>
 
 <h2 id="scopes">Scopes</h2>
-<p>A key is allowed nothing by default, only the scopes it was granted. One key may carry all six.</p>
+<p>A key is allowed nothing by default, only the scopes it was granted. One key may carry all eight. The six <code>:read</code> scopes only read; <code>predictions:write</code> and <code>registrations:write</code> are the two scopes that write, and no existing key carries either unless an exec adds it.</p>
 <table>
 <tr><th>Scope</th><th>Needed for</th></tr>
 <tr><td><code>players:read</code></td><td><code>/v1/players</code>, <code>/v1/players/:ref</code></td></tr>
@@ -120,6 +127,8 @@ export const DOCS_HTML = `<!doctype html>
 <tr><td><code>seasons:read</code></td><td><code>/v1/seasons</code>, <code>/v1/seasons/:id</code>, <code>/v1/seasons/:id/standings</code></td></tr>
 <tr><td><code>tournaments:read</code></td><td><code>/v1/tournaments</code>, <code>/v1/tournaments/:id</code>, <code>/v1/tournaments/:id/events/:event_id</code></td></tr>
 <tr><td><code>schedule:read</code></td><td><code>/v1/sessions</code>, <code>/v1/events</code></td></tr>
+<tr><td><code>predictions:write</code></td><td><code>POST /v1/predictions</code>, <code>DELETE /v1/predictions</code></td></tr>
+<tr><td><code>registrations:write</code></td><td><code>POST /v1/registrations</code>. For the club's own form script, not for outside consumers.</td></tr>
 </table>
 <p>A valid key without the needed scope gets <code>403</code>.</p>
 
@@ -155,12 +164,12 @@ export const DOCS_HTML = `<!doctype html>
 <p><strong>Syncing.</strong> To keep a copy up to date, page <code>/v1/matches?status=all&amp;updated_since=&lt;last seen&gt;</code>, which is ordered by <code>updated_at</code> oldest first, and store the largest <code>updated_at</code> you received. A match that was voided, corrected or re-entered comes back with a newer <code>updated_at</code>. A match that stops being published (a player opted out, a season was hidden) does <strong>not</strong> come back; rebuild from scratch periodically to drop those.</p>
 
 <h2 id="endpoints">Endpoints</h2>
-<p>Every endpoint answers <code>GET</code> only; any other method, including <code>HEAD</code>, gets <code>405</code>. (This page also answers <code>HEAD</code>.) In the examples, <code>$K</code> holds your key.</p>
+<p>Every endpoint answers <code>GET</code> only, except <code>/v1/predictions</code>, which answers <code>POST</code> and <code>DELETE</code> only, and <code>/v1/registrations</code>, which answers <code>POST</code> only. Any other method, including <code>HEAD</code>, gets <code>405</code>. (This page and <code>/changelog</code> also answer <code>HEAD</code>.) In the examples, <code>$K</code> holds your key.</p>
 
 <h3 id="health">GET /health</h3>
 <p>No key. For uptime checks. <code>version</code> is the service's release version.</p>
 <pre><code>curl -s ${API}/health</code></pre>
-<pre><code>{ "ok": true, "version": "0.1.0" }</code></pre>
+<pre><code>{ "ok": true, "version": "0.3.1" }</code></pre>
 
 <h3 id="players">GET /v1/players</h3>
 <p>Requires <code>players:read</code>. Every player on the roster, one object each, with their <strong>lifetime</strong> ratings and counters.</p>
@@ -347,8 +356,33 @@ export const DOCS_HTML = `<!doctype html>
 <p>Require <code>schedule:read</code>. Club sessions and club events that start in a window, soonest first. Parameters: <code>from</code> and <code>to</code>. With neither, the window is the next 30 days; with one, the window is 30 days on its other side. <code>to</code> must be after <code>from</code> and the window at most 366 days, or it is a <code>400</code> naming <code>to</code>. The envelope echoes <code>from</code> and <code>to</code>.</p>
 <p>A session has <code>id</code>, <code>name</code>, <code>season</code>, <code>date</code>, <code>starts_at</code>, <code>ends_at</code>, <code>location</code>, <code>status</code>, <code>track</code>, <code>require_scan_to_check_in</code> and <code>counts</code> (<code>rsvp_going</code>, <code>attended</code>). An event has <code>id</code>, <code>title</code>, <code>kind</code>, <code>location</code>, <code>starts_at</code>, <code>ends_at</code>, <code>status</code> (<code>published</code> or <code>cancelled</code>), <code>cancelled_at</code>, <code>capacity</code>, <code>cost_cents</code>, <code>signup_opens_at</code>, <code>signup_closes_at</code> and <code>counts</code> (<code>signups</code>). Only counts are served: never who is going, who attended or who signed up.</p>
 
+<h3 id="post-predictions">POST /v1/predictions</h3>
+<p>Requires <code>predictions:write</code>. Stores head-to-head win predictions; see <a href="#predictions">Predictions</a> for what they are and how members see them. The body is JSON (<code>Content-Type: application/json</code>, at most 64 KiB): <code>{ "predictions": [ ... ] }</code> with 1 to 100 items, or one item on its own.</p>
+<pre><code>curl -X POST -H "Authorization: Bearer $K" -H "Content-Type: application/json" \\
+  -d '{"predictions":[{"format":"doubles","side_a":["&lt;ref&gt;","&lt;ref&gt;"],"side_b":["&lt;ref&gt;","&lt;ref&gt;"],"probability":0.64,"model":"elo-v3","made_at":"2026-10-08T18:00:00Z"}]}' \\
+  ${API}/v1/predictions</code></pre>
+<p>Each item has exactly these fields: <code>format</code> (<code>singles</code> or <code>doubles</code>), <code>side_a</code> and <code>side_b</code> (one <code>player_ref</code> each for singles, two for doubles, no player twice), <code>probability</code> (side A's chance of winning, a number from 0 to 1), <code>model</code> (1 to 64 characters from <code>A-Z a-z 0-9</code>, space and <code>. _ : + -</code>) and <code>made_at</code> (UTC, ending in <code>Z</code>, not more than 5 minutes ahead of the server clock).</p>
+<pre><code>{ "results": [ { "index": 0, "status": "created" }, { "index": 1, "status": "refused", "reason": "player" } ],
+  "created": 1, "replaced": 0, "refused": 1 }</code></pre>
+<p>Each item is <code>created</code>, <code>replaced</code> (you had already predicted that matchup) or <code>refused</code>. The response is <code>200</code> when nothing was refused and <code>422</code>, with the same body, when anything was. <code>reason</code> <code>player</code> means a ref is unknown to you or names a member who is not published; it deliberately does not say which. A malformed body is a <code>400</code> naming the <code>field</code>, for example <code>predictions[3].side_b</code>, and nothing in it is stored.</p>
+
+<h3 id="delete-predictions">DELETE /v1/predictions</h3>
+<p>Requires <code>predictions:write</code>. Removes your own predictions by matchup: <code>{ "matchups": [ { "format", "side_a", "side_b" } ] }</code>, 1 to 100 items, sides in either order. Each item is <code>deleted</code> or <code>not_found</code>, with <code>deleted</code>, <code>not_found</code> and <code>refused</code> counts. A ref that names nobody you can see is <code>not_found</code>.</p>
+
+<h3 id="post-registrations">POST /v1/registrations</h3>
+<p>Requires <code>registrations:write</code>. Delivers one response from a Google Form an exec has bound to a tournament or a club event; see <a href="#registrations">Registrations</a>. The body is JSON, at most 64 KiB: <code>{ "form_id", "response_id", "submitted_at"?, "email", "name", "entries"? }</code>, where each of up to 20 <code>entries</code> is <code>{ "event_id", "partner_email"?, "partner_name"?, "category"? }</code>. A club event form sends no entries.</p>
+<pre><code>curl -s -X POST -H "Authorization: Bearer $K" -H 'Content-Type: application/json' \\
+  -d '{"form_id":"&lt;form id&gt;","response_id":"&lt;response id&gt;","email":"&lt;email&gt;","name":"&lt;name&gt;","entries":[{"event_id":"&lt;event id&gt;","partner_name":"&lt;name&gt;"}]}' \\
+  ${API}/v1/registrations</code></pre>
+<pre><code>{ "replayed": false, "entered": 1, "pending": 0, "refused": 0,
+  "results": [ { "index": 1, "event_id": "&lt;event id&gt;", "status": "entered", "reason": null } ] }</code></pre>
+<p>Each entry is <code>entered</code>, <code>pending</code> (a member must confirm it in the club app, a partner has not answered yet, or an exec must look at it) or <code>refused</code>. A refusal's <code>reason</code> is only ever about the event: <code>event_full</code>, <code>waitlist_queue</code>, <code>registration_closed</code>, <code>registration_not_open</code>, <code>registration_window_closed</code>, <code>event_not_in_target</code> or <code>duplicate_in_submission</code>. Nothing in the answer says whether an email belongs to a member. Sending the same response again answers from the record with <code>replayed: true</code>; an edited response replaces the earlier one. A form with no active binding for your key is a <code>404</code>, and a malformed body a <code>400</code> naming the <code>field</code>.</p>
+
 <h3 id="documentations">GET /documentations</h3>
 <p>This page. No key. Also served at <code>/documentations/</code>.</p>
+
+<h3 id="changelog">GET /changelog</h3>
+<p>What changed in each version of this API. No key. Also served at <code>/changelog/</code>.</p>
 
 <h2 id="fields">Player fields</h2>
 <table>
@@ -382,35 +416,55 @@ export const DOCS_HTML = `<!doctype html>
 <tr><td><code>tournament</code></td><td><code>null</code> for a club match; otherwise <code>{ id, event_id, event_type, round_number, round_name, phase, is_third_place, stage, match_label, handicap_a, handicap_b }</code>. The last four describe a staged event's match (<code>null</code>, and <code>0</code> for the handicaps, elsewhere); the games include the head starts.</td></tr>
 </table>
 
+<h2 id="predictions">Predictions</h2>
+<ul>
+<li><strong>A matchup is two unordered sides.</strong> Sending A and B against C and D is the same matchup as D and C against B and A. A prediction for a matchup you already predicted replaces the earlier one, and <code>probability</code> is always the chance of the side you sent as <code>side_a</code>, so swap it to <code>1 - p</code> if you swap the sides.</li>
+<li><strong>Only published players.</strong> Every ref must name a member who passes the history test above. A member who later opts out or asks for deletion disappears from every prediction at once, and their predictions are erased when their account is.</li>
+<li><strong>Predictions never change ratings.</strong> Nothing that rates a match or builds a statistic reads them. A member may be shown a prediction in the club app only for a challenge they play in, labelled as a prediction, with the <code>model</code> name and <code>made_at</code>, but never which consumer made it. When two consumers predict the same matchup, members see the newer one.</li>
+<li><strong>One request, whatever the batch.</strong> A batch of 100 spends one unit of the key's rate budget. Writes are never served from the read cache.</li>
+<li>Every write and delete is recorded against the key, with counts and no players.</li>
+</ul>
+
+<h2 id="registrations">Registrations</h2>
+<ul>
+<li><strong>The club's own forms only.</strong> An exec binds a Google Form to one tournament or club event in the admin console, against the key the form's script uses. A response for any other form is a <code>404</code>.</li>
+<li><strong>Members confirm their own entries.</strong> A response from a member's email never enters them. It leaves an entry waiting in the club app, and the member confirms it there, where the usual rules and fees apply.</li>
+<li><strong>Non-members enter only events open to them.</strong> They are entered at once, owe the fee as a named entry, and are sent the guest waiver once that feature is on. Doubles teams of two non-members are entered as one team.</li>
+<li><strong>Nothing is logged.</strong> The body carries a typed name and email; the service never writes it to its log, and the club's record of each import names no email.</li>
+</ul>
+
 <h2 id="errors">Errors and status codes</h2>
-<p>Every error is a JSON object with an <code>error</code> string. A <code>403</code> also carries a <code>detail</code> string, and a <code>400</code> a <code>parameter</code> string.</p>
+<p>Every error is a JSON object with an <code>error</code> string. A <code>403</code> also carries a <code>detail</code> string, and a <code>400</code> a <code>parameter</code> string, or on <code>/v1/predictions</code> and <code>/v1/registrations</code> a <code>field</code> string.</p>
 <pre><code>{ "error": "forbidden", "detail": "this key does not carry players:read" }
 { "error": "bad_request", "parameter": "since" }</code></pre>
 <table>
 <tr><th>Status</th><th><code>error</code></th><th>When</th></tr>
 <tr><td><code>200</code></td><td></td><td>Success.</td></tr>
-<tr><td><code>400</code></td><td><code>bad_request</code></td><td>A query parameter the route does not take, a repeated one, or a value that does not parse. <code>parameter</code> names it.</td></tr>
-<tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Key missing, malformed, unknown, expired or revoked. Deliberately identical in all five cases, with a <code>WWW-Authenticate: Bearer</code> header.</td></tr>
+<tr><td><code>400</code></td><td><code>bad_request</code></td><td>A query parameter the route does not take, a repeated one, or a value that does not parse. <code>parameter</code> names it. On <code>/v1/predictions</code> and <code>/v1/registrations</code>, a body that is not valid JSON or not the documented shape; <code>field</code> names it.</td></tr>
+<tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Key missing, malformed, unknown, expired or revoked. Deliberately identical in all five cases, with a <code>WWW-Authenticate: Bearer</code> header. A write is also refused this way when the key was revoked or lost its write scope in the last 30 seconds.</td></tr>
 <tr><td><code>403</code></td><td><code>forbidden</code></td><td>Valid key without the scope this endpoint needs.</td></tr>
-<tr><td><code>404</code></td><td><code>not_found</code></td><td>No such route, or a ref or id in the path that is malformed, unknown or not published to you.</td></tr>
-<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method other than <code>GET</code> on an existing route (other than <code>GET</code> or <code>HEAD</code> on this page). The <code>Allow</code> header lists what is accepted.</td></tr>
+<tr><td><code>404</code></td><td><code>not_found</code></td><td>No such route, or a ref or id in the path that is malformed, unknown or not published to you. On <code>/v1/registrations</code>, a form with no active binding for your key.</td></tr>
+<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method the route does not answer: anything but <code>GET</code> on a read route, anything but <code>POST</code> or <code>DELETE</code> on <code>/v1/predictions</code>, anything but <code>POST</code> on <code>/v1/registrations</code>, and anything but <code>GET</code> or <code>HEAD</code> on this page and <code>/changelog</code>. The <code>Allow</code> header lists what is accepted.</td></tr>
+<tr><td><code>413</code></td><td><code>payload_too_large</code></td><td>A write body over 64 KiB.</td></tr>
+<tr><td><code>415</code></td><td><code>unsupported_media_type</code></td><td>A write body not sent as <code>Content-Type: application/json</code>.</td></tr>
+<tr><td><code>422</code></td><td></td><td>A write where at least one item was refused. The body is the usual results, not an error object.</td></tr>
 <tr><td><code>429</code></td><td><code>rate_limited</code></td><td>A rate limit was hit. The <code>Retry-After</code> header gives whole seconds to wait.</td></tr>
 <tr><td><code>503</code></td><td><code>unavailable</code></td><td>The club's database could not be reached or answered with an error. Retry later with backoff.</td></tr>
 </table>
-<p>Checks run in this order: route (<code>404</code>), method (<code>405</code>), key (<code>401</code>, or <code>429</code> from the per-address limit below), per-key rate (<code>429</code>), scope (<code>403</code>), query parameters (<code>400</code>), then the refs and ids in the path (<code>404</code>). So a request without a valid key never learns whether a ref exists, and a request refused for scope or parameters still spends one unit of the key's rate budget.</p>
+<p>Checks run in this order: route (<code>404</code>), method (<code>405</code>), key (<code>401</code>, or <code>429</code> from the per-address limit below), per-key rate (<code>429</code>), scope (<code>403</code>), query parameters (<code>400</code>), then the refs and ids in the path (<code>404</code>), and for a write the body (<code>415</code>, <code>413</code>, <code>400</code>). So a request without a valid key never learns whether a ref exists, and a request refused for scope or parameters still spends one unit of the key's rate budget.</p>
 
 <h2 id="rate-limits">Rate limits</h2>
 <ul>
 <li><strong>Per key: 60 requests per minute.</strong> A token bucket holding 60, refilling at one per second, so a burst of 60 is allowed and then one request per second.</li>
 <li><strong>Per client address: 30 failed key lookups per minute.</strong> Every <code>401</code> spends one, including a missing or malformed header. When the budget is empty, a well-formed key that the server has not checked recently gets <code>429</code> instead of being looked up. A missing or malformed header still gets <code>401</code>, as does a key rejected in the last 5 seconds, and a key verified in the last 30 seconds is not affected by this limit.</li>
-<li><code>/health</code> and this page are not rate-limited by key.</li>
+<li><code>/health</code>, this page and <code>/changelog</code> are not rate-limited by key.</li>
 <li>The limits are enforced per server process, and the club's network edge applies its own limits in front of them. Do not rely on the exact figures; honour <code>Retry-After</code>.</li>
 </ul>
 <p>The data changes slowly. Pull the roster on a schedule measured in hours, and keep match history in sync with <code>updated_since</code> rather than re-reading it.</p>
-<p>Responses may be up to 15 seconds old: the server reuses a recent answer to the same request rather than asking the database again. <code>generated_at</code> is when the response was sent, not when the data was read.</p>
+<p>Responses may be up to 60 seconds old: the server reuses a recent answer to the same request from the same consumer rather than asking the database again. The roster, matches, ratings and seasons may be up to 60 seconds old; tournaments, sessions and club events up to 30 seconds. A registration import refreshes that consumer's tournament entrant lists and event signups at once. A member's opt-out or deletion request reaches the feed within the same 60 seconds. <code>generated_at</code> is when the response was sent, not when the data was read.</p>
 
 <h2 id="versioning">Versioning and stability</h2>
-<p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version.</p>
+<p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version. See the <a href="/changelog">changelog</a> for what changed in each version.</p>
 
 <h2 id="data-handling">Data handling</h2>
 <p>This is real data about real people, shared under a named key that identifies who received it.</p>
@@ -423,6 +477,7 @@ export const DOCS_HTML = `<!doctype html>
 
 <h2 id="contact">Contact</h2>
 <p>For a key, a scope change, a leaked key or a question about the data, contact the club exec, for example through the club Discord at <a href="https://discord.example.com">discord.example.com</a>.</p>
+<footer><a href="/changelog">Changelog</a> · <a href="https://example.com/">Club Ladder</a></footer>
 </main>
 </body>
 </html>

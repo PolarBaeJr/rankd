@@ -55,7 +55,12 @@
         // (multi-select.test.tsx and select.test.tsx pin lines in the
         // components), and packages/ui is outside the admin package, so a ui
         // edit changed no hash and those tests replayed a cached PASS.
-        "$TURBO_ROOT$/packages/ui/src/**"
+        "$TURBO_ROOT$/packages/ui/src/**",
+        // registration-form-mapping.test.ts runs the Apps Script and the Data
+        // API's registration shape check against the console's builder; both
+        // live outside the admin package.
+        "$TURBO_ROOT$/integrations/google-forms/**",
+        "$TURBO_ROOT$/apps/data-api/src/registrations.ts"
       ]
     },
     "lint": {},

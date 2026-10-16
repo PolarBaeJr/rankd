@@ -40,9 +40,20 @@ const read = (...parts: string[]) => readFileSync(join(APP, 'src', ...parts), 'u
 
 describe('the receipt wiring', () => {
   it('stores the method on every insert', () => {
+    // The insert lives in the core both doors (the Membership page and Discord
+    // /receipt) file through.
+    const core = read('lib', 'fee-submission-core.ts');
+    const insert = core.slice(core.indexOf(".from('fee_submissions').insert("));
+    expect(insert.slice(0, insert.indexOf('});'))).toContain('method: checked.method,');
+  });
+
+  it('files every receipt through the shared core, never a second insert', () => {
     const action = read('lib', 'actions', 'fee-submissions.ts');
-    const insert = action.slice(action.indexOf(".from('fee_submissions').insert("));
-    expect(insert.slice(0, insert.indexOf('});'))).toContain('method,');
+    const discord = read('app', 'api', 'discord', 'receipts', 'route.ts');
+    for (const source of [action, discord]) {
+      expect(source).toContain('fileFeeSubmission(');
+      expect(source).not.toContain(".from('fee_submissions')");
+    }
   });
 
   it('gates the form on canUploadReceipt, not on the e-transfer address alone', () => {

@@ -1,0 +1,6 @@
+# The Dockerfile builds on rust:1.99.0-alpine; keep the two in step.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+targets = ["aarch64-unknown-linux-musl"]
+profile = "minimal"

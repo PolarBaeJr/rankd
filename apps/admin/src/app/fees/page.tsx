@@ -395,6 +395,9 @@ export default async function FeesPage({
   // rows worth $0, so they are in this set and add no money: matching the club's
   // one dues figure is worth more than a slightly tidier payment count, and the
   // strip above already says how many were waived.
+  //
+  // `method` is in the select above, so the fold also sets aside the dues
+  // Campus Rec collected (collectedBySfuRec), exactly as getClubFeeLedger does.
   const collected = showFeeTable ? foldLedgerRows(fees.filter((f) => f.paid_at)) : null;
   // Not offered for a closed term. See the note on `outstandingCents` in
   // ./collection-charts.tsx: the figure is priced from TODAY's roster, which is
@@ -621,6 +624,7 @@ export default async function FeesPage({
           seasonName={season.name}
           isPast={isPast}
           collectedCents={collected.total}
+          sfuRecCents={collected.collectedBySfuRec}
           outstandingCents={outstandingCents}
           payments={collected.payments}
         />

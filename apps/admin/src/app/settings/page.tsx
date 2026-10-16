@@ -5,6 +5,7 @@ import { AvatarChip, Badge, Card, PageHeader } from '@badminton/ui';
 import { accessLevelFor } from '@/lib/permissions';
 import { accessForLevel, EXEC_ROLE_OPTIONS } from '@/lib/console-access';
 import { consolePasskeyGrace, graceDaysText } from '@/lib/passkey/grace';
+import { memberAppUrl } from '@/lib/player-url';
 import { PasskeySection } from './passkey-section';
 import { SignOutOtherDevices } from './sign-out-other-devices';
 
@@ -169,9 +170,17 @@ export default async function SettingsPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-[var(--line)] px-6 py-4">
         <span className="text-[14px] text-[var(--ink-2)]">Club Ladder console</span>
-        <span className="rounded-full border border-[var(--line)] px-2.5 py-0.5 font-mono text-[12px] text-[var(--mute)]">
-          v{process.env.NEXT_PUBLIC_APP_VERSION}
-        </span>
+        <div className="flex items-center gap-3">
+          <a
+            href={memberAppUrl('/whats-new')}
+            className="text-[13px] text-[var(--mute)] underline-offset-2 hover:text-[var(--ink)] hover:underline"
+          >
+            What&apos;s new
+          </a>
+          <span className="rounded-full border border-[var(--line)] px-2.5 py-0.5 font-mono text-[12px] text-[var(--mute)]">
+            v{process.env.NEXT_PUBLIC_APP_VERSION}
+          </span>
+        </div>
       </div>
     </div>
   );

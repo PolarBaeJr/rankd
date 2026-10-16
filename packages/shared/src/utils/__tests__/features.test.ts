@@ -20,9 +20,10 @@ import {
 // explicit `true` switches it on.
 
 describe('the defaults', () => {
-  it('has guest waivers off and every other feature on', () => {
+  it('has guest waivers and predictions off and every other feature on', () => {
     expect(DEFAULT_FEATURE_FLAGS.guest_waivers).toBe(false);
-    for (const f of FEATURES.filter((f) => f.id !== 'guest_waivers')) {
+    expect(DEFAULT_FEATURE_FLAGS.predictions).toBe(false);
+    for (const f of FEATURES.filter((f) => f.id !== 'guest_waivers' && f.id !== 'predictions')) {
       expect(DEFAULT_FEATURE_FLAGS[f.id], f.id).toBe(true);
     }
   });

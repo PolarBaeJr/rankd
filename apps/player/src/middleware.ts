@@ -203,7 +203,12 @@ export const config = {
   //
   // tesseract/ is static OCR code and data for the e-transfer form on
   // /membership: several megabytes a session lookup would only slow down.
+  //
+  // .well-known/ is the native app's trust files (assetlinks.json and
+  // apple-app-site-association). Android and Apple fetch them anonymously and
+  // follow no redirect, and they need no session lookup. The dot is escaped in
+  // the pattern: unescaped it would match any character.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|qr/|tesseract/|api/health/|api/discord/card/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|qr/|tesseract/|api/health/|api/discord/card/|\\.well-known/).*)',
   ],
 };

@@ -134,6 +134,8 @@ export async function updatePlatformSettings(
   }
 
   for (const update of checked) {
+    // Club changes (00286) draft a line from this write: its trigger records only
+    // a write that sets updated_by and moves updated_at. Keep both.
     const row = {
       value: update.value,
       updated_by: admin.id,

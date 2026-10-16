@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getSeasonIncome } from '../season-income';
+import { foldLedgerRows, getSeasonIncome } from '../season-income';
 
 // THE TABLES THAT NO LONGER EXIST.
 //
@@ -34,7 +34,7 @@ const RETIRED = [
 // read that forgets `.eq('direction', 'income')` gets the expenses too, and the
 // club's income figure silently grows by everything it spent. The fake models
 // that rather than hiding it: no filter means the whole table comes back.
-type Row = { amount_cents: number | null };
+type Row = { amount_cents: number | null; paid_at?: string | null; method?: string | null };
 
 function makeClient(rows: {
   dues?: Row[];
@@ -44,7 +44,7 @@ function makeClient(rows: {
   income?: Row[];
   expense?: Row[];
 }) {
-  const calls: { table: string; filters: string[] }[] = [];
+  const calls: { table: string; filters: string[]; columns: string }[] = [];
   return {
     calls,
     from(table: string) {
@@ -54,12 +54,12 @@ function makeClient(rows: {
             'so reading both is how every payment gets counted twice.',
         );
       }
-      const entry = { table, filters: [] as string[] };
+      const entry = { table, filters: [] as string[], columns: '' };
       calls.push(entry);
       let feeType: string | null = null;
       let direction: string | null = null;
       const chain: Record<string, unknown> = {
-        select: () => chain,
+        select: (columns: string) => { entry.columns = columns; return chain; },
         eq: (col: string, val: unknown) => {
           if (col === 'fee_type') feeType = String(val);
           if (col === 'direction') direction = String(val);
@@ -266,5 +266,123 @@ describe('getSeasonIncome', () => {
     for (const call of client.calls) {
       expect(call.filters.some((f) => f.includes('paid_at='))).toBe(false);
     }
+  });
+});
+
+// MONEY CAMPUS REC COLLECTED IS NOT THE CLUB'S INCOME. A fee paid on the Campus Rec
+// website (method 'sfu_rec') is still a paid fee; only the money went to
+// Campus Rec rather than to the club. So the fold sets those rows aside: out of the
+// total, out of the dated payments and out of the categories, and into a figure
+// of their own.
+describe('foldLedgerRows and money Campus Rec collected', () => {
+  const PAID = '2026-09-02T18:00:00Z';
+
+  it('sets Campus Rec rows aside from the total, the payments and the categories', () => {
+    const read = foldLedgerRows([
+      { amount_cents: 5000, paid_at: PAID, method: 'e_transfer', category: 'dues' },
+      { amount_cents: 1500, paid_at: PAID, method: 'cash', category: 'dues' },
+      { amount_cents: 4000, paid_at: PAID, method: 'sfu_rec', category: 'dues' },
+    ]);
+    expect(read.total).toBe(6500);
+    expect(read.collectedBySfuRec).toBe(4000);
+    expect(read.payments.map((p) => p.cents)).toEqual([5000, 1500]);
+    // The parts still add up to the whole they sit beside.
+    expect(read.byCategory).toEqual([{ category: 'dues', cents: 6500 }]);
+  });
+
+  // The curve's last point has to BE the figure printed beside it. Excluding
+  // Campus Rec from the total but not from the payments would break exactly that.
+  it('keeps the dated payments summing to the total', () => {
+    const read = foldLedgerRows([
+      { amount_cents: 2500, paid_at: PAID, method: 'online_portal' },
+      { amount_cents: 4000, paid_at: PAID, method: 'sfu_rec' },
+      { amount_cents: 1000, paid_at: PAID, method: null },
+    ]);
+    expect(read.payments.reduce((n, p) => n + p.cents, 0)).toBe(read.total);
+    expect(read.total).toBe(3500);
+  });
+
+  // A waiver is a paid row worth $0 with method 'waived'. It was club money
+  // worth nothing before this change and it still is: in the payments, adding
+  // nothing, and never mistaken for Campus Rec money.
+  it('leaves a waived row exactly as it was', () => {
+    const read = foldLedgerRows([
+      { amount_cents: 0, paid_at: PAID, method: 'waived' },
+      { amount_cents: 5000, paid_at: PAID, method: 'e_transfer' },
+    ]);
+    expect(read.total).toBe(5000);
+    expect(read.collectedBySfuRec).toBe(0);
+    expect(read.payments).toEqual([
+      { at: PAID, cents: 0 },
+      { at: PAID, cents: 5000 },
+    ]);
+  });
+
+  // THE EXACT-MATCH DECISION, pinned. Only the fixed option moves money out of
+  // the club's income. A method typed by hand, including one that reads like
+  // Campus Rec (rows from before the fixed list, or the Custom box), stays club
+  // money: a guess must never shrink the club's figure.
+  it('counts a hand-typed "Campus Rec" method as club money', () => {
+    const read = foldLedgerRows([
+      { amount_cents: 4000, paid_at: PAID, method: 'Campus Rec' },
+      { amount_cents: 4000, paid_at: PAID, method: 'Campus Rec website' },
+      { amount_cents: 4000, paid_at: PAID, method: 'CAMPUS REC' },
+    ]);
+    expect(read.total).toBe(12000);
+    expect(read.collectedBySfuRec).toBe(0);
+  });
+
+  // club_ledger has no method column, so its reads never carry one.
+  it('is zero for a ledger read without a method column', () => {
+    const read = foldLedgerRows([{ amount_cents: 15000, paid_at: PAID, category: 'grant' }]);
+    expect(read.total).toBe(15000);
+    expect(read.collectedBySfuRec).toBe(0);
+  });
+});
+
+describe('getSeasonIncome and money Campus Rec collected', () => {
+  it('keeps Campus Rec dues out of the club figures and reports them on their own', async () => {
+    const client = makeClient({
+      dues: [
+        { amount_cents: 5000, paid_at: '2026-09-02T18:00:00Z', method: 'e_transfer' },
+        { amount_cents: 5000, paid_at: '2026-09-03T18:00:00Z', method: 'sfu_rec' },
+      ],
+      income: [{ amount_cents: 3000, paid_at: '2026-09-04T18:00:00Z' }],
+    });
+    const income = await getSeasonIncome(client as never, SEASON);
+
+    expect(income.clubCents).toBe(5000);
+    expect(income.totalCents).toBe(8000);
+    expect(income.collectedBySfuRecCents).toBe(5000);
+    expect(income.payments.map((p) => p.cents).sort()).toEqual([3000, 5000]);
+  });
+
+  // Dues are the usual case, but nothing stops an exec picking the option on an
+  // entry fee or a reinstatement, and the figure is "every paid fee Campus Rec
+  // took", not "dues Campus Rec took".
+  it('adds Campus Rec money from every fee kind into the one figure', async () => {
+    const client = makeClient({
+      dues: [{ amount_cents: 4000, method: 'sfu_rec' }],
+      tournament: [{ amount_cents: 1500, method: 'sfu_rec' }, { amount_cents: 1500, method: 'cash' }],
+      reinstatement: [{ amount_cents: 2000, method: 'sfu_rec' }],
+      event: [{ amount_cents: 1000, method: 'sfu_rec' }],
+    });
+    const income = await getSeasonIncome(client as never, SEASON);
+
+    expect(income.collectedBySfuRecCents).toBe(8500);
+    expect(income.totalCents).toBe(1500);
+    expect(income.tournamentCents).toBe(1500);
+    expect(income.clubCents + income.reinstatementCents + income.eventCents).toBe(0);
+  });
+
+  // The split is only as good as the column being there to split on. A fee read
+  // that stopped selecting method would silently count Campus Rec money as the
+  // club's again, so every club_fees read is asked for it by name.
+  it('selects the payment method on every fee read', async () => {
+    const client = makeClient({});
+    await getSeasonIncome(client as never, SEASON);
+    const feeReads = client.calls.filter((c) => c.table === 'club_fees');
+    expect(feeReads).toHaveLength(4);
+    for (const read of feeReads) expect(read.columns.split(',').map((c) => c.trim())).toContain('method');
   });
 });

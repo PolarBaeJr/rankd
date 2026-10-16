@@ -593,6 +593,7 @@ export default async function DashboardPage({
   const seasonIncomeCents = finances?.income.totalCents ?? 0;
   const seasonExpenseCents = finances?.expenseCents ?? 0;
   const seasonNetCents = finances?.netCents ?? 0;
+  const seasonSfuRecCents = finances?.income.collectedBySfuRecCents ?? 0;
 
   // 00132. The same predicate /players uses for its Needs Attention tab, so the
   // band and the queue it links to can never disagree about how many people are
@@ -1206,6 +1207,7 @@ export default async function DashboardPage({
                   incomeCents={seasonIncomeCents}
                   expenseCents={seasonExpenseCents}
                   netCents={seasonNetCents}
+                  collectedBySfuRecCents={seasonSfuRecCents}
                 />
               )}
 
@@ -1220,6 +1222,7 @@ export default async function DashboardPage({
                 <ClubFeePanel
                   season={season && { id: season.id, name: season.name }}
                   collectedCents={ledgers?.clubFees?.total ?? null}
+                  sfuRecCents={ledgers?.clubFees?.collectedBySfuRec ?? 0}
                   outstandingCents={outstandingCents}
                 />
               )}

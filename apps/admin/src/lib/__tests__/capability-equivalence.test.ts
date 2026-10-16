@@ -353,6 +353,11 @@ const TODAY: Row[] = [
   { capability: 'platform.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — the form on ratings/page.tsx and accounts/page.tsx' },
   { capability: 'platform.settings.write',            admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:14' },
 
+  // ---- changelog -------------------------------------------------------
+  // Club changes. No predecessor: the page and the posting are new in 00286.
+  { capability: 'changelog.page',                     admin: T, exec: F, trainer: F, was: 'no prior gate: the Club changes page is new in 00286' },
+  { capability: 'changelog.post.write',               admin: T, exec: F, trainer: F, was: 'no prior gate: posting club changes is new in 00286' },
+
   // ---- page --------------------------------------------------------------
   // THE KEYS TO SWITCHED-OFF FEATURES, and the rows where this table's columns
   // and the gate they replaced deliberately part. For the one commit these
@@ -374,6 +379,7 @@ const TODAY: Row[] = [
   { capability: 'page.access.membership',             admin: T, exec: F, trainer: F, was: 'no prior gate: the membership switch is new in 00247' },
   { capability: 'page.access.socials',                admin: T, exec: F, trainer: F, was: 'no prior gate: the socials switch is new in 00247' },
   { capability: 'page.access.guest_waivers',          admin: T, exec: F, trainer: F, was: 'no prior gate: the guest waivers switch is new in 00254' },
+  { capability: 'page.access.predictions',            admin: T, exec: F, trainer: F, was: 'no prior gate: the predictions switch is new in 00282' },
 ];
 
 describe('capability equivalence — nobody gained anything', () => {

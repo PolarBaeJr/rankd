@@ -9,6 +9,10 @@ import type { Upstream } from './upstream.js';
 // a guesser repeating one wrong key does not become one database read per
 // request. An upstream FAILURE is never cached: a database blip must surface as
 // a 503, not as five seconds of 401s for keys that are perfectly valid.
+//
+// SINGLE FLIGHT: concurrent requests on one uncached key share one
+// data_api_verify_key call, and its result fills the cache once. A failure is
+// shared by the requests that were waiting on it and kept by nobody.
 
 export const POSITIVE_TTL_MS = 30_000;
 export const NEGATIVE_TTL_MS = 5_000;
@@ -32,6 +36,7 @@ export type BearerResult =
 
 export class KeyVerifier {
   private readonly cache = new Map<string, Entry>();
+  private readonly inFlight = new Map<string, Promise<VerifiedKey | null>>();
 
   constructor(
     private readonly upstream: Upstream,
@@ -54,8 +59,18 @@ export class KeyVerifier {
     return { kind: 'uncached', hash };
   }
 
-  /** Asks the database. Throws UpstreamError on failure, uncached. */
-  async verify(hash: string): Promise<VerifiedKey | null> {
+  /** Asks the database, or joins the call already asking. Throws UpstreamError on failure, uncached. */
+  verify(hash: string): Promise<VerifiedKey | null> {
+    const pending = this.inFlight.get(hash);
+    if (pending) return pending;
+    const lookup = this.lookup(hash).finally(() => {
+      if (this.inFlight.get(hash) === lookup) this.inFlight.delete(hash);
+    });
+    this.inFlight.set(hash, lookup);
+    return lookup;
+  }
+
+  private async lookup(hash: string): Promise<VerifiedKey | null> {
     const rows = await this.upstream.rpc('data_api_verify_key', { p_key_hash: hash });
     const row = rows[0] as { consumer_id?: unknown; key_id?: unknown; scopes?: unknown } | undefined;
     const value =

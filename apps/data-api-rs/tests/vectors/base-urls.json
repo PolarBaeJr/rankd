@@ -1,0 +1,142 @@
+[
+ {
+  "in": "http://kong:8000",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "https://x.example",
+  "ok": true,
+  "protocol": "https:"
+ },
+ {
+  "in": "http://kong:8000/",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "http://kong:8000///",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "ftp://x",
+  "ok": true,
+  "protocol": "ftp:"
+ },
+ {
+  "in": "kong:8000",
+  "ok": true,
+  "protocol": "kong:"
+ },
+ {
+  "in": "localhost:8000",
+  "ok": true,
+  "protocol": "localhost:"
+ },
+ {
+  "in": "//kong",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "http://",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "http:///x",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "http://a b",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "HTTP://KONG",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "file:///x",
+  "ok": true,
+  "protocol": "file:"
+ },
+ {
+  "in": "mailto:x",
+  "ok": true,
+  "protocol": "mailto:"
+ },
+ {
+  "in": "not a url",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "http://[::1]:54321",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "http://127.0.0.1:54321",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "http://h:65536",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "http://h:-1",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "http://u:p@h",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "ws://h",
+  "ok": true,
+  "protocol": "ws:"
+ },
+ {
+  "in": "javascript:x",
+  "ok": true,
+  "protocol": "javascript:"
+ },
+ {
+  "in": "http://h/path?q#f",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "http:h",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "https:/h",
+  "ok": true,
+  "protocol": "https:"
+ },
+ {
+  "in": "http://h%00",
+  "ok": false,
+  "error": "TypeError"
+ },
+ {
+  "in": "http://%41",
+  "ok": true,
+  "protocol": "http:"
+ },
+ {
+  "in": "http://h:0",
+  "ok": true,
+  "protocol": "http:"
+ }
+]

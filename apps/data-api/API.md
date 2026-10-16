@@ -2,7 +2,8 @@
 
 **Status: version 0. Implemented in `apps/data-api`: roster, match history,
 head-to-head, per-season records, rating history, seasons and standings,
-tournaments and draws, and the schedule (18 routes, listed under "Endpoints").
+tournaments and draws, the schedule, and one write, head-to-head win
+predictions (20 routes, listed under "Endpoints").
 The reference the service serves at `/documentations` describes what the code
 does, route by route and field by field; see also "Known gaps" in
 [`README.md`](./README.md).**
@@ -79,7 +80,7 @@ lowercase hex characters; that is not a promise.
 
 ## Authentication
 
-Every endpoint except `/health` and `/documentations` requires a key:
+Every endpoint except `/health`, `/documentations` and `/changelog` requires a key:
 
 ```
 Authorization: Bearer <your key>
@@ -92,9 +93,9 @@ it, it gets revoked and you get a new one.
 ### Scopes
 
 A key carries only the scopes it was granted. A key is not allowed everything by
-default; it is allowed nothing by default. One key may carry all six, and the
-console has an "All read scopes" button for exactly that. An exec can change
-the scopes of a live key without reissuing it.
+default; it is allowed nothing by default. One key may carry all eight. The
+console's "All read scopes" button ticks the six `:read` scopes and never a
+write one. An exec can change the scopes of a live key without reissuing it.
 
 | Scope | Grants |
 |---|---|
@@ -104,6 +105,8 @@ the scopes of a live key without reissuing it.
 | `seasons:read` | seasons, season totals, season standings |
 | `tournaments:read` | tournaments, events, entrants, draws |
 | `schedule:read` | club sessions and club events, counts only |
+| `predictions:write` | posting and deleting head-to-head win predictions (a write; no existing key carries it unless an exec adds it) |
+| `registrations:write` | delivering responses from the club's own Google Forms (a write, meant for the club's form script, not for outside consumers) |
 
 A correction to earlier versions of this file: `ratings:history:read` was
 described as "accepted and empty" because nothing journals a rating change. That
@@ -121,7 +124,8 @@ read per request.
 
 ## Endpoints
 
-Every route answers `GET` only. Path values: `:ref` and `:other_ref` are
+Every route answers `GET` only, except `/v1/predictions`, which answers `POST`
+and `DELETE` only, and `/documentations` and `/changelog`, which also answer `HEAD`. Path values: `:ref` and `:other_ref` are
 `player_ref`s, `:match_ref` a `match_ref`, `:id` and `:event_id` uuids. A path
 value that is malformed is a `404` without a database call.
 
@@ -129,6 +133,7 @@ value that is malformed is a `404` without a database call.
 |---|---|---|
 | `/health` | none | none |
 | `/documentations` | none | none |
+| `/changelog` | none | none |
 | `/v1/players` | `players:read` | none (query string ignored) |
 | `/v1/players/:ref` | `players:read` | none (query string ignored) |
 | `/v1/players/:ref/matches` | `matches:read` | as `/v1/matches`, minus `player` |
@@ -145,6 +150,8 @@ value that is malformed is a `404` without a database call.
 | `/v1/tournaments/:id/events/:event_id` | `tournaments:read` | none |
 | `/v1/sessions` | `schedule:read` | `from`, `to` |
 | `/v1/events` | `schedule:read` | `from`, `to` |
+| `/v1/predictions` | `predictions:write` | none; a JSON body (see "Predictions") |
+| `/v1/registrations` | `registrations:write` | none; a JSON body (see "Registrations") |
 
 The response shape of every route, with examples, is on the served
 `/documentations` page. The rules that matter for modelling are below.
@@ -379,8 +386,9 @@ appear in a match while `/v1/players/:ref` answers `404`.
 
 The club's public leaderboard applies the first three roster conditions. It
 does **not** apply the fourth, because a deletion request is not a leaderboard
-setting. This feed applies the deletion request everywhere, from the moment it
-is made rather than when the club's purge next runs, because the purge
+setting. This feed applies the deletion request everywhere, within 60 seconds
+of it being made (the read cache, see "Rate limits and etiquette") rather than
+when the club's purge next runs, because the purge
 anonymises the record rather than erasing it and the ratings survive it.
 
 **One gate for every match.** A club or tournament match is published only when
@@ -434,15 +442,121 @@ it.
 
 ---
 
+## Predictions
+
+`POST /v1/predictions` stores head-to-head win predictions made by your model,
+and `DELETE /v1/predictions` removes them. A member may be shown a prediction in
+the club app only for a challenge they play in, labelled as a prediction, with
+the `model` name and `made_at`, but never which consumer made it.
+
+```
+POST /v1/predictions
+Content-Type: application/json
+
+{"predictions":[{"format":"doubles","side_a":["<ref>","<ref>"],"side_b":["<ref>","<ref>"],
+                 "probability":0.64,"model":"elo-v3","made_at":"2026-10-08T18:00:00Z"}]}
+```
+
+- The body is at most 64 KiB, and either `{"predictions": [...]}` with 1 to 100
+  items or one item on its own. Each item has exactly the six fields above.
+  `format` is `singles` (one ref a side) or `doubles` (two); no player twice.
+  `probability` is side A's chance of winning, from 0 to 1. `model` is 1 to 64
+  characters from `A-Z a-z 0-9`, space and `. _ : + -`. `made_at` is UTC ending
+  in `Z` and not more than 5 minutes ahead of the server clock.
+- **A matchup is two unordered sides.** A and B against C and D is the same
+  matchup as D and C against B and A. Predicting a matchup you already predicted
+  replaces the earlier row. If you swap the sides, swap the probability to
+  `1 - p`.
+- **Only published players.** Every ref must name a member who passes the
+  history test in "Who is in the feed". A member who later opts out or asks for
+  deletion disappears from every prediction at once, and their predictions are
+  erased with their account.
+- **Predictions never change ratings.** Nothing that rates a match or builds a
+  statistic reads them. When two consumers predict the same matchup, members
+  see the newer one.
+- A batch costs one request against the rate limit, and writes are never served
+  from the read cache. Every call is recorded against the key, with counts and
+  no players.
+
+The answer lists every item as `created`, `replaced` or `refused`:
+
+```json
+{ "results": [ { "index": 0, "status": "created" },
+               { "index": 1, "status": "refused", "reason": "player" } ],
+  "created": 1, "replaced": 0, "refused": 1 }
+```
+
+It is `200` when nothing was refused and `422`, with the same body, when
+anything was. `reason` `player` means a ref is unknown to you or names a member
+who is not published; it deliberately does not say which. A body that is not
+the documented shape is a `400` naming the `field` (for example
+`predictions[3].side_b`), and nothing in it is stored.
+
+`DELETE /v1/predictions` takes `{"matchups": [{"format", "side_a", "side_b"}]}`
+(1 to 100, sides in either order) and answers each item `deleted` or
+`not_found`, with `deleted`, `not_found` and `refused` counts. Only your own
+predictions are ever deleted.
+
+---
+
+## Registrations
+
+`POST /v1/registrations` is how the club's own Google Forms enter people into a
+tournament or a club event. An exec binds a form to one target in the admin
+console, against the key its Apps Script sends; the script is in
+`integrations/google-forms/`. A response for a form with no active binding for
+the key is a `404`.
+
+The body is one form response:
+
+```json
+{ "form_id": "<form id>", "response_id": "<response id>",
+  "submitted_at": "2026-10-08T18:00:00Z",
+  "email": "<submitter email>", "name": "<submitter name>",
+  "entries": [ { "event_id": "<event uuid>", "partner_email": "<email>",
+                 "partner_name": "<name>", "category": "<category>" } ] }
+```
+
+`submitted_at`, `partner_email`, `partner_name` and `category` are optional; up
+to 20 `entries`; a club event form sends none. The answer is per entry:
+
+```json
+{ "replayed": false, "entered": 1, "pending": 1, "refused": 0,
+  "results": [ { "index": 1, "event_id": "<uuid>", "status": "entered", "reason": null } ] }
+```
+
+- `entered`: a non-member, or a team of two non-members, is in the event and
+  owes its fee as a named entry. They are sent the guest waiver once the club
+  turns that feature on.
+- `pending`: something must happen first. A member is never entered by a form:
+  they confirm the entry in the club app, where the usual rules and fees apply.
+  A doubles entry waits for the partner's own response, and anything odd waits
+  for an exec.
+- `refused`: `reason` is about the event only (`event_full`, `waitlist_queue`,
+  `registration_closed`, `registration_not_open`, `registration_window_closed`,
+  `event_not_in_target`, `duplicate_in_submission`). Nothing in an answer says
+  whether an email belongs to a member.
+
+Sending the same response again answers from the record with `replayed: true`.
+An edited response, or a new one from the same person, replaces the earlier
+one: entries it no longer names are withdrawn if nobody has paid or been drawn,
+and otherwise left for an exec. The service never logs the body, and the club's
+record of an import names no email.
+
+---
+
 ## Errors
 
 | Status | Meaning |
 |---|---|
-| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it |
-| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. |
+| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it. On `/v1/predictions` and `/v1/registrations`, a body that is not JSON or not the documented shape; `field` names it |
+| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. A write is also refused this way when the key was revoked or lost its write scope in the last 30 seconds. |
 | `403` | valid key, but it lacks the scope for this endpoint |
-| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published |
-| `405` | a method other than `GET` |
+| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published; on `/v1/registrations`, a form with no active binding |
+| `405` | a method the route does not answer (`GET` on read routes, `POST` and `DELETE` on `/v1/predictions`, `POST` on `/v1/registrations`, `GET` and `HEAD` on `/documentations` and `/changelog`); `Allow` lists them |
+| `413` | a write body over 64 KiB |
+| `415` | a write body not sent as `application/json` |
+| `422` | a write where at least one item was refused (the results body, not an error object) |
 | `429` | rate limited |
 | `503` | the club's database could not be reached |
 
@@ -460,9 +574,14 @@ polling every few minutes buys nothing. Pull `/v1/players` on a schedule
 measured in hours and cache it, and keep match history in sync with
 `updated_since` rather than re-reading it.
 
-Responses may be up to 15 seconds old: the service reuses a recent answer to
-the same request rather than asking the database again. `generated_at` is the
-time the response was sent, not the time the data was read.
+Responses may be up to 60 seconds old: the service reuses a recent answer to
+the same request from the same consumer rather than asking the database again.
+The roster, matches, ratings and seasons may be up to 60 seconds old;
+tournaments, sessions and club events up to 30 seconds. A registration import
+refreshes that consumer's tournament entrant lists and event signups at once.
+A member's opt-out or deletion request reaches the feed within the same 60
+seconds. `generated_at` is the time the response was sent, not the time the
+data was read.
 
 ---
 
@@ -471,6 +590,7 @@ time the response was sent, not the time the data was read.
 The `/v1` prefix is the contract. Within it, **new fields and routes may be added** and
 existing fields will not be removed or change meaning. Parse defensively and
 ignore fields you do not recognise. A breaking change becomes `/v2`.
+Changes are listed at `/changelog`.
 
 ---
 

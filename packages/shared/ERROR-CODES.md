@@ -122,6 +122,7 @@ had no code of its own, and the digits are the digest Next printed in the log.
 | `NET-000` | Network problem | A network request failed. Try again in a moment. | A network failure that matched no more specific code. |
 | `NET-001` | Could not reach the server | A service the app depends on could not be reached. Try again in a moment. | fetch failed, ECONNREFUSED, ETIMEDOUT, ENOTFOUND or EAI_AGAIN from a server-side request. |
 | `NET-002` | Upstream unavailable | A service the app depends on is not answering. Try again in a moment. | An upstream answered 502, 503 or 504, or with an empty {} body through the gateway. |
+| `NET-003` | App needs a newer website | This needs a newer version of the club website. Try again after the next update. | The native app called an /api/app route and got a redirect, a 404 or a reply that was not JSON: the website it reached does not serve that route yet. |
 
 ## GEN: General
 

@@ -118,13 +118,19 @@ function Reason({ reason }: { reason: string | null }) {
 export function AuditList({
   logs,
   scopeLabel,
-  controls,
+  scope,
+  exportControls,
+  exportNote,
 }: {
   logs: AuditLogRow[];
   /** What the rows are scoped to, for the footer: a season name, or the window. */
   scopeLabel: string;
   /** The season picker and the full-history escape, rendered by the page. */
-  controls: ReactNode;
+  scope: ReactNode;
+  /** The download unit, for a viewer who may export. */
+  exportControls?: ReactNode;
+  /** One line under the band saying what the download does and does not cover. */
+  exportNote?: string | null;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<string>(ALL_GROUP);
@@ -178,40 +184,42 @@ export function AuditList({
 
   return (
     <div className="space-y-4">
-      {/* Control band. Search and scope lead; the tab strip takes the right of
-          the row on a wide screen and its own row when the club has enough
-          kinds of activity for that to crowd the search field. */}
-      <div className="flex flex-wrap items-center gap-3">
-        <SearchFilter
-          value={query}
-          onChange={setQuery}
-          label="Search the audit log by action, officer, subject or reason"
-          placeholder="Search the log"
-          resultCount={rows.length}
-          noun="entry"
-          nounPlural="entries"
-          className="w-full sm:w-auto sm:min-w-[280px] sm:max-w-[360px] sm:flex-1"
-        />
-
-        {controls}
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-            Sort
-          </span>
-          <Select
-            variant="bare"
-            aria-label="Sort audit entries"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortOrder)}
-            options={SORT_OPTIONS}
-            className="settings-input text-xs"
+      {/* Control band, two rows. The first filters the list on the client:
+          search, the activity tabs and the sort. The second is what the
+          server answered for: the scope, and the download on the right. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchFilter
+            value={query}
+            onChange={setQuery}
+            label="Search the audit log by action, officer, subject or reason"
+            placeholder="Search the log"
+            resultCount={rows.length}
+            noun="entry"
+            nounPlural="entries"
+            className="min-w-0 flex-1 basis-[240px] [&>div]:h-9 [&>div]:min-h-9"
           />
+          <Tabs variant="subtle" tabs={tabs} activeTab={activeTab} onChange={setTab} />
+          {/* Wrapped: a bare Select puts className on its trigger, inside a
+              span of its own, so the push to the right has to sit out here. */}
+          <div className="ml-auto">
+            <Select
+              variant="bare"
+              aria-label="Sort audit entries"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortOrder)}
+              options={SORT_OPTIONS}
+              className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-xs text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+            />
+          </div>
         </div>
-
-        <div className="w-full min-w-0 lg:w-auto">
-          <Tabs tabs={tabs} activeTab={activeTab} onChange={setTab} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">{scope}</div>
+          {exportControls}
         </div>
+        {exportNote && (
+          <p className="text-[11px] leading-tight text-[var(--text-muted)]">{exportNote}</p>
+        )}
       </div>
 
       <Card padding={false} className="overflow-hidden">

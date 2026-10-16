@@ -434,6 +434,12 @@ export const ERROR_CODES = {
     meaning: 'A service the app depends on is not answering. Try again in a moment.',
     cause: 'An upstream answered 502, 503 or 504, or with an empty {} body through the gateway.',
   },
+  'NET-003': {
+    area: 'NET',
+    title: 'App needs a newer website',
+    meaning: 'This needs a newer version of the club website. Try again after the next update.',
+    cause: 'The native app called an /api/app route and got a redirect, a 404 or a reply that was not JSON: the website it reached does not serve that route yet.',
+  },
 
   'GEN-000': {
     area: 'GEN',

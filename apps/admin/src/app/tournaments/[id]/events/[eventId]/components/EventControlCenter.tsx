@@ -108,11 +108,13 @@ interface Props {
   // Category changes waiting for approval (00279). Null before that
   // migration, and when the event or the viewer has no use for them.
   categoryRequests: CategoryRequest[] | null;
+  /** Entries a Google Form made (00283), by participant or pair id. */
+  imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
   // Who is looking, so the panel offers Cancel on their own requests only.
   viewerId: string;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, viewerId }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, viewerId }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -352,6 +354,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waiverStates={waiverStates}
             waitlist={waitlist}
             categoryRequests={categoryRequests}
+            imported={imported}
           />
         )}
         {activeTab === 'checkin' && (

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Club Ladder</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>BadmintonSupabaseURL</key>
+	<string>https://$(BADMINTON_SUPABASE_ADDRESS)</string>
+	<key>BadmintonSupabaseAnonKey</key>
+	<string>$(BADMINTON_SUPABASE_ANON_KEY)</string>
+	<key>BadmintonSiteURL</key>
+	<string>https://$(BADMINTON_SITE_ADDRESS)</string>
+	<key>BadmintonPasskeyRpId</key>
+	<string>$(BADMINTON_PASSKEY_RP_ID)</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>barlow_regular.ttf</string>
+		<string>barlow_semibold.ttf</string>
+		<string>barlow_bold.ttf</string>
+		<string>barlow_condensed_bold.ttf</string>
+		<string>jetbrains_mono.ttf</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.clubladder.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>clubladder</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Club Ladder uses the camera to scan club QR codes: the door code at a session and a member's challenge QR.</string>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>AppBackground</string>
+	</dict>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+</dict>
+</plist>

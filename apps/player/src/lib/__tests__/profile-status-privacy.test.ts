@@ -102,7 +102,7 @@ const SERVICE_ROLE_READERS = new Map<string, string>([
   ['lib/challengeable-opponents.ts', 'service role; status is a filter, never returned'],
   ['lib/reactivate.ts', 'service role, own row by verified user id'],
   ['app/api/calendar/[token]/route.ts', 'service role, row found by the feed token'],
-  ['app/api/passkey/login/verify/route.ts', 'service role, pre-session lookup'],
+  ['lib/passkey/login-assertion.ts', 'service role, pre-session lookup (both passkey verify routes)'],
   ['lib/discord-signup.ts', "service role; the new member's own row, read to say approved or pending"],
 ]);
 

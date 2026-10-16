@@ -5,6 +5,7 @@ import {
   formatClubEventCost,
   formatClubEventTime,
   isUuid,
+  readFeatureFlags,
   utcToClubWallClock,
 } from '@badminton/shared';
 import { Badge, Card, PageHeader } from '@badminton/ui';
@@ -12,6 +13,9 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { ClubEventControls, ClubEventForm, type ClubEventFormValues } from '../event-form';
 import { ClubEventSignupsTable, type ClubEventSignupRow } from '../signups-table';
+import { loadRegistrationImports } from '@/lib/registration-imports';
+import { readerStatus } from '@/lib/google-forms';
+import { FormImportCard } from '@/components/registration-import/FormImportCard';
 
 type EventRow = {
   id: string;
@@ -62,11 +66,23 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const event = eventData as EventRow | null;
   if (!event) notFound();
 
-  const { count: takenCount } = await adminClient
-    .from('club_event_signups')
-    .select('player_id', { count: 'exact', head: true })
-    .eq('event_id', id);
-  const taken = takenCount ?? 0;
+  // Non-members a Google Form signed up (00284) take places too, and their rows
+  // RESTRICT the event's delete, so Delete must not be offered while any exist.
+  // Before 00284 the table is missing and the count is simply members.
+  const [{ count: takenCount }, { count: externalCount, error: externalError }] = await Promise.all([
+    adminClient.from('club_event_signups').select('player_id', { count: 'exact', head: true }).eq('event_id', id),
+    adminClient.from('club_event_external_signups').select('id', { count: 'exact', head: true }).eq('event_id', id),
+  ]);
+  const externals = externalError ? 0 : (externalCount ?? 0);
+  const taken = (takenCount ?? 0) + externals;
+
+  // The form card names non-members by their typed email, so it is read behind
+  // the same gate as the signups list, and not read at all without it.
+  const formImports = canSeeSignups
+    ? await loadRegistrationImports(adminClient, 'club_event', id, {
+        guestWaiversOn: (await readFeatureFlags(adminClient)).guest_waivers === true,
+      })
+    : null;
 
   // The service-role client, so the players embed is not narrowed by the
   // column grants members are held to.
@@ -149,6 +165,33 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               Signed up
             </h2>
             <ClubEventSignupsTable eventId={event.id} rows={signups} canRemove={canRemoveSignup} />
+            {externals > 0 && (
+              <p className="px-5 pb-4 text-sm text-[var(--text-muted)]">
+                Plus {externals} non-member{externals === 1 ? '' : 's'} from the Google Form, listed below.
+              </p>
+            )}
+          </Card>
+        )}
+
+        {formImports && (
+          <Card className="p-5">
+            <h2
+              className="pb-4 text-[13px] font-bold uppercase tracking-[0.14em] text-[var(--ink)]"
+              style={{ fontFamily: 'var(--display)' }}
+            >
+              Google Form
+            </h2>
+            <FormImportCard
+              targetKind="club_event"
+              targetId={event.id}
+              bindings={formImports.bindings}
+              consumers={canEdit ? formImports.consumers : []}
+              entries={formImports.entries}
+              canBind={canEdit}
+              canUndo={canRemoveSignup}
+              migrationMissing="Form registrations need migration 00283."
+              reader={readerStatus()}
+            />
           </Card>
         )}
       </div>

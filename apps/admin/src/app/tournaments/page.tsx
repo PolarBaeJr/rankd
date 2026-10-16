@@ -256,12 +256,18 @@ export default async function TournamentsPage({
       list.push(tier);
       feeTiersByTournament.set(tier.tournament_id, list);
     }
-    const fees = (feeData ?? []) as {
+    type FeeRow = {
       tournament_id: string;
-      player_id: string;
+      player_id: string | null;
       amount_cents: number | null;
       paid_at: string | null;
-    }[];
+    };
+    // A non-member a Google Form entered (00283) owes a NAMED row with no
+    // player_id. Everything below is per member, so those rows are counted on
+    // their own after the loop rather than looked up as a null player.
+    const ledger = (feeData ?? []) as FeeRow[];
+    const fees = ledger.filter((f): f is FeeRow & { player_id: string } => f.player_id != null);
+    const nonMemberFees = ledger.filter((f) => f.player_id == null);
     const feeByKey = new Map(fees.map((f) => [`${f.tournament_id}:${f.player_id}`, f]));
 
     // Who actually owes. THE SAME TWO EXEMPTIONS the fee roster applies
@@ -367,6 +373,15 @@ export default async function TournamentsPage({
         }
         if (!paid && owed != null && feesDueCents !== null) feesDueCents += owed;
       }
+    }
+    // Non-members: the ledger row is the whole story, there is no tier to quote.
+    for (const fee of nonMemberFees) {
+      const paid = Boolean(fee.paid_at);
+      if (featured && fee.tournament_id === featured.id) {
+        if (paid) featuredPaid += 1;
+        else featuredUnpaid += 1;
+      }
+      if (!paid && fee.amount_cents != null && feesDueCents !== null) feesDueCents += fee.amount_cents;
     }
   }
 

@@ -19,6 +19,8 @@ function migration(prefix: string): string {
 }
 
 const scopes = migration('00264_');
+const predictions = migration('00282_');
+const formImport = migration('00283_');
 const history = migration('00265_');
 const schedule = migration('00266_');
 const header = migration('00267_');
@@ -81,9 +83,11 @@ const INTERNAL_FUNCTIONS: Record<string, string> = {
   data_api_draw_side: 'uuid, uuid, text',
 };
 
-describe('00264: the scope vocabulary', () => {
+describe('00264, 00282 and 00283: the scope vocabulary', () => {
+  // 00283 restates the CHECK with `registrations:write`, so it is the one a
+  // database ends up with.
   it('admits exactly DATA_API_SCOPES, in order', () => {
-    const check = /ADD CONSTRAINT data_api_keys_scope_vocabulary\s+CHECK \(scopes <@ ARRAY\[([^\]]+)\]/.exec(scopes);
+    const check = /ADD CONSTRAINT data_api_keys_scope_vocabulary\s+CHECK \(scopes <@ ARRAY\[([^\]]+)\]/.exec(formImport);
     expect(check).not.toBeNull();
     const admitted = [...check![1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]);
     expect(admitted).toEqual([...DATA_API_SCOPES]);
@@ -276,6 +280,21 @@ describe('no identity, no free text', () => {
     'waiver_text',
     'external1_name',
     'external2_name',
+    // The form import (00283, 00284) keeps typed names and emails for people
+    // who are not members. No read function may serve any of them.
+    'manual_name',
+    'manual_email',
+    'submitter_name',
+    'submitter_email',
+    'external_name',
+    'external_email',
+    'partner_name',
+    'partner_email',
+    'registration_imports',
+    'registration_import_entries',
+    'registration_import_forms',
+    'guest_waiver_invites',
+    'club_event_external_signups',
   ];
 
   for (const column of FORBIDDEN) {
@@ -289,5 +308,150 @@ describe('no identity, no free text', () => {
       const header = functionBody(name).split('AS $function$')[0]!;
       expect(header, name).not.toMatch(/\bplayer_id\b|\bplayer1_id\b|\bplayer2_id\b/);
     }
+  });
+});
+
+describe('00282: predictions', () => {
+  const sql = code(predictions);
+
+  function body(name: string): string {
+    const start = predictions.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
+    expect(start, `${name} is not defined`).toBeGreaterThan(-1);
+    return predictions.slice(start, predictions.indexOf('$function$;', start));
+  }
+
+  const GRANTED: Record<string, [string, string]> = {
+    data_api_write_predictions: ['text, jsonb', 'data_api_reader'],
+    data_api_delete_predictions: ['text, jsonb', 'data_api_reader'],
+    get_matchup_prediction: ['text, uuid[], uuid[]', 'authenticated'],
+    get_my_predictions: ['', 'authenticated'],
+  };
+
+  for (const [name, [args, role]] of Object.entries(GRANTED)) {
+    it(`${name} is SECURITY DEFINER, revoked from everyone and granted to ${role} alone`, () => {
+      expect(body(name)).toContain('SECURITY DEFINER');
+      expect(body(name)).toContain("SET search_path TO 'public', 'pg_temp'");
+      expect(sql).toContain(`REVOKE ALL ON FUNCTION public.${name}(${args}) FROM PUBLIC, anon, authenticated;`);
+      const grants = [...sql.matchAll(new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${name}\\(([^)]*)\\) TO (\\w+);`, 'g'))];
+      expect(grants.map((g) => `${g[1]} TO ${g[2]}`)).toEqual([`${args} TO ${role}`]);
+    });
+  }
+
+  it('grants the ref map and the purge trigger to nobody', () => {
+    expect(sql).not.toMatch(/GRANT[^;]*public\.data_api_ref_map\(/);
+    expect(sql).not.toMatch(/GRANT[^;]*public\.data_api_predictions_forget_player\(/);
+  });
+
+  it('lets no client role touch the table, and service_role only read it', () => {
+    expect(sql).toContain('REVOKE ALL ON public.data_api_predictions FROM PUBLIC, anon, authenticated, service_role;');
+    const grants = [...sql.matchAll(/GRANT\s+(\w+)\s+ON\s+public\.data_api_predictions\s+TO\s+(\w+)/g)];
+    expect(grants.map((g) => `${g[1]} TO ${g[2]}`)).toEqual(['SELECT TO service_role']);
+  });
+
+  it('takes the key HASH in the write and the delete, never a consumer id', () => {
+    for (const name of ['data_api_write_predictions', 'data_api_delete_predictions']) {
+      expect(body(name)).toMatch(new RegExp(`FUNCTION public\\.${name}\\(p_key_hash text,`));
+      expect(body(name)).toContain("'predictions:write' = ANY");
+      expect(body(name)).toContain('revoked_at IS NULL');
+    }
+  });
+
+  it('re-checks that every named player is published in both member reads', () => {
+    expect(body('get_matchup_prediction')).toContain('data_api_published_player(');
+    expect(body('get_my_predictions')).toContain('data_api_published_player(');
+  });
+
+  it('answers a member only for a matchup they play in', () => {
+    const matchup = body('get_matchup_prediction');
+    expect(matchup).toContain('get_player_id(auth.uid())');
+    expect(matchup).toContain('me.id IS NOT NULL');
+    expect(matchup).toContain('me.id = ANY (s.a || s.b)');
+    const mine = body('get_my_predictions');
+    expect(mine).toContain('get_player_id(auth.uid())');
+    expect(mine).toContain('me.id IN (d.side1_p1, d.side1_p2, d.side2_p1, d.side2_p2)');
+  });
+
+  it('never tells a member which consumer made a prediction', () => {
+    for (const name of ['get_matchup_prediction', 'get_my_predictions']) {
+      const header = body(name).split('AS $function$')[0]!;
+      expect(header, name).not.toMatch(/consumer|key_id/);
+    }
+  });
+
+  it('writes an audit row for the write and for the delete', () => {
+    expect(body('data_api_write_predictions')).toContain("'data_api_predictions_written'");
+    expect(body('data_api_delete_predictions')).toContain("'data_api_predictions_deleted'");
+  });
+});
+
+describe('00282: predictions never feed ratings, and the purge reaches them', () => {
+  // A later migration restating merge_players_disposable carries the four
+  // (table, column) rows, so those are allowed anywhere. Anything else naming
+  // the table outside 00282 is something reading predictions, and nothing may.
+  // 00283 restates the two write functions to route their key check through
+  // data_api_write_key; their bodies, and its precondition that the table
+  // exists, are the only other places the name may appear.
+  it('is the only migration that names the table, outside the merge guard rows', () => {
+    const withoutRestatedWrites = (source: string) =>
+      source
+        .replace(
+          /CREATE OR REPLACE FUNCTION public\.data_api_(?:write|delete)_predictions\([\s\S]*?\n\$function\$;/g,
+          '',
+        )
+        .replace(/to_regclass\('public\.data_api_predictions'\)/g, '');
+    const naming = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith('.sql') && !f.startsWith('00282_'))
+      .filter((f) =>
+        withoutRestatedWrites(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'))
+          .replace(/\('data_api_predictions',\s*'side[12]_p[12]'\)/g, '')
+          .includes('data_api_predictions'),
+      );
+    expect(naming).toEqual([]);
+  });
+
+  it('00283 changes only the key check of the two write functions', () => {
+    const bodyOf = (source: string, fn: string) => {
+      const start = source.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${fn}(`);
+      expect(start, fn).toBeGreaterThan(-1);
+      return source.slice(start, source.indexOf('\n$function$;', start));
+    };
+    for (const fn of ['data_api_write_predictions', 'data_api_delete_predictions']) {
+      const restated = bodyOf(formImport, fn);
+      expect(restated).toContain("FROM data_api_write_key(p_key_hash, 'predictions:write')");
+      expect(restated).toContain('data_api_predictions');
+    }
+  });
+
+  it('keeps all sixteen disposable rows from 00279 and adds the four side columns', () => {
+    const rows = (source: string) => {
+      const start = source.lastIndexOf('CREATE OR REPLACE FUNCTION public.merge_players_disposable()');
+      expect(start).toBeGreaterThan(-1);
+      const body = source.slice(start, source.indexOf('$function$;', start));
+      return [...body.matchAll(/\('([a-z0-9_]+)',\s*'([a-z0-9_]+)'\)/g)].map((m) => `${m[1]}.${m[2]}`).sort();
+    };
+    const before = rows(migration('00279_'));
+    expect(before).toHaveLength(16);
+    expect(rows(predictions)).toEqual(
+      [
+        ...before,
+        'data_api_predictions.side1_p1',
+        'data_api_predictions.side1_p2',
+        'data_api_predictions.side2_p1',
+        'data_api_predictions.side2_p2',
+      ].sort(),
+    );
+    expect(predictions).toContain('merge_players_disposable()) <> 20');
+  });
+
+  // The trigger deletes a member's predictions when the purge anonymises them,
+  // keyed on the email the purge writes. If anonymize.ts changes its marker
+  // and this does not, predictions outlive the account.
+  it('keys the purge trigger on the email marker anonymize.ts writes', () => {
+    const anonymize = readFileSync(
+      join(__dirname, '../../../../supabase/functions/_shared/anonymize.ts'),
+      'utf8',
+    );
+    expect(anonymize).toContain('email: `deleted+${playerId}@deleted.invalid`');
+    expect(predictions).toContain("NEW.email LIKE 'deleted+%@deleted.invalid'");
   });
 });

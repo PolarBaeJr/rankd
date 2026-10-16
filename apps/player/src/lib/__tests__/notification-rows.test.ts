@@ -55,6 +55,7 @@ const PLAYER_ROUTES = [
   '/membership',
   '/my-stats',
   '/notifications',
+  '/registrations/[entryId]',
   '/settings',
   '/tournaments',
   '/tournaments/[id]',
@@ -70,6 +71,7 @@ function routePattern(href: string): string {
   const parts = (href.split('?')[0] ?? href).split('/');
   if (parts[1] === 'challenges' && parts[2]) return '/challenges/[id]';
   if (parts[1] === 'leaderboard' && parts[2]) return '/leaderboard/[playerId]';
+  if (parts[1] === 'registrations' && parts[2]) return '/registrations/[entryId]';
   if (parts[1] === 'tournaments' && parts[2] && parts[2] !== 'checkin') {
     if (parts[3] === 'events' && parts[4]) {
       return parts[5] === 'checkin'
@@ -178,6 +180,21 @@ describe('notificationAction', () => {
     expect(notificationAction('general', { kind: 'something_else' })).toBeNull();
   });
 
+  it('sends a form entry waiting for its member to the confirm page, never on a bad id', () => {
+    const entryId = '11111111-2222-4333-8444-555555555555';
+    expect(
+      notificationAction('general', {
+        kind: 'registration_import_confirm',
+        entry_id: entryId,
+        tournament_id: 't1',
+        event_id: 'e1',
+      }),
+    ).toEqual({ href: `/registrations/${entryId}`, label: 'Confirm' });
+    expect(
+      notificationAction('general', { kind: 'registration_import_confirm', entry_id: '../admin' }),
+    ).toEqual({ href: '/notifications', label: 'View' });
+  });
+
   it('uses the event route when both ids are present and the tournament route when only one is', () => {
     expect(notificationAction('tournament_bracket_published', { tournament_id: 't1', event_id: 'e1' })?.href).toBe(
       '/tournaments/t1/events/e1',
@@ -223,6 +240,7 @@ describe('notificationAction', () => {
       { match_id: 'm1', challenge_id: 'c1' },
       { kind: 'fee_submission_rejected' },
       { kind: 'fee_payment_reminder' },
+      { kind: 'registration_import_confirm', entry_id: '11111111-2222-4333-8444-555555555555' },
     ];
     for (const type of [...ENUM_TYPES, 'a_type_nobody_has_written_yet']) {
       for (const metadata of metadatas) {

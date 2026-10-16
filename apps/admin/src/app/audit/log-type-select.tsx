@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Check, ChevronDown } from 'lucide-react';
+import { cn } from '@badminton/ui';
 import type { LogType } from '@/lib/audit-export';
 
 /**
@@ -25,9 +26,12 @@ import type { LogType } from '@/lib/audit-export';
 export function LogTypeSelect({
   options,
   selected,
+  triggerClassName,
 }: {
   options: readonly { value: LogType; label: string }[];
   selected: LogType;
+  /** Merged over the trigger's own classes, for a caller that joins it to other controls. */
+  triggerClassName?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -62,7 +66,10 @@ export function LogTypeSelect({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs text-[var(--text-primary)] hover:border-[var(--border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        className={cn(
+          'flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-xs text-[var(--text-primary)] hover:border-[var(--border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+          triggerClassName,
+        )}
       >
         <span className="text-[var(--text-muted)]">Download</span>
         <span className="font-semibold">{current?.label}</span>

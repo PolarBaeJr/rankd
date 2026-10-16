@@ -79,10 +79,23 @@ describe('the feature registry', () => {
 
   // EVERY FEATURE HAS ITS KEY, `page.access.<id>`, derived in access-level.ts,
   // and the key's enforcement point is the FeatureGate this file already checks.
+  //
+  // A feature with no pages (predictions, which only draws cards on other
+  // pages) has no FeatureGate. Its key names a function in lib/ instead, and
+  // that function must exist and must ask featureGate with the key.
   it('gives every feature a page.access key gated on its own pages', () => {
     for (const f of FEATURES) {
       const key = `page.access.${f.id}`;
       expect(isCapability(key), key).toBe(true);
+      if (f.playerRoutes.length === 0) {
+        const gate = CAPABILITY_GATES[key as keyof typeof CAPABILITY_GATES].gate ?? '';
+        const parsed = /^player (lib\/[\w-]+\.ts) (\w+)$/.exec(gate);
+        expect(parsed, key).not.toBeNull();
+        const source = readFileSync(join(__dirname, '../../', parsed![1]!), 'utf8');
+        expect(source, gate).toContain(`export async function ${parsed![2]}(`);
+        expect(source, gate).toContain(`featureGate(flags.${f.id}, featureAccessFor(viewer).includes('${f.id}'))`);
+        continue;
+      }
       const file = gateFile(f.id);
       expect(CAPABILITY_GATES[key as keyof typeof CAPABILITY_GATES].gate, key).toBe(
         `player app${f.playerRoutes[0]}/${file} FeatureGate`,

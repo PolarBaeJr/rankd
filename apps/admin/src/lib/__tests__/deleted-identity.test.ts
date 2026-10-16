@@ -368,3 +368,177 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     }
   });
 });
+
+describe('a purged member leaves no typed name or address anywhere', () => {
+  // The pin above only sees a column literally named `player_id`, and the
+  // Google Form import (00283, 00284) stored people somewhere it never looks:
+  // under their TYPED name and email, with no player id at all, on rows made
+  // before they were a member or by somebody naming them as a partner. A
+  // deletion left every one of them in place until 00285. This pin is over the
+  // columns themselves, so the next table that keeps a typed person fails here
+  // until somebody decides what a deletion does to it.
+
+  const MIGRATIONS = join(REPO, 'supabase/migrations');
+
+  /** A column that can hold a person's typed name or address. */
+  const IDENTITY_SHAPED =
+    /^(email|[a-z0-9_]+_email|full_name|first_name|last_name|display_name|[a-z0-9_]+_name)$/;
+
+  /**
+   * Every text column of that shape the migrations leave in the schema:
+   * CREATE TABLE bodies, ADD COLUMN, DROP COLUMN, RENAME, and DROP TABLE,
+   * replayed in file order. Comments are stripped first, because 00283's
+   * headers name the very columns this is looking for.
+   */
+  function identityShapedColumns(): string[] {
+    const tables = new Map<string, Set<string>>();
+    const statement =
+      /CREATE TABLE(?: IF NOT EXISTS)?\s+(?:public\.)?([a-z_0-9]+)\s*\(([\s\S]*?)\n\)\s*;|ALTER TABLE(?: IF EXISTS)?(?: ONLY)?\s+(?:public\.)?([a-z_0-9]+)([\s\S]*?);|DROP TABLE(?: IF EXISTS)?\s+(?:public\.)?([a-z_0-9]+)/gi;
+    const textType = '(?:text|varchar|citext|character varying)\\b';
+    const columnLine = new RegExp(`^\\s*([a-z_0-9]+)\\s+${textType}`, 'i');
+    const addColumn = new RegExp(`ADD COLUMN(?: IF NOT EXISTS)?\\s+([a-z_0-9]+)\\s+${textType}`, 'gi');
+    for (const file of readdirSync(MIGRATIONS).filter((f) => /^\d+.*\.sql$/.test(f)).sort()) {
+      const src = readFileSync(join(MIGRATIONS, file), 'utf8').replace(/--[^\n]*/g, '');
+      for (const m of src.matchAll(statement)) {
+        if (m[1]) {
+          const cols = tables.get(m[1]) ?? new Set<string>();
+          for (const line of (m[2] ?? '').split('\n')) {
+            const col = line.match(columnLine);
+            if (col) cols.add(col[1] as string);
+          }
+          tables.set(m[1], cols);
+        } else if (m[3]) {
+          const cols = tables.get(m[3]) ?? new Set<string>();
+          const body = m[4] ?? '';
+          for (const added of body.matchAll(addColumn)) cols.add(added[1] as string);
+          for (const dropped of body.matchAll(/DROP COLUMN(?: IF EXISTS)?\s+([a-z_0-9]+)/gi)) {
+            cols.delete(dropped[1] as string);
+          }
+          for (const renamed of body.matchAll(/RENAME COLUMN\s+([a-z_0-9]+)\s+TO\s+([a-z_0-9]+)/gi)) {
+            if (cols.delete(renamed[1] as string)) cols.add(renamed[2] as string);
+          }
+          const renamedTable = body.match(/^\s*RENAME TO\s+([a-z_0-9]+)/i);
+          tables.delete(m[3]);
+          tables.set(renamedTable ? (renamedTable[1] as string) : m[3], cols);
+        } else if (m[5]) {
+          tables.delete(m[5]);
+        }
+      }
+    }
+    const found: string[] = [];
+    for (const [table, cols] of tables) {
+      for (const col of cols) if (IDENTITY_SHAPED.test(col)) found.push(`${table}.${col}`);
+    }
+    expect(found.length, 'no identity-shaped columns parsed, the parser has rotted').toBeGreaterThan(20);
+    return found.sort();
+  }
+
+  /** The body of 00285's scrub, the function the purge trigger calls. */
+  function scrubBody(): string {
+    const file = readdirSync(MIGRATIONS).find((f) => f.startsWith('00285_'));
+    expect(file, '00285 is missing').toBeDefined();
+    const src = readFileSync(join(MIGRATIONS, file as string), 'utf8');
+    const start = src.indexOf('CREATE OR REPLACE FUNCTION public.scrub_registration_identity(');
+    expect(start).toBeGreaterThan(-1);
+    return src.slice(start, src.indexOf('$function$;', start));
+  }
+
+  // The players row itself: anonymizedPlayerFields, pinned by the first
+  // describe in this file. full_name is generated from first and last.
+  const ANONYMISED = [
+    'players.display_name',
+    'players.email',
+    'players.first_name',
+    'players.full_name',
+    'players.last_name',
+  ];
+
+  // Rewritten by scrub_registration_identity (00285) when the purge's marker
+  // lands on players.email, matched on the address the member had. Each is
+  // checked against the function body below.
+  const SCRUBBED: Record<string, string> = {
+    'registration_imports.submitter_name': 'their own form response from before they joined, nulled',
+    'registration_imports.submitter_email': 'their own form response from before they joined, nulled',
+    'registration_import_entries.external_name': 'their entry as a non-member, nulled; the entry stays',
+    'registration_import_entries.external_email': 'their entry as a non-member, nulled; the entry stays',
+    'registration_import_entries.partner_name': 'somebody else naming them by their address, nulled',
+    'registration_import_entries.partner_email': 'somebody else naming them by their address, nulled',
+    'club_event_external_signups.full_name': 'their guest place, kept as a place under Deleted Player',
+    'club_event_external_signups.email': 'their guest place, given a per-row deleted.invalid address',
+    'guest_waiver_invites.email': 'per-row deleted.invalid address, and cancelled if unsent so it is never mailed',
+    'club_fees.manual_name': 'a named fee the claim could not move, kept under Deleted Player',
+    'club_fees.manual_email': 'a named fee the claim could not move, nulled or given a per-row placeholder',
+    'tournament_pairs.external1_name': 'the external team the import entered, the slot that was them',
+    'tournament_pairs.external2_name': 'the external team the import entered, the slot that was them',
+    'tournament_pairs.pair_name': 'rebuilt only when it is the default "A / B" of the two names',
+  };
+
+  // Left in place on purpose, with the reason.
+  const KEPT: Record<string, string> = {
+    'guest_waiver_signings.full_name':
+      'a signed guest waiver is legal evidence, kept permanently and never joined to an account (privacy policy section 6)',
+    'guest_waiver_signings.email':
+      'a signed guest waiver is legal evidence, kept permanently and never joined to an account (privacy policy section 6)',
+    'email_suppressions.email':
+      'the addresses the mail provider refused; dropping one would mail a dead or unwilling address again',
+    'discord_signup_drafts.first_name': 'pre-account scratch with no player id, deleted within 30 minutes (00281)',
+    'discord_signup_drafts.last_name': 'pre-account scratch with no player id, deleted within 30 minutes (00281)',
+    'discord_signup_drafts.display_name': 'pre-account scratch with no player id, deleted within 30 minutes (00281)',
+    'discord_signup_drafts.email': 'pre-account scratch with no player id, deleted within 30 minutes (00281)',
+  };
+
+  // Shaped like a person's name and are not one.
+  const NOT_A_PERSON: Record<string, string> = {
+    'discord_club_events.synced_name': 'the club event title last pushed to Discord',
+    'discord_tournament_events.synced_name': 'the tournament event title last pushed to Discord',
+    'discord_guild_roles.role_name': 'a Discord role in the bot\'s role mapping',
+    'discord_server_roles.role_name': 'a Discord role discovered on a server',
+    'tournament_matches.round_name': 'a bracket round such as "Quarterfinal"',
+  };
+
+  const classified = (): string[] => [
+    ...ANONYMISED,
+    ...Object.keys(SCRUBBED),
+    ...Object.keys(KEPT),
+    ...Object.keys(NOT_A_PERSON),
+  ];
+
+  it('classifies every column that can hold a typed name or address', () => {
+    const handled = new Set<string>(classified());
+    const unclassified = identityShapedColumns().filter((c) => !handled.has(c));
+    expect(
+      unclassified,
+      'new name or email column(s): scrub them on purge (00285 shows how), or add to KEPT or NOT_A_PERSON with a reason',
+    ).toEqual([]);
+  });
+
+  it('lists nothing that no longer exists', () => {
+    // The inverse, so a dropped or renamed column cannot leave a stale entry
+    // that makes the classification look more complete than it is.
+    const present = new Set(identityShapedColumns());
+    expect(classified().filter((c) => !present.has(c))).toEqual([]);
+  });
+
+  it('really writes every column it says it scrubs', () => {
+    // Declared is not done: the import's SET NULL columns were declared
+    // delinked, and the purge's UPDATE has never fired a single one of them.
+    const body = scrubBody();
+    for (const qualified of Object.keys(SCRUBBED)) {
+      const [table, col] = qualified.split('.') as [string, string];
+      expect(body.indexOf(`UPDATE ${table}`), `the scrub never updates ${table}`).toBeGreaterThan(-1);
+      expect(body, `the scrub never writes ${qualified}`).toMatch(new RegExp(`\\b${col} = `));
+    }
+  });
+
+  it('leaves the players columns to the purge itself', () => {
+    for (const qualified of ANONYMISED.filter((c) => c !== 'players.full_name')) {
+      expect(identityColumns()).toContain(qualified.split('.')[1]);
+    }
+  });
+
+  it('gives every scrubbed, kept or not-a-person column a real reason', () => {
+    for (const [col, reason] of Object.entries({ ...SCRUBBED, ...KEPT, ...NOT_A_PERSON })) {
+      expect(reason.length, `${col} needs a reason, not a placeholder`).toBeGreaterThan(20);
+    }
+  });
+});

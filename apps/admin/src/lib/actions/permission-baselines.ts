@@ -348,6 +348,8 @@ async function updateImpl(
 
   const { error } = await adminClient
     .from('permission_baselines')
+    // Club changes (00286) draft a line only from a write that sets updated_by
+    // and moves updated_at. Keep both.
     .update({ name: trimmed, capabilities: stored, updated_by: actor.id, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw new ExpectedError(uniqueNameOr(error.message, trimmed));

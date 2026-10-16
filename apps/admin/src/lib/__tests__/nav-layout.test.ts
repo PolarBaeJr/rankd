@@ -4,6 +4,7 @@ import { ALL_FEATURES_ENABLED, FEATURES, type FeatureFlags } from '@badminton/sh
 import {
   flattenEntries,
   isRouteActive,
+  nestItems,
   visibleEntries,
   type NavEntry,
 } from '@badminton/ui/src/nav-groups';
@@ -57,6 +58,13 @@ describe('the console top bar layout', () => {
 
   it('shows an admin every group, in full', () => {
     expect(visibleFor('admin', UNRESTRICTED)).toEqual(NAV_LAYOUT);
+  });
+
+  // Club changes sits beside Ratings, where most of its lines come from.
+  it('puts Club changes between Ratings and the Audit Log in the System menu of an admin', () => {
+    expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({
+      system: ['/ratings', '/club-changes', '/audit'],
+    });
   });
 
   it('puts club events beside tournaments in the Events menu of an admin', () => {
@@ -176,6 +184,74 @@ describe('the console top bar with a feature switched off', () => {
     const visible = shape(visibleWith(off('tournaments', 'sessions'), 'exec', granted));
     expect(visible).toContainEqual({ events: ['/tournaments'] });
     expect(visible).toContainEqual({ play: ['/matches', '/seasons'] });
+  });
+});
+
+// LEGAL IS ONE ROW THAT OPENS. The group's items stay flat (everything above
+// still holds), and nestItems() folds the three legal pages under /legal for
+// the menu to draw.
+describe('nested rows', () => {
+  const clubOf = (entries: NavEntry<NavItem>[]) => {
+    const club = entries.find((entry) => entry.kind === 'group' && entry.group.id === 'club');
+    if (!club || club.kind !== 'group') throw new Error('no Club group');
+    return club.group;
+  };
+  const hrefs = (items: { href: string }[]) => items.map((item) => item.href);
+  const tree = (items: NavItem[], nest: Parameters<typeof nestItems>[1]) =>
+    nestItems(items, nest).map(({ item, selfLabel, children }) => ({
+      href: item.href,
+      selfLabel,
+      children: hrefs(children),
+    }));
+  const LEGAL_NEST = [
+    { parent: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] },
+  ];
+  const byHref = (href: string) => ITEMS.find((item) => item.href === href)!;
+
+  it('folds the three legal pages under Legal in the Club menu', () => {
+    const club = clubOf(NAV_LAYOUT);
+    expect(tree(club.items, club.nest)).toEqual([
+      { href: '/announcements', selfLabel: undefined, children: [] },
+      { href: '/fees', selfLabel: undefined, children: [] },
+      { href: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] },
+    ]);
+  });
+
+  it('drops external waivers from the fold when guest waivers are off', () => {
+    const held = effectiveCapabilities('exec', UNRESTRICTED);
+    const features: FeatureFlags = { ...ALL_FEATURES_ENABLED, guest_waivers: false };
+    const club = clubOf(
+      visibleEntries(
+        NAV_LAYOUT,
+        (item) => canAccess('exec', UNRESTRICTED, item.href) && adminNavItemOn(item.href, features, held),
+      ),
+    );
+    const legal = nestItems(club.items, club.nest).find((row) => row.item.href === '/legal')!;
+    expect(hrefs(legal.children)).toEqual(['/legal/signatures', '/legal/media-consent']);
+  });
+
+  it('draws the parent as a plain row when every child is filtered out', () => {
+    expect(tree([byHref('/fees'), byHref('/legal')], LEGAL_NEST)).toEqual([
+      { href: '/fees', selfLabel: undefined, children: [] },
+      { href: '/legal', selfLabel: undefined, children: [] },
+    ]);
+  });
+
+  it('promotes the children to plain rows when the parent is filtered out', () => {
+    expect(tree([byHref('/legal/signatures'), byHref('/legal/guests')], LEGAL_NEST)).toEqual([
+      { href: '/legal/signatures', selfLabel: undefined, children: [] },
+      { href: '/legal/guests', selfLabel: undefined, children: [] },
+    ]);
+  });
+
+  it('nests only hrefs that are items of the same group', () => {
+    for (const entry of NAV_LAYOUT) {
+      if (entry.kind !== 'group') continue;
+      const own = hrefs(entry.group.items);
+      for (const n of entry.group.nest ?? []) {
+        for (const href of [n.parent, ...n.children]) expect(own, href).toContain(href);
+      }
+    }
   });
 });
 

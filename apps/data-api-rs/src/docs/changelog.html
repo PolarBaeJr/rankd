@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Club Ladder Data API changelog</title>
+<style>
+:root { color-scheme: light dark; --bg: #ffffff; --fg: #1b1f24; --mute: #57606a; --line: #d0d7de; --code-bg: #f3f5f7; --accent: #b5121b; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1116; --fg: #e6edf3; --mute: #9aa4af; --line: #30363d; --code-bg: #161b22; --accent: #ff6b6b; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+h1 { font-size: 1.9rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.35rem; margin: 2.5rem 0 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
+p, li { color: var(--fg); }
+.lede { color: var(--mute); margin-top: 0; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.95em; }
+th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 0.4rem 0.5rem; }
+th { color: var(--mute); font-weight: 600; }
+nav { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem 1rem; margin: 1.5rem 0; }
+nav ol { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+td code { white-space: nowrap; }
+.note { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 0.9rem; color: var(--mute); }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 0.9em; }
+</style>
+</head>
+<body>
+<main>
+<h1>Club Ladder Data API changelog</h1>
+<p class="lede">What changed in each version of the API. The full reference is the <a href="/documentations">documentation</a>.</p>
+
+<section>
+<h2 id="v0.3.1">0.3.1: Freshness</h2>
+<p class="lede">2026-10-09</p>
+<ul>
+<li>Responses may now be up to 60 seconds old, up from 15: the roster, matches, ratings and seasons up to 60 seconds, tournaments, sessions and club events up to 30. A member's opt-out or deletion request reaches the feed within the same 60 seconds.</li>
+<li>A recent answer is reused only for the same consumer, and the same request written differently (an upper-case id, a timestamp with or without seconds) counts as the same request.</li>
+<li>A registration import refreshes your tournament entrant lists and event signups at once. A prediction write changes nothing you read.</li>
+<li>Under heavy load a request may wait briefly for the database; one that cannot be answered within 5 seconds is a <code>503</code> as before.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="v0.3.0">0.3.0: Registrations</h2>
+<p class="lede">2026-10-09</p>
+<ul>
+<li>A second write: <code>POST /v1/registrations</code> delivers one response from a Google Form an exec has bound to a tournament or a club event. It needs the new <code>registrations:write</code> scope, meant for the club's own form script; no existing key carries it.</li>
+<li>Each entry is answered <code>entered</code>, <code>pending</code> or <code>refused</code>, and a refusal names only something about the event. A member is never entered by a form: they confirm the entry in the club app.</li>
+<li>The same response sent again answers from the record with <code>replayed: true</code>; an edited response replaces the earlier one. A form with no active binding for the key is a <code>404</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="v0.2.0">0.2.0: Predictions</h2>
+<p class="lede">2026-10-09</p>
+<ul>
+<li>The first write: <code>POST /v1/predictions</code> stores head-to-head win predictions from your model, and <code>DELETE /v1/predictions</code> removes your own. Both need the new <code>predictions:write</code> scope, which no existing key carries unless an exec adds it.</li>
+<li>A prediction names a <code>singles</code> or <code>doubles</code> matchup by <code>player_ref</code>, side A's chance of winning, a <code>model</code> name and <code>made_at</code>. A matchup is two unordered sides, so predicting it again replaces the earlier row.</li>
+<li>Up to 100 items a call. Each one is answered <code>created</code>, <code>replaced</code> or <code>refused</code>; the call is <code>422</code> with the same body when anything was refused.</li>
+<li>New errors on the write: <code>413</code> for a body over 64 KiB and <code>415</code> for a body not sent as <code>application/json</code>.</li>
+<li>Writes are never served from the read cache, and predictions never change a rating or a statistic.</li>
+<li>A member may see a prediction in the club app only for a challenge they play in, labelled as one with its model and time, never with the consumer that made it.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="v0.1.0">0.1.0: First public version</h2>
+<p class="lede">2026-10-09</p>
+<ul>
+<li>Read-only, keyed access to club data. Each key is limited to the scopes it was granted: <code>players:read</code>, <code>matches:read</code>, <code>ratings:history:read</code>, <code>seasons:read</code>, <code>tournaments:read</code> and <code>schedule:read</code>.</li>
+<li>Players appear under a pseudonymous <code>player_ref</code> that is different for every consumer.</li>
+<li>Roster: <code>/v1/players</code> and <code>/v1/players/:ref</code>.</li>
+<li>Matches: <code>/v1/matches</code>, <code>/v1/matches/:match_ref</code>, a player's matches, head-to-head (<code>/v1/players/:ref/vs/:other_ref</code>), per-season records and rating history.</li>
+<li>Seasons: <code>/v1/seasons</code>, <code>/v1/seasons/:id</code> and standings.</li>
+<li>Tournaments: <code>/v1/tournaments</code>, a tournament, and an event with its entrants and draw, including staged events and external teams.</li>
+<li>Schedule: <code>/v1/sessions</code> and <code>/v1/events</code> (club events), filtered by <code>from</code> and <code>to</code>.</li>
+<li><code>/health</code> and this API's documentation at <code>/documentations</code> need no key.</li>
+<li>This changelog at <code>/changelog</code>, also keyless.</li>
+</ul>
+</section>
+<footer><a href="/documentations">Documentation</a> · <a href="https://example.com/">Club Ladder</a></footer>
+</main>
+</body>
+</html>

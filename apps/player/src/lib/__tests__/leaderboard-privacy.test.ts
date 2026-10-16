@@ -80,6 +80,10 @@ const ALLOWED = new Map<string, string>([
   ['lib/posthog.ts', 'the analytics property type for that same self-identify'],
   ['components/posthog-identify.tsx', 'identifies the signed-in member to themselves'],
   ['lib/tournament-actions.ts', "elo_before for the entrant, .eq('player_id', player.id)"],
+  // A Google Form's mutual doubles pair (00283): both members' doubles_elo is
+  // read on the server to write the pair's combined rating, the figure every
+  // pair carries. Neither member's own number is returned to the caller.
+  ['lib/registration-import.ts', 'combined pair rating written server-side, never returned'],
 ]);
 
 describe('another member\'s rating has a closed set of exits', () => {

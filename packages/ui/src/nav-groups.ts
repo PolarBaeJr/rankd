@@ -9,12 +9,27 @@
 // Adding a destination to a group is one line in the caller's layout; nothing
 // here needs to change.
 
+/**
+ * Rows a menu draws under a parent row, which then opens and closes. Hrefs, not
+ * items: `items` stays the flat list of record, in display order, and this only
+ * says which of them fold under which.
+ */
+export type NavNest = { parent: string; selfLabel: string; children: string[] };
+
 export type NavGroup<T extends { href: string }, I = unknown> = {
   /** Stable across renders: callers key on it so a re-render keeps an open menu open. */
   id: string;
   label: string;
   icon?: I;
   items: T[];
+  nest?: NavNest[];
+};
+
+export type NavTreeItem<T> = {
+  item: T;
+  /** Set on a parent: the label of the row that opens the parent's own page. */
+  selfLabel?: string;
+  children: T[];
 };
 
 export type NavEntry<T extends { href: string }, I = unknown> =
@@ -57,6 +72,37 @@ export function isGroupActive<T extends { href: string }>(
   group: NavGroup<T, unknown>,
 ): boolean {
   return group.items.some((item) => isRouteActive(pathname, item.href));
+}
+
+/**
+ * A group's (already filtered) items as menu rows, with each nest's children
+ * folded under their parent.
+ *
+ * A parent left with no children is a plain row. Children whose parent was
+ * filtered out are promoted to plain rows, so a door this viewer can open is
+ * never hidden behind one they cannot.
+ */
+export function nestItems<T extends { href: string }>(items: T[], nest: NavNest[] = []): NavTreeItem<T>[] {
+  const present = new Map(items.map((item) => [item.href, item]));
+  const folded = new Map<string, { selfLabel: string; children: T[] }>();
+  const childHrefs = new Set<string>();
+  for (const n of nest) {
+    if (!present.has(n.parent)) continue;
+    const children = n.children.flatMap((href) => {
+      const child = present.get(href);
+      return child ? [child] : [];
+    });
+    if (children.length === 0) continue;
+    folded.set(n.parent, { selfLabel: n.selfLabel, children });
+    for (const child of children) childHrefs.add(child.href);
+  }
+  const out: NavTreeItem<T>[] = [];
+  for (const item of items) {
+    if (childHrefs.has(item.href)) continue;
+    const fold = folded.get(item.href);
+    out.push(fold ? { item, selfLabel: fold.selfLabel, children: fold.children } : { item, children: [] });
+  }
+  return out;
 }
 
 /** Every item in the layout, groups opened out, in display order. */

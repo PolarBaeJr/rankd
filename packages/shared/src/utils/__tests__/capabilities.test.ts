@@ -114,16 +114,23 @@ describe('the capability vocabulary', () => {
   // only job was to gate a control on a page somebody is already looking at
   // would be a second name for a door that is already shut. Not a new area
   // either: both live under `audit` and sit behind that area's page key.
-  it('is exactly 144 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(144);
-    expect(new Set(CAPABILITIES).size).toBe(144);
+  //
+  // 144 BECAME 145 with the predictions switch (00282), whose key is
+  // `page.access.predictions`.
+  //
+  // 145 BECAME 147 with Club changes (00286): `changelog.page` and
+  // `changelog.post.write`, a new area, both admin-only and in no baseline.
+  it('is exactly 147 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(147);
+    expect(new Set(CAPABILITIES).size).toBe(147);
   });
 
   // 16 BECAME 17 with `page`, the keys to switched-off features, and 17
-  // BECAME 18 with `events`, club events that are not tournaments.
-  it('has 18 areas, every one of them used', () => {
-    expect(AREAS.length).toBe(18);
-    expect(new Set(AREAS).size).toBe(18);
+  // BECAME 18 with `events`, club events that are not tournaments, and 18
+  // BECAME 19 with `changelog`, the Club changes page (00286).
+  it('has 19 areas, every one of them used', () => {
+    expect(AREAS.length).toBe(19);
+    expect(new Set(AREAS).size).toBe(19);
     for (const area of AREAS) {
       expect(
         CAPABILITIES.some((c) => c.split('.')[0] === area),
@@ -366,16 +373,24 @@ describe('CAPABILITY_GATES', () => {
   // category decides what head start its recorded scores are judged by, which
   // is what correcting a recorded result decides. Asking and cancelling stay
   // with the category cell's own `tournaments.draw.seed.set.write`.
-  it('names 195 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 195 BECAME 196 with the predictions switch (00282). It has no page, so its
+  // key is enforced by predictionsVisible in the members' lib/predictions.ts,
+  // which every prediction card asks, rather than by a FeatureGate.
+  //
+  // 196 BECAME 202 with Club changes (00286): the page, postClubChanges, and
+  // the four actions merged into `changelog.post.write` (add, reword and
+  // delete a pending line, and announce a posted entry).
+  it('names 202 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(195);
-    expect(new Set(sites).size).toBe(195);
-    expect(ENFORCEMENT_POINTS).toBe(195);
+    expect(sites.length).toBe(202);
+    expect(new Set(sites).size).toBe(202);
+    expect(ENFORCEMENT_POINTS).toBe(202);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -1098,16 +1113,18 @@ describe('permits', () => {
   // 131 with the seven keys to switched-off features, and 131 BECAME 139 with
   // club events, and 139 BECAME 141 with the membership and socials switches,
   // and 141 BECAME 142 with the guest waivers switch, and 142 BECAME 144 with
-  // the audit export's two. This number
+  // the audit export's two, and 144 BECAME 145 with the predictions switch,
+  // and 145 BECAME 147 with Club changes.
+  // This number
   // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
   // so every capability added is automatically theirs), and it is written as a
   // literal anyway, because a count derived from the list it is checking would
   // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 144', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 147', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(144);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(147);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

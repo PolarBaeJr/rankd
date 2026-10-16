@@ -157,6 +157,7 @@ export default async function EventPage({
     liveCourtUse,
     waitlist,
     categoryRequests,
+    importRows,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -294,7 +295,26 @@ export default async function EventPage({
             return (data ?? []) as unknown as CategoryRequest[];
           })
       : Promise.resolve(null),
+    // Which entries a Google Form made (00283), for a tag beside them. Ids and
+    // a status only, nothing typed into the form. Missing table: no tags.
+    supabase
+      .from('registration_import_entries')
+      .select('participant_id, pair_id, status')
+      .eq('tournament_event_id', eventId)
+      .in('status', ['entered', 'awaiting_partner'])
+      .then(({ data, error }) => {
+        if (error) {
+          if (['42P01', 'PGRST205'].includes(error.code ?? '')) return [];
+          throw new Error(`Could not read the form entries: ${error.message}`);
+        }
+        return (data ?? []) as { participant_id: string | null; pair_id: string | null; status: 'entered' | 'awaiting_partner' }[];
+      }),
   ]);
+  const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
+  for (const row of importRows) {
+    if (row.pair_id) imported[row.pair_id] = row.status;
+    if (row.participant_id) imported[row.participant_id] = row.status;
+  }
   const busyCourts = courts && liveCourtUse ? [...busyCourtIds(courts, liveCourtUse)] : [];
 
   const pairs: PairWithPlayers[] = (pairRows ?? []) as PairWithPlayers[];
@@ -410,6 +430,7 @@ export default async function EventPage({
         busyCourtIds={busyCourts}
         waitlist={waitlist}
         categoryRequests={categoryRequests}
+        imported={imported}
         viewerId={viewer.id}
       />
     </div>

@@ -8,7 +8,7 @@
 -- which builds every match in history through data_api_match_rows() to count
 -- the season's totals, and then threw the totals away. That doubled the
 -- database work of every standings request, and under ten concurrent requests
--- on the Pi the doubled work is what queued. The header is the season row and
+-- (redacted in export)
 -- nothing else: id, name and whether it is the active season.
 --
 -- SAME VISIBILITY as data_api_seasons: a hidden season is zero rows, so it

@@ -37,11 +37,20 @@ function claimOpen(id: string) {
   for (const [otherId, shut] of openMenus) if (otherId !== id) shut();
 }
 
+// By whole segment, as in nav-groups' isRouteActive.
+function isUnder(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export interface NavMenuItem {
   href: string;
   label: string;
   icon?: React.ComponentType<{ className?: string }>;
   current: boolean;
+  /** Rows folded under this one. The row still links to its own page; a chevron beside it opens them. */
+  children?: NavMenuItem[];
+  /** Label of the first row inside the fold, which opens this row's own page. */
+  selfLabel?: string;
 }
 
 export interface NavMenuLinkProps {
@@ -62,6 +71,10 @@ interface NavMenuProps {
   triggerClassName?: string;
   panelClassName?: string;
   linkClassName?: string;
+  /** The chevron beside a row that has children. */
+  toggleClassName?: string;
+  /** Added to the rows inside a fold. */
+  childIndentClassName?: string;
 }
 
 export function NavMenu({
@@ -75,8 +88,13 @@ export function NavMenu({
   triggerClassName,
   panelClassName,
   linkClassName,
+  toggleClassName,
+  childIndentClassName,
 }: NavMenuProps) {
   const [open, setOpen] = React.useState(false);
+  // Only the folds somebody has toggled. One they have not is open when the
+  // current page is inside it, so the reader starts where they are.
+  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -90,7 +108,9 @@ export function NavMenu({
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelId = `nav-menu-${id}`;
 
-  const links = () => Array.from(panelRef.current?.querySelectorAll<HTMLElement>('a[href]') ?? []);
+  // The fold toggles too, so the arrow keys and the Tab-out below reach them.
+  const focusables = () =>
+    Array.from(panelRef.current?.querySelectorAll<HTMLElement>('a[href], button[data-nav-toggle]') ?? []);
 
   const close = React.useCallback((returnFocus: boolean) => {
     setOpen(false);
@@ -115,6 +135,7 @@ export function NavMenu({
     if (!open) {
       openedByHoverRef.current = false;
       cancelHoverClose();
+      setExpanded({});
     }
   }, [open, cancelHoverClose]);
 
@@ -165,7 +186,7 @@ export function NavMenu({
   React.useEffect(() => {
     if (!open || !pos || !focusFirstRef.current) return;
     focusFirstRef.current = false;
-    links()[0]?.focus();
+    focusables()[0]?.focus();
   }, [open, pos]);
 
   React.useEffect(() => {
@@ -212,7 +233,7 @@ export function NavMenu({
   function handleTriggerKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      if (open) links()[0]?.focus();
+      if (open) focusables()[0]?.focus();
       else {
         focusFirstRef.current = true;
         setOpen(true);
@@ -221,12 +242,12 @@ export function NavMenu({
       // The panel sits at the end of <body>, so the browser's own Tab order
       // would skip it. Step into it instead.
       event.preventDefault();
-      links()[0]?.focus();
+      focusables()[0]?.focus();
     }
   }
 
   function handlePanelKeyDown(event: React.KeyboardEvent) {
-    const all = links();
+    const all = focusables();
     const index = all.indexOf(document.activeElement as HTMLElement);
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
@@ -240,6 +261,25 @@ export function NavMenu({
         close(true);
       }
     }
+  }
+
+  function renderItem(item: NavMenuItem, key: string, className: string | undefined) {
+    const ItemIcon = item.icon;
+    return (
+      <React.Fragment key={key}>
+        {renderLink(item, {
+          className,
+          'aria-current': item.current ? 'page' : undefined,
+          onClick: () => setOpen(false),
+          children: (
+            <>
+              {ItemIcon && <ItemIcon className="w-4 h-4" />}
+              <span>{item.label}</span>
+            </>
+          ),
+        })}
+      </React.Fragment>
+    );
   }
 
   const panel =
@@ -256,20 +296,49 @@ export function NavMenu({
             className={panelClassName}
           >
             {items.map((item) => {
-              const ItemIcon = item.icon;
+              if (!item.children?.length) return renderItem(item, item.href, linkClassName);
+              const isOpen = expanded[item.href] ?? isUnder(pathname, item.href);
+              const subId = `${panelId}-${item.href.replace(/\W/g, '-')}`;
               return (
                 <React.Fragment key={item.href}>
-                  {renderLink(item, {
-                    className: linkClassName,
-                    'aria-current': item.current ? 'page' : undefined,
-                    onClick: () => setOpen(false),
-                    children: (
-                      <>
-                        {ItemIcon && <ItemIcon className="w-4 h-4" />}
-                        <span>{item.label}</span>
-                      </>
-                    ),
-                  })}
+                  <div className="flex items-stretch">
+                    {/* Marked current only while folded: open, the self row
+                        inside carries the mark, so one row lights up, not two. */}
+                    {renderItem(
+                      { ...item, current: item.current && !isOpen },
+                      `${item.href}#row`,
+                      cn(linkClassName, 'flex-1 min-w-0'),
+                    )}
+                    <button
+                      type="button"
+                      data-nav-toggle
+                      aria-expanded={isOpen}
+                      aria-controls={isOpen ? subId : undefined}
+                      aria-label={`${isOpen ? 'Hide' : 'Show'} ${item.label} pages`}
+                      onClick={() => setExpanded((prev) => ({ ...prev, [item.href]: !isOpen }))}
+                      className={toggleClassName}
+                    >
+                      <ChevronDown
+                        aria-hidden
+                        className={cn('w-3.5 h-3.5 transition-transform', isOpen && 'rotate-180')}
+                      />
+                    </button>
+                  </div>
+                  {/* Mounted only while open, never `hidden`: a hidden link
+                      would still be in focusables() and the arrow keys would
+                      stall on it. */}
+                  {isOpen && (
+                    <div id={subId} role="group" aria-label={item.label}>
+                      {renderItem(
+                        { ...item, label: item.selfLabel ?? item.label, current: pathname === item.href, children: undefined },
+                        `${item.href}#self`,
+                        cn(linkClassName, childIndentClassName),
+                      )}
+                      {item.children.map((child) =>
+                        renderItem(child, child.href, cn(linkClassName, childIndentClassName)),
+                      )}
+                    </div>
+                  )}
                 </React.Fragment>
               );
             })}

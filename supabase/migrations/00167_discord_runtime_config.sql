@@ -10,7 +10,7 @@
 -- These two are properties of the SERVER, and they change while the code stands
 -- still: somebody creates a role, renames the audit channel, or the club adds a
 -- second Discord server. Behind env each of those needs a compose recreate on
--- the Pi, which is both heavier than the change deserves and — because the
+-- (redacted in export)
 -- dashboard auto-updater recreates containers by cloning the previous one's env
 -- rather than re-reading env_file — is the exact class of edit that has silently
 -- failed to reach production before.

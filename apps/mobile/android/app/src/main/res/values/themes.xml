@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A platform theme, not Theme.Material3.*: that one lives in the Material
+     Components library, which Compose does not need. It only colours the
+     window before the first frame; Compose draws everything after. The app is
+     dark only, like the club website. -->
+<resources>
+    <style name="Theme.ClubLadder" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+</resources>

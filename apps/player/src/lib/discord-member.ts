@@ -86,19 +86,24 @@ export async function resolveLinkedPlayerIds(
  *   lapsed       deactivated by the inactivity sweep. The web reactivates on
  *                sign-in; Discord does not write that, so it sends them there.
  *   standing     pending approval, suspended, banned, or asked to be deleted.
- *   feature_off  the club has switched challenges off.
+ *   feature_off  the club has switched the feature off (challenges, or fees).
  *   waiver       a current legal document is not accepted.
  */
 export type PlayRefusal = 'not_linked' | 'lapsed' | 'standing' | 'feature_off' | 'waiver';
 
 /**
- * Everything the web checks before a challenge action, for a caller resolved
+ * Everything the web checks before a member action, for a caller resolved
  * from Discord, in the order requirePlayer() checks it. 'unavailable' means a
  * read failed and the route answers 503; it is never a refusal.
+ *
+ * The defaults are a challenge's checks. `feature` is the switch the web action
+ * asserts, and `waiver` whether it also asserts the current legal documents:
+ * a challenge does, sending a fee receipt (/receipt) does not.
  */
 export async function resolveDiscordPlayer(
   supabase: ServiceClient,
-  discordUserId: string
+  discordUserId: string,
+  checks: { feature?: 'challenges' | 'fees'; waiver?: boolean } = {}
 ): Promise<
   | { ok: true; player: DiscordMember }
   | { ok: false; refusal: PlayRefusal }
@@ -122,11 +127,13 @@ export async function resolveDiscordPlayer(
   }
 
   try {
-    await assertFeatureOn('challenges', player as Parameters<typeof assertFeatureOn>[1]);
+    await assertFeatureOn(checks.feature ?? 'challenges', player as Parameters<typeof assertFeatureOn>[1]);
   } catch (err) {
     if (isExpectedFailure(err)) return { ok: false, refusal: 'feature_off' };
     throw err;
   }
+
+  if (checks.waiver === false) return { ok: true, player };
 
   // evaluateLegalGate directly rather than assertCurrentWaiver, so a failed
   // read is a 503 and not a sentence telling the member to sign something.

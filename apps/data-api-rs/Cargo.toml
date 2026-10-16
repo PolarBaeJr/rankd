@@ -1,0 +1,39 @@
+[package]
+name = "data-api-rs"
+version = "0.1.0"
+edition = "2024"
+# The service's version is package.json's (read at build time), not this one.
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "data-api-rs"
+path = "src/main.rs"
+
+# Every version is pinned exactly and Cargo.lock is committed; every cargo
+# command in package.json, CI and the Dockerfile runs with --locked.
+[dependencies]
+http-body-util = "=0.1.5"
+hyper = { version = "=1.11.1", features = ["server", "client", "http1"] }
+hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "ring", "webpki-roots", "tls12"] }
+hyper-util = { version = "=0.1.21", features = ["tokio", "server", "http1", "client-legacy", "server-graceful"] }
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+ryu-js = "=1.0.3"
+serde_json = { version = "=1.0.151", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "=0.11.0"
+tokio = { version = "=1.53.1", default-features = false, features = ["rt", "net", "time", "signal", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "=1.53.1", default-features = false, features = ["macros", "rt", "net", "time", "signal", "sync"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = false
+# NOT abort: a panic in one request's task must become that request's 503, not
+# the end of the process (see server.rs).
+panic = "unwind"

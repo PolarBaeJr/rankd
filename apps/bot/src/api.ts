@@ -1345,6 +1345,63 @@ export function reportChallenge(input: {
   return send('POST', '/api/discord/challenges/report', input, CHALLENGE_TIMEOUT_MS);
 }
 
+// ---- FEE RECEIPTS ----------------------------------------------------------
+
+/**
+ * Why the app declined a /receipt. Closed set; see the receipts route. 'rule'
+ * and 'invalid' carry the app's own sentence; 'file' carries which check the
+ * screenshot failed.
+ */
+export type ReceiptRefusal =
+  | 'not_linked'
+  | 'lapsed'
+  | 'standing'
+  | 'feature_off'
+  | 'waiver'
+  | 'no_login'
+  | 'invalid'
+  | 'rule'
+  | 'file';
+
+export type ReceiptFileFailure = 'bad_url' | 'unreachable' | 'too_large' | 'not_image';
+
+export type ReceiptReply =
+  | { ok: true }
+  | { ok: false; refusal: ReceiptRefusal; message?: string; file?: ReceiptFileFailure };
+
+/**
+ * Runs after a deferred acknowledgement. The app downloads the screenshot from
+ * Discord's CDN (up to 8 MB) and stores it before answering, so this waits
+ * longer than a challenge does.
+ */
+const RECEIPT_TIMEOUT_MS = 25_000;
+
+/** Inside the autocomplete branch's race, like the challenge picker. */
+const RECEIPT_PICKER_TIMEOUT_MS = 900;
+
+/**
+ * Send a fee receipt as the caller. The app is handed the attachment's url,
+ * never its bytes, and downloads it itself from Discord's CDN only.
+ */
+export function submitReceipt(input: {
+  discordUserId: string;
+  fee: string;
+  reference: string;
+  attachmentUrl: string;
+}): Promise<ReceiptReply> {
+  return send('POST', '/api/discord/receipts', input, RECEIPT_TIMEOUT_MS);
+}
+
+/** The caller's own fees a receipt can be sent for, labelled for a picker. */
+export async function fetchOwnFees(discordUserId: string): Promise<{ id: string; label: string }[]> {
+  const result = await get<{ fees?: { id: string; label: string }[] }>(
+    '/api/discord/receipts',
+    discordUserId,
+    RECEIPT_PICKER_TIMEOUT_MS
+  );
+  return result.fees ?? [];
+}
+
 // ---- SIGN-UP ---------------------------------------------------------------
 
 /** What the app asks the bot to draw next. The app decides; the bot renders. */

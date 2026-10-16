@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Select } from '@badminton/ui';
+import { cn, Select } from '@badminton/ui';
 import type { ScopeSeason } from './season-scope';
 
 /**
@@ -27,11 +27,14 @@ export function SeasonSelect({
   seasons,
   selected,
   basePath,
+  className,
 }: {
   seasons: ScopeSeason[];
   selected: ScopeSeason | null;
   /** e.g. "/sessions": the active season is the bare path, others carry ?season= */
   basePath: string;
+  /** Merged over the default classes (tailwind-merge, so a later class wins). */
+  className?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -88,7 +91,10 @@ export function SeasonSelect({
           )}
         </>
       )}
-      className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] pl-3 pr-2 text-sm hover:border-[var(--border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      className={cn(
+        'inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] pl-3 pr-2 text-sm hover:border-[var(--border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+        className,
+      )}
     />
   );
 }

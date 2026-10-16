@@ -347,10 +347,12 @@ describe('every table in the schema is considered for the member data export', (
     expect(drifted, 'player-referencing column(s) missing from the registry').toEqual([]);
   });
 
-  it('names the five tables that reference a member with no foreign key', () => {
-    // WHY THE PARTITION HAS TO BE TOTAL, in five concrete cases. An FK-only
+  it('names the seven tables that reference a member with no foreign key', () => {
+    // WHY THE PARTITION HAS TO BE TOTAL, in seven concrete cases. An FK-only
     // scan finds none of them and every one holds personal information.
     expect(Object.keys(NON_FK_PLAYER_TABLES).sort()).toEqual([
+      'club_change_drafts',
+      'club_change_entries',
       'console_passkey_grace',
       'discord_role_revocations',
       'email_suppressions',
@@ -628,6 +630,21 @@ const FIXTURES: Record<string, StubRow[]> = {
   partnership_stats: [
     { id: 'ps1', player_a_id: PLAYER_ID, player_b_id: SENTINEL, matches_played: 4, wins: 3 },
   ],
+  data_api_predictions: [
+    {
+      id: 'dp1',
+      consumer_id: 'consumer-1',
+      key_id: 'key-1',
+      format: 'doubles',
+      side1_p1: SENTINEL,
+      side1_p2: SENTINEL,
+      side2_p1: PLAYER_ID,
+      side2_p2: SENTINEL,
+      side1_win_probability: 0.64,
+      model: 'WITHHELD-MODEL-NAME',
+      made_at: '2026-10-08T18:00:00Z',
+    },
+  ],
   match_participants: [
     { id: 'mp1', match_id: 'match-1', player_id: PLAYER_ID, team_side: 'a', rating_delta: 12 },
     { id: 'mp2', match_id: 'match-1', player_id: SENTINEL, team_side: 'b', rating_delta: -12 },
@@ -686,6 +703,50 @@ const FIXTURES: Record<string, StubRow[]> = {
       loser_pair_id: SENTINEL,
       result_entered_by: SENTINEL,
       ready_player_ids: [PLAYER_ID, SENTINEL],
+    },
+  ],
+  registration_imports: [
+    {
+      id: 'ri-1',
+      binding_id: 'rif-1',
+      key_id: SENTINEL,
+      response_id: 'resp-1',
+      submitted_at: '2026-10-01T18:00:00Z',
+      payload_hash: 'abc',
+      result: [{ item: 1, status: 'pending' }],
+      submitter_player_id: PLAYER_ID,
+      submitter_name: null,
+      submitter_email: null,
+      superseded_by: null,
+      created_at: '2026-10-01T18:00:01Z',
+      updated_at: '2026-10-01T18:00:01Z',
+    },
+  ],
+  registration_import_entries: [
+    {
+      id: 'rie-1',
+      import_id: 'ri-1',
+      item: 1,
+      tournament_event_id: 'ev-1',
+      club_event_id: null,
+      entrant_id: PLAYER_ID,
+      requested_partner_id: SENTINEL,
+      partner_email: PAYLOAD_EMAIL,
+      partner_name: 'Typed Partner',
+      status: 'undone',
+      undone_by: SENTINEL,
+      undone_at: '2026-10-02T18:00:00Z',
+    },
+    {
+      id: 'rie-2',
+      import_id: 'ri-other',
+      item: 1,
+      tournament_event_id: 'ev-1',
+      club_event_id: null,
+      entrant_id: SENTINEL,
+      requested_partner_id: PLAYER_ID,
+      status: 'awaiting_partner',
+      undone_by: null,
     },
   ],
   tournament_event_waitlist: [
@@ -1020,6 +1081,40 @@ describe('no third party survives into the file', () => {
     expect(rows[0]).not.toHaveProperty('resolved_by');
     expect(rows[0]).toHaveProperty('resolved_by_role');
     expect(rows[0]!.status).toBe('removed');
+  });
+
+  it('exports form entries without the other member or anything typed about a partner', async () => {
+    const result = await assembleMemberExport(stubClient(), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const rows = result.document.data.registration_import_entries as Array<Record<string, unknown>>;
+    expect(rows.map((r) => [r.id, r.you_are])).toEqual([
+      ['rie-1', 'the entrant'],
+      ['rie-2', 'the named partner'],
+    ]);
+    for (const row of rows) {
+      for (const column of ['entrant_id', 'requested_partner_id', 'undone_by', 'partner_email', 'partner_name']) {
+        expect(row, column).not.toHaveProperty(column);
+      }
+    }
+    expect(rows[0]!.undone_by_role).toBeTruthy();
+    expect(rows[1]).not.toHaveProperty('import_id');
+    const imports = result.document.data.registration_imports as Array<Record<string, unknown>>;
+    expect(imports).toHaveLength(1);
+    expect(imports[0]).not.toHaveProperty('key_id');
+  });
+
+  it('exports predictions with the member\'s side first and the model withheld', async () => {
+    const result = await assembleMemberExport(stubClient(), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const rows = result.document.data.data_api_predictions as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.my_side_win_probability).toBe(0.36);
+    expect(rows[0]!.partner).toMatch(/^member_\d+$/);
+    expect(rows[0]!.opponents).toHaveLength(2);
+    const serialised = JSON.stringify(rows);
+    expect(serialised).not.toContain('WITHHELD-MODEL-NAME');
+    expect(serialised).not.toContain('consumer-1');
+    expect(serialised).not.toContain('key-1');
   });
 
   it('never emits a jsonb payload key outside the allowlist', async () => {

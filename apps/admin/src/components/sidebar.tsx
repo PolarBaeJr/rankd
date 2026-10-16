@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { cn, NavMenu, visibleEntries, isRouteActive, isGroupActive } from '@badminton/ui';
+import { cn, NavMenu, nestItems, visibleEntries, isRouteActive, isGroupActive } from '@badminton/ui';
 // Deep import, not the '@badminton/shared' barrel — see the player middleware.
 import { signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { withBase } from '@/lib/base-path';
-import { LogOut } from 'lucide-react';
+import { memberAppUrl } from '@/lib/player-url';
+import { LogOut, ArrowLeftRight } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import {
@@ -219,11 +220,27 @@ export function Sidebar({
                 label={group.label}
                 active={isActive}
                 pathname={pathname}
-                items={group.items.map((item) => ({
-                  href: item.href,
-                  label: item.label,
-                  current: isRouteActive(pathname, item.href),
-                }))}
+                // A parent with folded rows is current only on its own page,
+                // exactly: under it, the child row is the one that lights up.
+                items={nestItems(group.items, group.nest).map(({ item, selfLabel, children }) =>
+                  children.length > 0
+                    ? {
+                        href: item.href,
+                        label: item.label,
+                        current: pathname === item.href,
+                        selfLabel,
+                        children: children.map((child) => ({
+                          href: child.href,
+                          label: child.label,
+                          current: isRouteActive(pathname, child.href),
+                        })),
+                      }
+                    : {
+                        href: item.href,
+                        label: item.label,
+                        current: isRouteActive(pathname, item.href),
+                      },
+                )}
                 renderLink={(item, props) => <Link href={item.href} {...props} />}
                 triggerClassName={cn(
                   navText(isActive),
@@ -233,11 +250,20 @@ export function Sidebar({
                 )}
                 panelClassName="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl overflow-hidden shadow-xl py-1"
                 linkClassName="flex items-center gap-2.5 px-4 min-h-[40px] text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] focus-visible:outline-none focus-visible:bg-[var(--border-hover)] aria-[current=page]:text-[var(--text-primary)] aria-[current=page]:shadow-[inset_2px_0_0_var(--color-accent)] transition-colors"
+                toggleClassName="grid w-9 place-items-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] focus-visible:outline-none focus-visible:bg-[var(--border-hover)]"
+                childIndentClassName="pl-8"
               />
             );
           })}
         </nav>
         <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+          <a
+            href={memberAppUrl()}
+            className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap"
+          >
+            <ArrowLeftRight className="w-4 h-4" aria-hidden />
+            <span>Member app</span>
+          </a>
           {userEmail && (
             <span className="hidden lg:block text-xs text-[var(--text-muted)] truncate max-w-[200px]">
               {userEmail}

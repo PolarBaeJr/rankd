@@ -38,8 +38,11 @@ export {
   isRouteActive,
   isGroupActive,
   flattenEntries,
+  nestItems,
   type NavGroup,
   type NavEntry,
+  type NavNest,
+  type NavTreeItem,
 } from './nav-groups';
 // The guided tour's decisions, React-free for the same reason again. The
 // component comes through './components'.

@@ -55,6 +55,7 @@ import {
   dropColumns,
   filterAuditPayload,
   truncateEndpoint,
+  rewritePredictionRelative,
   rewriteRequesterRelative,
 } from './project';
 
@@ -388,6 +389,14 @@ export async function assembleMemberExport(
       ['id', 'match_type', 'total_matches', 'last_played_at', 'updated_at'],
     ),
   );
+
+  // Predictions (00282) are stored in a canonical side order, so the member may
+  // be in any of the four slots: all four are queried, and every row is
+  // rewritten with the member's side first.
+  const predictions = await reader.all('data_api_predictions', (q) =>
+    q.or(orEq(['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2'], playerId)),
+  );
+  data.data_api_predictions = predictions.map((row) => rewritePredictionRelative(row, playerId, members));
 
   const partnerships = await reader.all('partnership_stats', (q) =>
     q.or(orEq(['player_a_id', 'player_b_id'], playerId)),
@@ -907,6 +916,51 @@ export async function assembleMemberExport(
       data.club_events.push({ ...row, you_created_this: true });
     }
   }
+
+  // Google Form registrations (00283). The member's own responses, then the
+  // entries they asked for and the entries another member's form named them as
+  // a partner in. Columns are named rather than starred, so a typed partner
+  // name or email can never ride along.
+  data.registration_imports = (
+    await reader.all(
+      'registration_imports',
+      (q) => q.eq('submitter_player_id', playerId),
+      'id, binding_id, response_id, submitted_at, result, superseded_by, created_at, updated_at',
+    )
+  ).map((row) =>
+    dropColumns(row, ['submitter_player_id', 'key_id', 'payload_hash', 'submitter_name', 'submitter_email']),
+  );
+  const entryColumns =
+    'id, import_id, item, tournament_event_id, club_event_id, category, wants_waitlist, status, reason, confirmed_at, confirm_email_sent_at, undone_at, undone_by, created_at, updated_at';
+  const ownEntries = await reader.all(
+    'registration_import_entries',
+    (q) => q.eq('entrant_id', playerId),
+    entryColumns,
+  );
+  const namedAsPartner = await reader.all(
+    'registration_import_entries',
+    (q) => q.eq('requested_partner_id', playerId),
+    entryColumns,
+  );
+  const entriesAboutMember: Row[] = [
+    ...ownEntries.map((row) => ({ ...row, you_are: 'the entrant' })),
+    ...namedAsPartner
+      .filter((row) => !ownEntries.some((own) => own.id === row.id))
+      .map((row) => ({ ...dropColumns(row, ['import_id']), you_are: 'the named partner' })),
+  ];
+  data.registration_import_entries = entriesAboutMember.map((row) => ({
+    ...dropColumns(row, [
+      'entrant_id',
+      'requested_partner_id',
+      'undone_by',
+      'external_name',
+      'external_email',
+      'partner_name',
+      'partner_email',
+      'confirm_email_error',
+    ]),
+    undone_by_role: officerDescriptor(row.undone_by as string | null),
+  }));
 
   // Announcements they wrote, reduced to the title and the dates: the
   // announcement itself was published to the whole club.

@@ -42,7 +42,7 @@ const SEASON = { id: 'season-1', name: 'Fall 2026' };
  * assertion below permits, so forgetting the filter fails rather than passing
  * under a name that looks close enough.
  */
-function makeClient(rows: Record<string, { amount_cents: number | null }[]>) {
+function makeClient(rows: Record<string, { amount_cents: number | null; method?: string | null }[]>) {
   const tables: string[] = [];
   const client = {
     from(table: string) {
@@ -168,6 +168,27 @@ describe('the dashboard finance fetch', () => {
     // an option either: entry money and reinstatements are separate
     // capabilities' books.
     expect(finances?.clubFees?.byCategory).toEqual([]);
+  });
+
+  // The Season dues panel draws the club's dues and the dues Campus Rec collected
+  // as separate segments, and both come off this one read of the dues ledger.
+  it('splits the dues Campus Rec collected off the club figure in the same read', async () => {
+    const { supabase, tables } = makeClient({
+      club_fees: [
+        { amount_cents: 2000, method: 'cash' },
+        { amount_cents: 4000, method: 'sfu_rec' },
+      ],
+    });
+
+    const finances = await getDashboardFinances(supabase, SEASON, {
+      expenses: false,
+      clubFees: true,
+      otherIncome: false,
+    });
+
+    expect(tables).toEqual(['club_fees']);
+    expect(finances?.clubFees?.total).toBe(2000);
+    expect(finances?.clubFees?.collectedBySfuRec).toBe(4000);
   });
 
   it('reads only the other-income ledger for somebody who may only see it', async () => {

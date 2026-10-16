@@ -7,6 +7,8 @@ import Link from 'next/link';
 import { AvatarChip } from '@badminton/ui';
 import { CHALLENGE_STATUS_TAG, PARTICIPANT_CONFIRM_TAG } from '@badminton/shared';
 import { viewerMaySeeChallenge } from '@/lib/challenge-visibility';
+import { getMatchupPrediction, predictionsVisible } from '@/lib/predictions';
+import { MatchupPrediction } from '@/components/matchup-prediction';
 
 export default async function ChallengeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -69,6 +71,20 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
   const sideA = participants.filter((cp) => cp.team_side === 'a');
   const sideB = participants.filter((cp) => cp.team_side === 'b');
 
+  // A win prediction for the matchup, shown only to a member playing in it
+  // (get_matchup_prediction enforces the same in SQL), and only until a result
+  // is recorded: once there is a score the prediction has nothing left to say.
+  const prediction =
+    myParticipant &&
+    !match &&
+    (challenge.type === 'singles' || challenge.type === 'doubles') &&
+    (await predictionsVisible(player))
+      ? await getMatchupPrediction(
+          challenge.type,
+          sideA.map((cp) => cp.player_id),
+          sideB.map((cp) => cp.player_id),
+        )
+      : null;
 
   return (
     <div data-screen-label="Challenge Detail" style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -196,6 +212,15 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
               </div>
             ))}
           </div>
+
+          {prediction && (
+            <MatchupPrediction
+              probability={prediction.probability}
+              sideLabel="Team A"
+              model={prediction.model}
+              madeAt={prediction.madeAt}
+            />
+          )}
 
           {match && (
             <div

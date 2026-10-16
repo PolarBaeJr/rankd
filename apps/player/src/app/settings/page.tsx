@@ -892,6 +892,19 @@ export default function SettingsPage() {
                 <span className="mono tag">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
               </div>
             </div>
+            <Link
+              href="/whats-new"
+              className="settings-row settings-row-nav"
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
+              <div>
+                <div className="settings-row-label">What&apos;s new</div>
+                <div className="settings-row-hint">What changed in each version of the app.</div>
+              </div>
+              <div className="settings-row-control">
+                <ChevronRight size={16} className="text-[var(--mute)]" />
+              </div>
+            </Link>
           </Section>
 
           <Section icon={LogOut} title="Account">

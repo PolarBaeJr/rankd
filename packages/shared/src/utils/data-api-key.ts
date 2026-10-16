@@ -5,7 +5,9 @@ import { createHash } from 'node:crypto';
 // presented bearer token and asks data_api_verify_key for the same digest. If
 // they diverged every key would be a 401 with nothing in any log saying why.
 // apps/data-api carries its own copy (it has no runtime dependencies) and its
-// test suite asserts that copy against this file.
+// test suite asserts that copy against this file. apps/data-api-rs, the Rust
+// build, cannot import it: its src/key.rs is a copy and its tests/key.rs reads
+// the prefix and pattern off this file.
 //
 // Node-only (node:crypto): imported by subpath, NOT via the barrel.
 
@@ -21,9 +23,9 @@ export function hashDataApiKey(key: string): string {
 
 /**
  * Every scope a key can carry. The SQL CHECK data_api_keys_scope_vocabulary
- * (00264) admits exactly these, the console offers exactly these, and
+ * (00283) admits exactly these, the console offers exactly these, and
  * apps/data-api keeps a copy in src/scopes.ts that its tests assert against
- * this list.
+ * this list, as apps/data-api-rs does in src/scopes.rs.
  */
 export const DATA_API_SCOPES = [
   'players:read',
@@ -32,6 +34,8 @@ export const DATA_API_SCOPES = [
   'seasons:read',
   'tournaments:read',
   'schedule:read',
+  'predictions:write',
+  'registrations:write',
 ] as const;
 
 export type DataApiScope = (typeof DATA_API_SCOPES)[number];

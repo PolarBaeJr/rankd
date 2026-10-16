@@ -76,6 +76,19 @@ export function NetPositionStrip({
             {inTheRed ? 'Spending more than the club has taken in' : 'In the positives'}
           </p>
         </div>
+        {/* Fees paid on the Campus Rec website. Those members are paid, but
+            Campus Rec took the money, so it is in neither In nor Net and is shown here
+            on its own. Only when there is some: a $0.00 cell for a route the
+            club may never use is noise. */}
+        {income.collectedBySfuRecCents > 0 && (
+          <div>
+            <p className="stat-label">Collected by Campus Rec</p>
+            <p className={VALUE}>
+              <Atomic>{money(income.collectedBySfuRecCents)}</Atomic>
+            </p>
+            <p className="text-xs text-[var(--text-muted)] mt-2">Not counted in In or Net</p>
+          </div>
+        )}
       </div>
 
       {/* Where the money went. Rendered from the same rows that produced the

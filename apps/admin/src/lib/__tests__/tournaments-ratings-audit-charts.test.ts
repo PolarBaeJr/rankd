@@ -4,25 +4,22 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { EntriesByEvent } from '@/app/tournaments/entries-by-event';
 import type { IndexEvent } from '@/lib/tournament-index';
 import { KFactorPanel } from '@/app/ratings/k-factor-panel';
-import { AuditActivityChart } from '@/app/audit/activity-chart';
 
 /**
- * THE CHART PANELS ON /tournaments, /ratings AND /audit, RENDERED.
+ * THE CHART PANELS ON /tournaments AND /ratings, RENDERED.
  *
  * Same split as fees-season-charts.test.ts: charts.test.ts pins the arithmetic,
  * and this pins WHICH BRANCH a panel takes for a given set of rows — the half a
  * pure-function test cannot reach, and the half a reader actually gets. Each of
- * these three has a refusal in it that a maths test would sail straight past: a
- * capacity that must not be drawn when any event is uncapped, a K-factor that
- * must come from settings rather than the engine's constants, and a scale that
- * returns null on one day and must produce a SENTENCE rather than nothing.
+ * these two has a refusal in it that a maths test would sail straight past: a
+ * capacity that must not be drawn when any event is uncapped, and a K-factor
+ * that must come from settings rather than the engine's constants.
  *
  * THE FIXTURES ARE STAGING'S ACTUAL SHAPE, read off the database on 2026-08-11
  * and transcribed rather than invented: an open tournament whose two events are
  * both capped and one of which is completely empty, a six-event tournament with
- * three separate `mens_singles` draws and no caps at all, a rating_defaults row
- * whose K-factors have been EDITED away from the engine defaults, and an audit
- * log of twenty rows spread over six days.
+ * three separate `mens_singles` draws and no caps at all, and a rating_defaults
+ * row whose K-factors have been EDITED away from the engine defaults.
  *
  * createElement rather than JSX, and .ts rather than .tsx, for the reason the
  * sibling files give: these are server components with no state and no effects,
@@ -230,69 +227,5 @@ describe('KFactorPanel', () => {
     // `cents` is the BarPart field name and holds a head count here. The money
     // formatter would render "$0.98", which is the failure this pins.
     expect(out).not.toContain('$');
-  });
-});
-
-/* -------------------------------------------------------------------------- */
-/* /audit                                                                      */
-/* -------------------------------------------------------------------------- */
-
-// Staging's audit log: twenty rows over six club-local days.
-const STAGING_LOG = [
-  ...Array.from({ length: 1 }, () => ({ created_at: '2026-08-06T18:00:00Z' })),
-  ...Array.from({ length: 5 }, () => ({ created_at: '2026-08-07T18:00:00Z' })),
-  ...Array.from({ length: 2 }, () => ({ created_at: '2026-08-09T18:00:00Z' })),
-  ...Array.from({ length: 4 }, () => ({ created_at: '2026-08-10T18:00:00Z' })),
-  ...Array.from({ length: 7 }, () => ({ created_at: '2026-08-11T18:00:00Z' })),
-  ...Array.from({ length: 1 }, () => ({ created_at: '2026-08-12T18:00:00Z' })),
-];
-
-describe('AuditActivityChart', () => {
-  it('draws the run and counts the actions in its own noun', () => {
-    const out = html(AuditActivityChart, { logs: STAGING_LOG, scopeLabel: 'Fall 2026' });
-    expect(out).toContain('20 actions');
-    expect(out).toContain('Fall 2026');
-    // A step path, never a diagonal: nothing happened on 8 August and the shape
-    // has to say so. Horizontal-then-vertical is what an H/V pair encodes.
-    expect(out).toContain('<path');
-    expect(out).toMatch(/ H[\d.]+ V[\d.]+/);
-  });
-
-  it('buckets by club-local day, not by slicing the UTC string', () => {
-    // 03:00Z on the 12th is 20:00 on the 11th in Vancouver. Slicing the ISO
-    // string would file it under a seventh day; the club sees six.
-    const out = html(AuditActivityChart, {
-      logs: [
-        { created_at: '2026-08-11T18:00:00Z' },
-        { created_at: '2026-08-12T03:00:00Z' },
-      ],
-      scopeLabel: 'Last 30 days',
-    });
-    // Both land on 11 August, which leaves ONE dated day — and one day is not a
-    // series, so the panel refuses rather than stretching a dot across the box.
-    expect(out).toContain('happened on one day');
-  });
-
-  it('refuses a single day with a sentence rather than a flat line', () => {
-    const out = html(AuditActivityChart, {
-      logs: [{ created_at: '2026-08-11T18:00:00Z' }, { created_at: '2026-08-11T19:00:00Z' }],
-      scopeLabel: 'Last 30 days',
-    });
-    expect(out).toContain('happened on one day');
-    expect(out).not.toContain('<path');
-  });
-
-  it('says nothing was recorded rather than drawing an empty axis', () => {
-    const out = html(AuditActivityChart, { logs: [], scopeLabel: 'Full history' });
-    expect(out).toContain('Nothing was recorded');
-    expect(out).not.toContain('<path');
-  });
-
-  it('reads only created_at, so no name can reach the drawing', () => {
-    const out = html(AuditActivityChart, {
-      logs: STAGING_LOG.map((l) => ({ ...l, actor: { full_name: 'Aiko Tanaka' }, reason: 'x' })),
-      scopeLabel: 'Fall 2026',
-    });
-    expect(out).not.toContain('Aiko');
   });
 });

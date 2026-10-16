@@ -29,6 +29,23 @@ export function isReservedMethod(value: string | null | undefined): boolean {
 }
 
 /**
+ * The stored value for a fee paid on the Campus Rec website. Campus Rec takes that
+ * money, not the club, so the console's income totals report it as its own
+ * figure (see admin's season-income.ts). The member is paid either way.
+ */
+export const SFU_REC_METHOD: PaymentMethodValue = 'sfu_rec';
+
+/**
+ * True only for the exact stored value. A custom method somebody typed by hand
+ * ("Campus Rec", "Campus Rec website") is NOT matched: free text is club money unless
+ * an exec picks the fixed option, so a guess can never move a payment out of
+ * the club's income.
+ */
+export function isCollectedBySfuRec(method: string | null | undefined): boolean {
+  return method === SFU_REC_METHOD;
+}
+
+/**
  * Turn the dropdown selection (plus any custom text) into the single string
  * stored on the fee row. Returns undefined when nothing was chosen — method is
  * optional and an empty string would be stored as a meaningless "".

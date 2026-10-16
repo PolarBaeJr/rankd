@@ -221,7 +221,12 @@ export async function loadOutstandingMembers(admin: AdminClient, season: Season,
   type Fee = { id: string; player_id: string; amount_cents: number | null; paid_at: string | null; payment_reminded_at: string | null; club_event_id?: string | null };
   const rosterRows = unwrap(roster, 'FEE-102') as Player[];
   const duesRows = unwrap(dues, 'FEE-102') as Fee[];
-  const eventFees = unwrap(eventFeesRaw, 'FEE-102') as Fee[];
+  // A non-member a Google Form signed up (00284) owes a NAMED event row with no
+  // player_id. This list is per member, so those rows are not members' lines;
+  // the event's own page lists them.
+  const eventFees = (unwrap(eventFeesRaw, 'FEE-102') as (Omit<Fee, 'player_id'> & { player_id: string | null })[]).filter(
+    (f): f is Fee => f.player_id != null,
+  );
 
   // Event lines can belong to members outside the roster (a pending member
   // who signed up, say). Exec and fee-exempt members are filed no event fee,

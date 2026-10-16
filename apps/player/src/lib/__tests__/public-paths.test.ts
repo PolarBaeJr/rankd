@@ -63,10 +63,36 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/api/passkey/login/options')).toBe(true);
       expect(isPublicPath('/api/passkey/register/options')).toBe(false);
     });
+
+    // Only the app's login pair. Anything else under /api/passkey/app/ stays
+    // gated until it is deliberately listed.
+    it('lets the native app passkey sign-in through, and nothing else under app/', () => {
+      expect(isPublicPath('/api/passkey/app/login/options')).toBe(true);
+      expect(isPublicPath('/api/passkey/app/login/verify')).toBe(true);
+      expect(isPublicPath('/api/passkey/app/register/options')).toBe(false);
+      expect(isPublicPath('/api/passkey/app/loginx')).toBe(false);
+      expect(isPublicPath('/api/passkey/app')).toBe(false);
+    });
+
+    // The native app's bearer routes check the token themselves; a 307 to
+    // /login would reach the app as HTML. By whole segment only.
+    it('lets the native app routes through, by whole segment', () => {
+      expect(isPublicPath('/api/app/actions/x')).toBe(true);
+      expect(isPublicPath('/api/app/challenges/context')).toBe(true);
+      expect(isPublicPath('/api/appx')).toBe(false);
+      expect(isPublicPath('/api/ap')).toBe(false);
+    });
+
+    // Android and Apple fetch these anonymously and follow no redirect.
+    it('lets the native app trust files through', () => {
+      expect(isPublicPath('/.well-known/assetlinks.json')).toBe(true);
+      expect(isPublicPath('/.well-known/apple-app-site-association')).toBe(true);
+      expect(isPublicPath('/.well-knownx/assetlinks.json')).toBe(false);
+    });
   });
 
   describe('public pages', () => {
-    it.each(['/', '/login', '/login/forgot', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials'])(
+    it.each(['/', '/login', '/login/forgot', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials', '/whats-new'])(
       'treats %s as public',
       (path) => {
         expect(isPublicPath(path)).toBe(true);
@@ -86,6 +112,11 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/socialsX')).toBe(false);
       expect(isPublicPath('/socials/anything')).toBe(false);
       expect(isPublicPath('/fees')).toBe(false);
+    });
+
+    it('matches /whats-new exactly', () => {
+      expect(isPublicPath('/whats-newX')).toBe(false);
+      expect(isPublicPath('/whats-new/1.1.1')).toBe(false);
     });
 
     // A guest has no account, and a proof link is opened by whoever holds it.

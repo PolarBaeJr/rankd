@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CHANGELOG_HTML } from '../changelog-page.js';
 import { DOCS_HTML } from '../docs-page.js';
 import { QUERY_PARAMS } from '../params.js';
 import { DATA_API_SCOPES } from '../scopes.js';
@@ -508,13 +509,15 @@ function concrete(template: string): string {
 }
 
 const KEYED = ROUTES.filter((r) => r.scope !== null);
+// The read routes. /v1/predictions is a write and has its own file.
+const READS = KEYED.filter((r) => r.methods === undefined);
 
-describe('every keyed route', () => {
-  it.each(KEYED.map((r) => [r.template, r.scope!] as const))('%s answers 200 with an all-scopes key', async (template) => {
+describe('every keyed read route', () => {
+  it.each(READS.map((r) => [r.template, r.scope!] as const))('%s answers 200 with an all-scopes key', async (template) => {
     await body(concrete(template));
   });
 
-  it.each(KEYED.map((r) => [r.template, r.scope!] as const))('%s 403s a key without %s', async (template, scope) => {
+  it.each(READS.map((r) => [r.template, r.scope!] as const))('%s 403s a key without %s', async (template, scope) => {
     const other = newKey();
     grant(
       h,
@@ -528,14 +531,14 @@ describe('every keyed route', () => {
     expect(h.calls.map((c) => c.fn)).toEqual(['data_api_verify_key']);
   });
 
-  it.each(KEYED.map((r) => [r.template] as const))('%s 405s a POST before auth', async (template) => {
+  it.each(READS.map((r) => [r.template] as const))('%s 405s a POST before auth', async (template) => {
     const res = await get(h, concrete(template), undefined, { method: 'POST' });
     expect(res.status).toBe(405);
     expect(res.headers.get('allow')).toBe('GET');
     expect(h.calls).toHaveLength(0);
   });
 
-  it.each(KEYED.filter((r) => r.strict).map((r) => [r.template] as const))(
+  it.each(READS.filter((r) => r.strict).map((r) => [r.template] as const))(
     '%s 400s an unknown parameter without asking the database',
     async (template) => {
       const res = await get(h, `${concrete(template)}?bogus=1`, key);
@@ -545,7 +548,7 @@ describe('every keyed route', () => {
     },
   );
 
-  it.each(KEYED.filter((r) => r.template.includes(':')).map((r) => [r.template] as const))(
+  it.each(READS.filter((r) => r.template.includes(':')).map((r) => [r.template] as const))(
     '%s 404s a malformed path value without asking the database',
     async (template) => {
       const bad = template.replace(/:[a-z_]+/g, 'nope');
@@ -1159,8 +1162,9 @@ describe('route table drift', () => {
     }
   });
 
-  it('has no em dash in the docs page or API.md', () => {
+  it('has no em dash in the docs page, the changelog or API.md', () => {
     expect(DOCS_HTML).not.toContain('—');
+    expect(CHANGELOG_HTML).not.toContain('\u2014');
     expect(apiMd).not.toContain('—');
   });
 });

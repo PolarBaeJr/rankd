@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DATA_API_SCOPES } from '../scopes.js';
 // The console's list. If it ever gains a scope this service does not know,
@@ -11,10 +11,16 @@ describe('scope vocabulary agrees with the console and the database', () => {
   });
 
   it('is exactly what the newest vocabulary CHECK admits', () => {
-    const sql = readFileSync(
-      new URL('../../../../supabase/migrations/00264_the_data_api_reads_more_scopes.sql', import.meta.url),
-      'utf8',
-    );
+    // The last migration to restate the CHECK is the one in force.
+    const dir = new URL('../../../../supabase/migrations/', import.meta.url);
+    const newest = readdirSync(dir)
+      .filter((name) => /^\d{5}_.*\.sql$/.test(name))
+      .sort()
+      .map((name) => readFileSync(new URL(name, dir), 'utf8'))
+      .filter((text) => text.includes('ADD CONSTRAINT data_api_keys_scope_vocabulary'))
+      .pop();
+    expect(newest).toBeDefined();
+    const sql = newest!;
     const check = /ADD CONSTRAINT data_api_keys_scope_vocabulary\s+CHECK \(scopes <@ ARRAY\[([^\]]+)\]/.exec(sql);
     expect(check).not.toBeNull();
     const admitted = [...check![1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]);

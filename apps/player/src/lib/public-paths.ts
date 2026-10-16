@@ -14,7 +14,7 @@
  * Two kinds of entry live here and they are worth telling apart:
  *
  *  - PAGES anyone may read (`/`, `/legal`, `/leaderboard`, `/membership`,
- *    `/socials`).
+ *    `/socials`, `/whats-new`).
  *  - ROUTES THAT CARRY THEIR OWN CREDENTIAL — a signed token, a bearer secret,
  *    a passkey challenge. These are not "public" in the sense of unprotected;
  *    they are protected by something the session gate cannot see, and putting
@@ -44,6 +44,22 @@ export function isPublicPath(pathname: string): boolean {
     // Passkey sign-in. Necessarily reachable without a session — completing it
     // is what creates one. Only the /login pair; /register still needs one.
     pathname.startsWith('/api/passkey/login') ||
+    // The native app's passkey sign-in pair, same reason. Only app/login, with
+    // the trailing slash; never /api/passkey/app/ wholesale, so anything added
+    // under it later (an app enrolment route, say) is gated until someone
+    // decides otherwise here.
+    pathname.startsWith('/api/passkey/app/login/') ||
+    // The native app's routes. They carry the member's Supabase access token as
+    // a bearer and check it themselves (resolveAppActor); the app has no cookie
+    // for the gate to see, and a 307 to /login would reach it as HTML. Trailing
+    // slash so /api/appx can never match.
+    pathname.startsWith('/api/app/') ||
+    // assetlinks.json and apple-app-site-association. Android and Apple fetch
+    // these anonymously and neither follows a redirect, so behind the gate the
+    // 307 to /login reads as "no app is trusted" and passkeys stop working in
+    // the native app with nothing logged. The matcher in middleware.ts excludes
+    // the prefix too; this is the testable guard.
+    pathname.startsWith('/.well-known/') ||
     // The Discord bot's surface. It authenticates as a SERVICE (constant-time
     // bearer compare in isAuthorizedDiscordService, which fails closed when the
     // secret is unset) and has no session cookie at all.
@@ -63,6 +79,8 @@ export function isPublicPath(pathname: string): boolean {
     // join. Exact: the page has no subroutes. The statement a member owes is
     // /fees, which stays gated.
     pathname === '/membership' ||
+    // Release notes, readable before joining. Exact: no subroutes.
+    pathname === '/whats-new' ||
     // The club's social links. Exact, same reason.
     pathname === '/socials' ||
     // A guest with no account signs the waiver here, and the proof link under

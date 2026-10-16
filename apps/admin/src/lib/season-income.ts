@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { unwrap, type FeeType } from '@badminton/shared';
+import { isCollectedBySfuRec, unwrap, type FeeType } from '@badminton/shared';
 
 /**
  * Money the club actually took in during a season.
@@ -47,6 +47,13 @@ import { unwrap, type FeeType } from '@badminton/shared';
  *
  * Only rows with paid_at set count, in EVERY ledger — one rule, not one per
  * kind. An unpaid or waived row is a liability, not income.
+ *
+ * MONEY CAMPUS REC COLLECTED IS NOT THE CLUB'S INCOME. A fee paid on the Campus Rec
+ * website (method 'sfu_rec') is taken by Campus Rec, not by the club; e-transfers
+ * and cash land in the club's own hands. Those rows are still PAID (paid status,
+ * outstanding lists and receipts never read this file), but they are kept out
+ * of every total here and reported beside it as collectedBySfuRecCents. The
+ * split happens in foldLedgerRows, so it reaches every figure built on it.
  */
 export interface SeasonIncome {
   /** Everything below, added up. This is the number to show as "income". */
@@ -58,6 +65,12 @@ export interface SeasonIncome {
   eventCents: number;
   /** Donations, grants, socials — 00073. */
   otherCents: number;
+  /**
+   * Paid fees Campus Rec collected, across all four fee kinds. NOT in totalCents
+   * or in any figure above: it is the sum of each fee ledger's
+   * collectedBySfuRec, taken from the same reads, never a second query.
+   */
+  collectedBySfuRecCents: number;
   /**
    * EVERY INCOME LEDGER'S DATED AMOUNTS, MERGED AND UNLABELLED.
    *
@@ -121,6 +134,12 @@ export interface LedgerRead {
    * breakdown chart that says nothing.
    */
   byCategory: { category: string; cents: number }[];
+  /**
+   * Paid rows whose method is 'sfu_rec', summed. Campus Rec collected this money,
+   * so it is in none of `total`, `payments` or `byCategory`. Always 0 for a
+   * ledger read without the method column (club_ledger has none).
+   */
+  collectedBySfuRec: number;
 }
 
 /**
@@ -133,6 +152,8 @@ export type LedgerAmountRow = {
   amount_cents: number | null;
   paid_at?: string | null;
   category?: string | null;
+  /** How the fee was paid. Only club_fees has it; see collectedBySfuRec. */
+  method?: string | null;
 };
 
 /**
@@ -160,13 +181,25 @@ export type LedgerAmountRow = {
  * "not recorded" — must apply it before calling, exactly as the queries do.
  * Moving the filter in here would silently change what every existing caller
  * counts.
+ *
+ * CAMPUS REC ROWS ARE SET ASIDE HERE, and only here. A row whose method is exactly
+ * 'sfu_rec' goes into `collectedBySfuRec` and into nothing else, so `total`,
+ * `payments` and `byCategory` stay three readings of one set and the chart's
+ * last point is still the figure. A waiver (method 'waived', amount 0) is
+ * club money as before and adds nothing. A custom method is club money too,
+ * even one that reads "Campus Rec": see isCollectedBySfuRec.
  */
 export function foldLedgerRows(rows: readonly LedgerAmountRow[]): LedgerRead {
   const byCategory = new Map<string, number>();
   let total = 0;
+  let collectedBySfuRec = 0;
   const payments: LedgerPayment[] = [];
   for (const row of rows) {
     const cents = row.amount_cents ?? 0;
+    if (isCollectedBySfuRec(row.method)) {
+      collectedBySfuRec += cents;
+      continue;
+    }
     total += cents;
     if (typeof row.paid_at === 'string') payments.push({ at: row.paid_at, cents });
     // Only when the caller actually SELECTED a category. `'category' in row` is
@@ -183,6 +216,7 @@ export function foldLedgerRows(rows: readonly LedgerAmountRow[]): LedgerRead {
     byCategory: [...byCategory.entries()]
       .map(([category, cents]) => ({ category, cents }))
       .sort((a, b) => b.cents - a.cents),
+    collectedBySfuRec,
   };
 }
 
@@ -228,7 +262,9 @@ async function feeLedger(
       // paid_at rides along with the amount. It is already the filter below, so
       // it costs nothing and it is what the running-total chart plots; the
       // alternative was a second read of the same ledger for the same rows.
-      .select('amount_cents, paid_at')
+      // method rides along for the same reason: it is what tells the fold
+      // which paid rows Campus Rec collected rather than the club.
+      .select('amount_cents, paid_at, method')
       .eq('season_id', season.id)
       .eq('fee_type', feeType)
       .not('paid_at', 'is', null),
@@ -340,6 +376,13 @@ export async function getSeasonIncome(
     eventCents,
     otherCents,
     totalCents: clubCents + tournamentCents + reinstatementCents + eventCents + otherCents,
+    // Assembled beside totalCents out of the same four reads. other income has
+    // no method column, so its share is always 0 and it is left out.
+    collectedBySfuRecCents:
+      club.collectedBySfuRec +
+      tournament.collectedBySfuRec +
+      reinstatement.collectedBySfuRec +
+      event.collectedBySfuRec,
     payments: [
       ...club.payments,
       ...tournament.payments,

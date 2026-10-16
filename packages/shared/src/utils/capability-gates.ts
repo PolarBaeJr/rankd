@@ -746,6 +746,27 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'actions/settings.ts updatePlatformSettings',
   },
 
+  // ---- changelog ---------------------------------------------------------
+  // CLUB CHANGES (00286). The page lists the draft lines the settings and
+  // officer role triggers wrote; the post key covers everything that decides
+  // what members will be told.
+  'changelog.page': {
+    label: 'Open Club changes', area: 'changelog', group: null, mode: 'page',
+    gate: 'app/club-changes/page.tsx ClubChangesPage',
+  },
+  'changelog.post.write': {
+    label: 'Post club changes', area: 'changelog', group: null, mode: 'write',
+    gate: 'actions/club-changes.ts postClubChanges',
+    also: [
+      'actions/club-changes.ts addClubChangeLine',
+      'actions/club-changes.ts rewordClubChangeLine',
+      'actions/club-changes.ts deleteClubChangeLine',
+      'actions/club-changes.ts announceClubChangeEntry',
+    ],
+    merged:
+      'Adding, rewording and deleting a pending line, and sending a posted entry out as an announcement, are all deciding what the club tells its members, which is what posting is.',
+  },
+
   // ---- page --------------------------------------------------------------
   // THE KEYS TO SWITCHED-OFF FEATURES, and the first gates in this map that
   // stand in the MEMBERS' app rather than the console, hence the `player `
@@ -847,6 +868,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'player app/guest-waiver/page.tsx FeatureGate',
     also: ['player actions/guest-waiver.ts signGuestWaiver'],
     merged: SWITCHED_OFF,
+  },
+  // No page to gate: the challenge screens and the profile each ask this one
+  // helper before reading a prediction.
+  'page.access.predictions': {
+    label: 'Match predictions while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player lib/predictions.ts predictionsVisible',
   },
 };
 

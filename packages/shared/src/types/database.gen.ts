@@ -356,6 +356,92 @@ export type Database = {
           },
         ]
       }
+      club_change_drafts: {
+        Row: {
+          changed_at: string
+          created_at: string
+          field: string | null
+          first_actor_id: string | null
+          from_value: Json | null
+          id: string
+          last_actor_id: string | null
+          override_to_value: Json | null
+          revision: number
+          source: string
+          subject: string | null
+          text_override: string | null
+          to_value: Json | null
+        }
+        Insert: {
+          changed_at?: string
+          created_at?: string
+          field?: string | null
+          first_actor_id?: string | null
+          from_value?: Json | null
+          id?: string
+          last_actor_id?: string | null
+          override_to_value?: Json | null
+          revision?: number
+          source: string
+          subject?: string | null
+          text_override?: string | null
+          to_value?: Json | null
+        }
+        Update: {
+          changed_at?: string
+          created_at?: string
+          field?: string | null
+          first_actor_id?: string | null
+          from_value?: Json | null
+          id?: string
+          last_actor_id?: string | null
+          override_to_value?: Json | null
+          revision?: number
+          source?: string
+          subject?: string | null
+          text_override?: string | null
+          to_value?: Json | null
+        }
+        Relationships: []
+      }
+      club_change_entries: {
+        Row: {
+          announcement_id: string | null
+          id: string
+          intro: string | null
+          lines: Json
+          posted_at: string
+          posted_by: string | null
+          title: string | null
+        }
+        Insert: {
+          announcement_id?: string | null
+          id?: string
+          intro?: string | null
+          lines: Json
+          posted_at?: string
+          posted_by?: string | null
+          title?: string | null
+        }
+        Update: {
+          announcement_id?: string | null
+          id?: string
+          intro?: string | null
+          lines?: Json
+          posted_at?: string
+          posted_by?: string | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_change_entries_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "announcements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       club_fees: {
         Row: {
           amount_cents: number | null
@@ -4374,6 +4460,19 @@ export type Database = {
         Args: { p_player_id: string }
         Returns: Json
       }
+      claim_registration_form_polls: {
+        Args: { p_limit: number; p_min_interval_seconds: number }
+        Returns: {
+          claimed_at: string
+          club_event_id: string
+          form_id: string
+          id: string
+          poll_watermark: string
+          read_mapping: Json
+          target_kind: string
+          tournament_id: string
+        }[]
+      }
       claim_session_reminders: {
         Args: {
           p_max_attempts?: number
@@ -4548,6 +4647,16 @@ export type Database = {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number
       }
+      forms_api_import_registration: {
+        Args: { p_binding_id: string; p_payload: Json }
+        Returns: {
+          event_id: string
+          item: number
+          reason: string
+          replayed: boolean
+          status: string
+        }[]
+      }
       get_active_season: {
         Args: Record<PropertyKey, never>
         Returns: {
@@ -4714,6 +4823,19 @@ export type Database = {
         Returns: number
       }
       points_cap: { Args: { p_target: number }; Returns: number }
+      post_club_changes: {
+        Args: {
+          p_actor: string
+          p_discard_ids: string[]
+          p_discard_revisions: number[]
+          p_draft_ids: string[]
+          p_intro: string
+          p_lines: string[]
+          p_revisions: number[]
+          p_title: string
+        }
+        Returns: string
+      }
       promote_pool_qualifier: {
         Args: {
           p_admin_id: string
@@ -4775,6 +4897,17 @@ export type Database = {
         Returns: boolean
       }
       recompute_player_stats: { Args: { p_player: string }; Returns: number }
+      record_registration_form_poll: {
+        Args: {
+          p_binding_id: string
+          p_claimed_at: string
+          p_error: string
+          p_imported: number
+          p_read: boolean
+          p_watermark: string
+        }
+        Returns: boolean
+      }
       reject_walkover_atomic: {
         Args: { p_admin_id: string; p_walkover_id: string }
         Returns: Json

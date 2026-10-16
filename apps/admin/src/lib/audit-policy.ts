@@ -153,6 +153,39 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // Widening a live key's scopes grants the same durable read access as
   // minting a new key with them, so it is recorded with the same weight.
   'data_api_key_scopes_changed',
+  // PREDICTIONS (00282). The first rows a key WRITES rather than reads. The
+  // write and delete functions each record one row per call, against the key,
+  // with counts and no players. The delete matches the _deleted pattern and
+  // would be forced in anyway; the write is classified by hand for the same
+  // reason as the mint: it is the only record of what a key put in front of
+  // members.
+  'data_api_predictions_written',
+  'data_api_predictions_deleted',
+  // FORM REGISTRATIONS (00283). Every row the form import writes is the only
+  // record of who a key entered, withdrew or held for review, and of who an
+  // exec undid; none carries an email. The undo matches nothing in the risk
+  // patterns, and a confirmation or a "this is not me" is what turns a form
+  // answer into an entry or into an exec's alert, so all are classified by
+  // hand. The waiver invite row is the receipt for an email the club sent to
+  // somebody who is not a member.
+  'registration_imported',
+  'registration_import_parked',
+  'registration_import_confirmed',
+  'registration_import_rejected',
+  'registration_import_undone',
+  'guest_waiver_invite_sent',
+  // Binding a form lets a key enter people into that target; switching the
+  // binding off is when it stopped. Same weight as minting and revoking.
+  'registration_form_bound',
+  'registration_form_unbound',
+
+  // CLUB CHANGES (00286). Posting is the club speaking to every member, so the
+  // record of who posted what is classified by hand; post_club_changes writes
+  // it in SQL inside the same transaction. Deleting a pending line matches the
+  // _deleted pattern and would be forced in anyway: it is a change members will
+  // now never be told about.
+  'club_changes_posted',
+  'club_change_draft_deleted',
 
   // CLUB EVENTS (00244). The delete and the removal match the risk patterns and
   // would be forced in anyway. The cancellation matches none, so it is

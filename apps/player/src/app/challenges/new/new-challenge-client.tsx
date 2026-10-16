@@ -6,6 +6,8 @@ import { Select, Input, Textarea, DatePicker, Button, PlayerPicker } from '@badm
 import { previewEloChange, getEventMultiplier, isLegalCustomPoints, customFormatHint } from '@badminton/shared';
 import type { RatingSettings } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
+import { findPrediction, type MatchupPrediction as Prediction } from '@/lib/prediction-match';
+import { MatchupPrediction } from '@/components/matchup-prediction';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { motion } from 'framer-motion';
@@ -39,6 +41,8 @@ export default function NewChallengeClient({
   initialOpponentId,
   ratingSettings,
   opponents,
+  myId,
+  predictions,
 }: {
   initialOpponentId?: string;
   /**
@@ -57,6 +61,13 @@ export default function NewChallengeClient({
    * browser-side read also produced when it failed.
    */
   opponents?: PlayerOption[];
+  /** The viewer's player id, for matching a prediction to the picked sides. */
+  myId?: string;
+  /**
+   * Every Data API prediction naming the viewer, read by the server wrapper,
+   * already filtered by the predictions switch. Empty when it is off.
+   */
+  predictions?: Prediction[];
 }) {
   const [type, setType] = useState<'singles' | 'doubles'>('singles');
   const [rated, setRated] = useState(true);
@@ -168,6 +179,16 @@ export default function NewChallengeClient({
   }, []);
 
   const opponent = players.find((p) => p.id === opponentId);
+  const prediction =
+    myId && predictions && predictions.length > 0
+      ? findPrediction(
+          predictions,
+          type,
+          type === 'singles' ? [myId] : [myId, partnerId],
+          type === 'singles' ? [opponentId] : [opponentId, opponentPartnerId],
+        )
+      : null;
+
   // Their rating, or nothing at all. previewEloChange is a pure function of the
   // two Elos, so leaving a fallback here would have let anyone recover a hidden
   // rating by reading the predicted delta — the control would have survived on
@@ -475,6 +496,15 @@ export default function NewChallengeClient({
                   Your change, at your current K-factor. Winning without dropping a game counts for a little more.
                 </p>
               </motion.div>
+            )}
+
+            {prediction && (
+              <MatchupPrediction
+                probability={prediction.probability}
+                sideLabel={type === 'singles' ? 'you' : 'your side'}
+                model={prediction.model}
+                madeAt={prediction.madeAt}
+              />
             )}
 
             {/* Scheduled Date/Time */}

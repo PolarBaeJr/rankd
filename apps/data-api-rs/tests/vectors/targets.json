@@ -1,0 +1,667 @@
+[
+ {
+  "in": "/",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/health/",
+  "pathname": "/health/",
+  "params": []
+ },
+ {
+  "in": "/health?x=1",
+  "pathname": "/health",
+  "params": [
+   [
+    "x",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "//x/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "///health",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "//",
+  "error": "TypeError"
+ },
+ {
+  "in": "/./health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/v1/./players",
+  "pathname": "/v1/players",
+  "params": []
+ },
+ {
+  "in": "/v1/../health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/v1/%2e/players",
+  "pathname": "/v1/players",
+  "params": []
+ },
+ {
+  "in": "/v1/%2E%2E/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/v1/players/..",
+  "pathname": "/v1/",
+  "params": []
+ },
+ {
+  "in": "/v1/players/.",
+  "pathname": "/v1/players/",
+  "params": []
+ },
+ {
+  "in": "/v1\\players",
+  "pathname": "/v1/players",
+  "params": []
+ },
+ {
+  "in": "\\health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/documentations/",
+  "pathname": "/documentations/",
+  "params": []
+ },
+ {
+  "in": "/documentations//",
+  "pathname": "/documentations//",
+  "params": []
+ },
+ {
+  "in": "http://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "HTTP://h/v1/players",
+  "pathname": "/v1/players",
+  "params": []
+ },
+ {
+  "in": "https://h:8443/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "http://h",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "http:health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "http:/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "http:\\\\h\\health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "ws://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "ftp://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "file:///health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "file://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "file:health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "foo:bar",
+  "pathname": "bar",
+  "params": []
+ },
+ {
+  "in": "foo:/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "foo://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "*",
+  "pathname": "/*",
+  "params": []
+ },
+ {
+  "in": "health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "?a=1",
+  "pathname": "/",
+  "params": [
+   [
+    "a",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "#x",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "/health#frag",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/health?a=1#f",
+  "pathname": "/health",
+  "params": [
+   [
+    "a",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/players/%61",
+  "pathname": "/v1/players/%61",
+  "params": []
+ },
+ {
+  "in": "/v1/pl%61yers",
+  "pathname": "/v1/pl%61yers",
+  "params": []
+ },
+ {
+  "in": "/a b",
+  "pathname": "/a%20b",
+  "params": []
+ },
+ {
+  "in": "/a\"b",
+  "pathname": "/a%22b",
+  "params": []
+ },
+ {
+  "in": "/a<b>",
+  "pathname": "/a%3Cb%3E",
+  "params": []
+ },
+ {
+  "in": "/a`b",
+  "pathname": "/a%60b",
+  "params": []
+ },
+ {
+  "in": "/a{b}",
+  "pathname": "/a%7Bb%7D",
+  "params": []
+ },
+ {
+  "in": "/a|b",
+  "pathname": "/a|b",
+  "params": []
+ },
+ {
+  "in": "/a^b",
+  "pathname": "/a%5Eb",
+  "params": []
+ },
+ {
+  "in": "/a%zz",
+  "pathname": "/a%zz",
+  "params": []
+ },
+ {
+  "in": "/%",
+  "pathname": "/%",
+  "params": []
+ },
+ {
+  "in": "/%2F",
+  "pathname": "/%2F",
+  "params": []
+ },
+ {
+  "in": "/a/%2e%2e/b",
+  "pathname": "/b",
+  "params": []
+ },
+ {
+  "in": "/a/.%2e/b",
+  "pathname": "/b",
+  "params": []
+ },
+ {
+  "in": "/a/%2e./b",
+  "pathname": "/b",
+  "params": []
+ },
+ {
+  "in": "/a/..%2f/b",
+  "pathname": "/a/..%2f/b",
+  "params": []
+ },
+ {
+  "in": "//user:pw@h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//h:99999/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//h:abc/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//h:/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//[::1]/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//[::1/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//h%20x/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//H.X/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//h_x/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//1.2.3.4/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//0x7f.1/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//256.1.1.1/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//1.2.3.4.5/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//xn--abc/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//a..b/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//@/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "//h@/health",
+  "error": "TypeError"
+ },
+ {
+  "in": "/v1/matches?limit=1&limit=2",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "limit",
+    "1"
+   ],
+   [
+    "limit",
+    "2"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?a+b=c+d",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "a b",
+    "c d"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?%41=%42",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "A",
+    "B"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=%zz",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "%zz"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=%E9",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "�"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=%C3%A9",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "é"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?=1",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    ""
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?&&x=1&",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=1=2",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "1=2"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=a%2Bb",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "a+b"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?%ED%A0%80=1",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "���",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?é=1",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "é",
+    "1"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=%F0%90%8D%88",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "𐍈"
+   ]
+  ]
+ },
+ {
+  "in": "/v1/matches?x=%F0%90%8D",
+  "pathname": "/v1/matches",
+  "params": [
+   [
+    "x",
+    "�"
+   ]
+  ]
+ },
+ {
+  "in": "/é",
+  "pathname": "/%C3%A9",
+  "params": []
+ },
+ {
+  "in": "http://h/health?x#y",
+  "pathname": "/health",
+  "params": [
+   [
+    "x",
+    ""
+   ]
+  ]
+ },
+ {
+  "in": "/health?",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/health?#",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "HtTp://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "http://h:80/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/../../health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "/health/..",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "/v1/players/aa%2fbb",
+  "pathname": "/v1/players/aa%2fbb",
+  "params": []
+ },
+ {
+  "in": "/v1//players",
+  "pathname": "/v1//players",
+  "params": []
+ },
+ {
+  "in": "/V1/players",
+  "pathname": "/V1/players",
+  "params": []
+ },
+ {
+  "in": "/a/b/c/../../health",
+  "pathname": "/a/health",
+  "params": []
+ },
+ {
+  "in": "/.health",
+  "pathname": "/.health",
+  "params": []
+ },
+ {
+  "in": "/..health",
+  "pathname": "/..health",
+  "params": []
+ },
+ {
+  "in": "/%2e",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "/%2e%2e",
+  "pathname": "/",
+  "params": []
+ },
+ {
+  "in": "http://h/./health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "h/health",
+  "pathname": "/h/health",
+  "params": []
+ },
+ {
+  "in": "a:b:c",
+  "pathname": "b:c",
+  "params": []
+ },
+ {
+  "in": "1http://h/health",
+  "pathname": "/1http://h/health",
+  "params": []
+ },
+ {
+  "in": "h+t.t-p://h/health",
+  "pathname": "/health",
+  "params": []
+ },
+ {
+  "in": "//h/health\\x",
+  "pathname": "/health/x",
+  "params": []
+ },
+ {
+  "in": "/a\tb",
+  "pathname": "/ab",
+  "params": []
+ },
+ {
+  "in": "/a\nb",
+  "pathname": "/ab",
+  "params": []
+ },
+ {
+  "in": "javascript:alert(1)",
+  "pathname": "alert(1)",
+  "params": []
+ },
+ {
+  "in": "mailto:x@y",
+  "pathname": "x@y",
+  "params": []
+ },
+ {
+  "in": "data:text/plain,x",
+  "pathname": "text/plain,x",
+  "params": []
+ },
+ {
+  "in": "blob:http://h/x",
+  "pathname": "http://h/x",
+  "params": []
+ }
+]

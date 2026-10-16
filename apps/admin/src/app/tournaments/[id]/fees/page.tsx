@@ -11,6 +11,7 @@ import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { TournamentFeeActions } from './tournament-fee-actions';
 import { BulkTournamentFeeActions } from './bulk-tournament-fee-actions';
+import { NonMemberFees, type NonMemberFeeRow } from './non-member-fees';
 import { SubmissionActions } from '../../../fees/submission-actions';
 import { loadPendingSubmissions } from '@/lib/fee-submissions';
 
@@ -98,14 +99,36 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   // this tournament" and "what does this member owe" can no longer disagree.
   // fee_type is not optional: without it this reads every member's dues and
   // every reinstatement in the club through a capability that buys neither.
-  const fees = unwrap(
+  const ledger = unwrap(
     await supabase
       .from('club_fees')
-      .select('player_id, tier_id, amount_cents, paid_at, method')
+      .select('id, player_id, manual_name, manual_email, tier_id, amount_cents, paid_at, method')
       .eq('tournament_id', id)
       .eq('fee_type', 'tournament'),
     'TRN-104',
-  ) as Pick<ClubFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
+  ) as (Pick<ClubFee, 'id' | 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'> & {
+    manual_name: string | null;
+    manual_email: string | null;
+  })[];
+  // A non-member a Google Form entered (00283) owes a NAMED row: player_id is
+  // null. Everything below is keyed by player id, so those rows are split off
+  // here and listed in their own section rather than read as a null member.
+  const fees = ledger.filter((f) => f.player_id != null);
+  const nonMemberFees: NonMemberFeeRow[] = ledger
+    .filter((f) => f.player_id == null)
+    .map((f) => {
+      const waived = isWaivedFee(f);
+      return {
+        id: f.id,
+        name: f.manual_name ?? 'A non-member',
+        email: f.manual_email,
+        amountCents: f.amount_cents,
+        paid: Boolean(f.paid_at) && !waived,
+        waived,
+        method: f.method,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
   const submissionByPlayer = new Map(
     (canReview ? await loadPendingSubmissions(supabase, { tournamentId: id }) : []).map((s) => [s.playerId, s]),
@@ -421,6 +444,14 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
           <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this tournament</p>
         )}
       </Card>
+      {nonMemberFees.length > 0 && (
+        <Card>
+          <h2 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">
+            Non-member entries <span className="font-normal text-[var(--text-muted)]">({nonMemberFees.length})</span>
+          </h2>
+          <NonMemberFees rows={nonMemberFees} canMarkPaid={bulkCan.markPaid} canMarkUnpaid={bulkCan.markUnpaid} />
+        </Card>
+      )}
       {canBulk && (
         <BulkTournamentFeeActions
           tournamentId={id}

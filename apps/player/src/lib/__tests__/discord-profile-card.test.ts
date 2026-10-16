@@ -122,7 +122,9 @@ describe('the card token is the only way to name a card', () => {
   });
 });
 
-describe('the card is always the stranger\'s view', () => {
+// The first test here pays for a cold import of the profile module, which took
+// just over the 5s default on a CI runner. The checks themselves are instant.
+describe('the card is always the stranger\'s view', { timeout: 20_000 }, () => {
   it('collapses a moderation status even on the member\'s own card', async () => {
     maybeSingle.mockResolvedValue({ data: playerRow({ status: 'suspended' }), error: null });
     rpc.mockResolvedValue({ data: [], error: null });

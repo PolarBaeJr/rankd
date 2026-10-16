@@ -119,6 +119,7 @@ export const AREAS = [
   'ratings',
   'accounts',
   'platform',
+  'changelog',
   'page',
 ] as const;
 
@@ -512,6 +513,20 @@ export const CAPABILITIES = [
   // be pruned from anybody the resolver ever runs for.
   'platform.page',
   'platform.settings.write',
+
+  // ---- changelog ---------------------------------------------------------
+  // CLUB CHANGES (00286). Saving a rating setting, an account rule, a member
+  // page switch, a club link or an officer role writes a plain-language draft
+  // line; /club-changes is where an admin rewords, deletes and adds lines, and
+  // posts one or the whole bundle to members.
+  //
+  // TWO STRINGS: opening the page, and everything that changes what members
+  // will be told. Rewording, deleting and adding a line are part of deciding
+  // what gets published, so they sit under the post key rather than three
+  // more. Both admin-only by level and in no baseline: posting is the club
+  // speaking to every member.
+  'changelog.page',
+  'changelog.post.write',
 
   // ---- page --------------------------------------------------------------
   // INTO A FEATURE THE CLUB HAS SWITCHED OFF. One key per switch in

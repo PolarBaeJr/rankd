@@ -120,6 +120,67 @@ describe('CollectionCharts', () => {
   });
 });
 
+// Dues paid on the Campus Rec website are paid but are not the club's money. The
+// split keeps them as a third segment, so the billable total still counts
+// those members and "Collected" is the club's money alone.
+describe('CollectionCharts with dues Campus Rec collected', () => {
+  it('draws Campus Rec as its own segment and counts it as paid', () => {
+    const out = html(CollectionCharts, {
+      seasonName: 'Fall 2026',
+      isPast: false,
+      collectedCents: 10000,
+      sfuRecCents: 10000,
+      outstandingCents: 20000,
+      payments: DUES.slice(0, 2),
+    });
+    expect(out).toContain('Billable this season');
+    expect(out).toContain('$400.00');
+    expect(out).toContain('Collected by Campus Rec');
+    // Half the billable dues are paid: a quarter by each route.
+    expect(out).toContain('50% of the term');
+    expect(out).toContain('Dues the club collected for Fall 2026: $100.00');
+  });
+
+  it('draws the two-part split unchanged when nothing went through Campus Rec', () => {
+    const out = html(CollectionCharts, {
+      seasonName: 'Fall 2026',
+      isPast: false,
+      collectedCents: 15500,
+      outstandingCents: 434500,
+      payments: DUES,
+    });
+    expect(out).not.toContain('Campus Rec');
+  });
+
+  it('still shows what Campus Rec collected on a closed term', () => {
+    const out = html(CollectionCharts, {
+      seasonName: 'Spring 2026',
+      isPast: true,
+      collectedCents: 15500,
+      sfuRecCents: 8000,
+      outstandingCents: null,
+      payments: DUES,
+    });
+    expect(out).toContain('Collected by Campus Rec');
+    expect(out).toContain('$80.00');
+  });
+
+  // Every payment so far went through Campus Rec, so the club's own curve is
+  // empty. "No dues have been recorded" would be untrue.
+  it('does not claim no dues were recorded when Campus Rec collected them all', () => {
+    const out = html(CollectionCharts, {
+      seasonName: 'Fall 2026',
+      isPast: false,
+      collectedCents: 0,
+      sfuRecCents: 5000,
+      outstandingCents: 5000,
+      payments: [],
+    });
+    expect(out).not.toContain('No dues have been recorded');
+    expect(out).toContain('collected by Campus Rec');
+  });
+});
+
 // Staging's club_expenses: three paid rows across three club-local days, plus
 // one row with no paid_at that the ledger card badges "Not recorded". Two of
 // the paid rows were bought out of pocket, one of those has been settled, and
@@ -252,6 +313,7 @@ const FINANCES = {
     eventCents: 0,
     otherCents: 0,
     totalCents: 34000,
+    collectedBySfuRecCents: 0,
     payments: [],
   },
   expenseCents: 30000,
