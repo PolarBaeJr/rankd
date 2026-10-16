@@ -91,17 +91,28 @@ export type PendingSubmission = {
  * Every receipt waiting for an exec, oldest first. `scope` 'club' is dues and
  * club events (the /fees Submitted tab); a tournament id is that tournament's
  * entry fees.
+ *
+ * `which` 'keptFromForm' is instead the CONFIRMED receipts a Google Form
+ * collected whose screenshot is still on file (00288), newest first. The club
+ * keeps them as proof of payment until somebody asks, through the privacy
+ * address, for theirs to be erased; this is where an exec finds it.
  */
 export async function loadPendingSubmissions(
   admin: AdminClient,
   scope: 'club' | { tournamentId: string },
+  which: 'pending' | 'keptFromForm' = 'pending',
 ): Promise<PendingSubmission[]> {
+  const base = admin
+    .from('fee_submissions')
+    .select('id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at, import_receipt_id');
   const subs = unwrap(
-    await admin
-      .from('fee_submissions')
-      .select('id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at, import_receipt_id')
-      .eq('status', 'submitted')
-      .order('submitted_at', { ascending: true }),
+    await (which === 'pending'
+      ? base.eq('status', 'submitted').order('submitted_at', { ascending: true })
+      : base
+          .eq('status', 'confirmed')
+          .not('import_receipt_id', 'is', null)
+          .not('screenshot_path', 'is', null)
+          .order('submitted_at', { ascending: false })),
     'FEE-102',
   ) as {
     id: string;

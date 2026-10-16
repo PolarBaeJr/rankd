@@ -115,23 +115,7 @@ export function SubmissionActions({
     }
   }
 
-  async function handleErase() {
-    const ok = await confirm({
-      title: 'Erase this screenshot?',
-      message: `The screenshot ${memberName} sent through the form is deleted for good. The receipt and the fee stay as the club's record of the payment.`,
-      confirmLabel: 'Erase screenshot',
-    });
-    if (!ok) return;
-    startTransition(async () => {
-      const result = await eraseFormReceiptScreenshot(submissionId);
-      if (!result.ok) {
-        toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
-        return;
-      }
-      toast('Screenshot erased', 'success');
-      router.refresh();
-    });
-  }
+  const handleErase = useEraseScreenshot(submissionId, memberName, startTransition);
 
   async function handleConfirm() {
     if (!method || !reference) {
@@ -165,7 +149,7 @@ export function SubmissionActions({
     <>
       {proofHref ? (
         <a
-          href={proofHref}
+          href={withBase(proofHref)}
           target="_blank"
           rel="noopener noreferrer"
           className="text-sm text-[var(--color-accent)] font-medium px-2"
@@ -346,5 +330,67 @@ export function RemindButton({
     <Button variant="ghost" size="sm" onClick={handleRemind} loading={isPending} disabled={playerIds.length === 0}>
       {label}
     </Button>
+  );
+}
+
+/**
+ * Erasing a form receipt's screenshot on request (00288): asked first, then
+ * only the image goes. The receipt stays confirmed and the fee stays paid.
+ */
+function useEraseScreenshot(
+  submissionId: string,
+  memberName: string,
+  startTransition: (action: () => Promise<void>) => void,
+) {
+  const { toast } = useToast();
+  const router = useRouter();
+  const confirm = useConfirm();
+  return async function handleErase() {
+    const ok = await confirm({
+      title: 'Erase this screenshot?',
+      message: `The screenshot ${memberName} sent through the form is deleted for good. The receipt and the fee stay as the club's record of the payment.`,
+      confirmLabel: 'Erase screenshot',
+    });
+    if (!ok) return;
+    startTransition(async () => {
+      const result = await eraseFormReceiptScreenshot(submissionId);
+      if (!result.ok) {
+        toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
+        return;
+      }
+      toast('Screenshot erased', 'success');
+      router.refresh();
+    });
+  };
+}
+
+// A CONFIRMED form receipt whose screenshot the club still keeps as proof of
+// payment (00288). Nothing to review: the screenshot can be opened, or erased
+// when the person who sent it asks through the privacy address.
+export function KeptScreenshotActions({
+  submissionId,
+  memberName,
+  proofHref,
+}: {
+  submissionId: string;
+  memberName: string;
+  proofHref: string;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const handleErase = useEraseScreenshot(submissionId, memberName, startTransition);
+  return (
+    <>
+      <a
+        href={withBase(proofHref)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-sm text-[var(--color-accent)] font-medium px-2"
+      >
+        View screenshot
+      </a>
+      <Button variant="ghost" size="sm" onClick={handleErase} loading={isPending}>
+        Erase screenshot
+      </Button>
+    </>
   );
 }

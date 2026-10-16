@@ -71,7 +71,10 @@ BEGIN
   IF to_regprocedure('public.forms_api_import_registration(uuid, jsonb)') IS NULL THEN
     RAISE EXCEPTION '00288 needs 00287 (the console reads the forms) applied first';
   END IF;
-  IF to_regprocedure('public.review_fee_submission_confirm(uuid, uuid, text)') IS NULL THEN
+  -- Section 9 swaps the three-argument form for a four-argument one, so a
+  -- second run finds that instead.
+  IF to_regprocedure('public.review_fee_submission_confirm(uuid, uuid, text)') IS NULL
+     AND to_regprocedure('public.review_fee_submission_confirm(uuid, uuid, text, text)') IS NULL THEN
     RAISE EXCEPTION '00288 needs 00253 (a receipt says how it was paid) applied first';
   END IF;
 END

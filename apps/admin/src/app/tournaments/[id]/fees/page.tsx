@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { TournamentFeeActions } from './tournament-fee-actions';
 import { BulkTournamentFeeActions } from './bulk-tournament-fee-actions';
 import { NonMemberFees, type NonMemberFeeRow } from './non-member-fees';
-import { SubmissionActions } from '../../../fees/submission-actions';
+import { KeptScreenshotActions, SubmissionActions } from '../../../fees/submission-actions';
 import { loadPendingSubmissions } from '@/lib/fee-submissions';
 
 /** Card identity line: the same avatar + name + email the Player cell shows. */
@@ -132,9 +132,16 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
   // Keyed by FEE: a receipt a Google Form collected (00288) can sit on a
   // non-member's named row, which has no player id to key it by.
-  const submissionByFee = new Map(
-    (canReview ? await loadPendingSubmissions(supabase, { tournamentId: id }) : []).map((s) => [s.feeId, s]),
-  );
+  const [pending, kept] = canReview
+    ? await Promise.all([
+        loadPendingSubmissions(supabase, { tournamentId: id }),
+        loadPendingSubmissions(supabase, { tournamentId: id }, 'keptFromForm'),
+      ])
+    : [[], []];
+  const submissionByFee = new Map(pending.map((s) => [s.feeId, s]));
+  // A paid fee whose form screenshot is still on file: openable, and erasable
+  // on request, the fee staying paid (00288).
+  const keptByFee = new Map(kept.map((s) => [s.feeId, s]));
   const submissionOf = (playerId: string) => {
     const feeId = feeByPlayer.get(playerId)?.id;
     return feeId ? submissionByFee.get(feeId) : undefined;
@@ -154,6 +161,16 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         feeType="tournament"
         fromForm={s.fromForm}
         readableScreenshot={s.readableScreenshot}
+      />
+    ) : keptOf(playerName, feeId);
+  };
+  const keptOf = (playerName: string, feeId: string | undefined) => {
+    const k = feeId ? keptByFee.get(feeId) : undefined;
+    return k ? (
+      <KeptScreenshotActions
+        submissionId={k.id}
+        memberName={playerName}
+        proofHref={`/tournaments/${id}/fees/proof/${k.id}`}
       />
     ) : null;
   };
