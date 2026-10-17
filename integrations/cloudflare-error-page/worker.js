@@ -4,12 +4,16 @@
 // Worker forwards every request untouched and steps in only when a browser
 // navigation comes back as a gateway failure. Fetches, server actions and
 // PostgREST calls keep their real response so client error handling still
-// works, and 503 passes through because the proxy and maintenance mode
-// already answer it with their own pages.
+// works. A 503 is branded only when it is the proxy's generic "no healthy
+// backend" page: maintenance mode answers 503 with the app's own page, and that
+// one must reach the visitor as it is.
 
 // 502/504 from the origin, Cloudflare's 52x origin errors, and 530 for a
 // tunnel with no connector.
 const GATEWAY_FAILURES = new Set([502, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530]);
+
+// The sentence the proxy writes on its own 503 page (serveUnavailable).
+const PROXY_UNAVAILABLE = 'Service unavailable at this time, try again later.';
 
 export function isNavigation(request) {
   if (request.method !== 'GET') return false;
@@ -25,8 +29,13 @@ export async function handle(request, upstream = fetch) {
   } catch {
     return errorPage(502, '');
   }
-  if (!GATEWAY_FAILURES.has(response.status)) return response;
-  return errorPage(response.status, response.headers.get('cf-ray') || '');
+  const ray = response.headers.get('cf-ray') || '';
+  if (GATEWAY_FAILURES.has(response.status)) return errorPage(response.status, ray);
+  if (response.status !== 503) return response;
+  // Reading the body consumes it, so anything else is rebuilt from the text.
+  const body = await response.text();
+  if (body.includes(PROXY_UNAVAILABLE)) return errorPage(503, ray);
+  return new Response(body, response);
 }
 
 export default {

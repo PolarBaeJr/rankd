@@ -37,10 +37,30 @@ describe('cloudflare error page worker', () => {
     expect(await response.text()).toContain('Back soon');
   });
 
-  it('leaves a 503 alone so maintenance and the proxy keep their own pages', async () => {
-    const response = await handle(navigation(), upstreamReturning(503, 'maintenance page'));
+  it('leaves a maintenance 503 alone, headers and all', async () => {
+    const response = await handle(
+      navigation(),
+      upstreamReturning(503, 'maintenance page', { 'retry-after': '600', 'x-maintenance': '1' }),
+    );
     expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('600');
+    expect(response.headers.get('x-maintenance')).toBe('1');
     expect(await response.text()).toBe('maintenance page');
+  });
+
+  it("brands the proxy's own 503 when no backend is healthy", async () => {
+    const proxyPage = '<div class=box><h1>Service unavailable</h1><p>Service unavailable at this time, try again later.</p></div>';
+    const response = await handle(navigation(), upstreamReturning(503, proxyPage));
+    expect(response.status).toBe(503);
+    const html = await response.text();
+    expect(html).toContain('Back soon');
+    expect(html).toContain('Error 503');
+  });
+
+  it('leaves a JSON 503 alone without reading it', async () => {
+    const request = new Request('https://club.example/supabase/rest/v1/players', { headers: { accept: 'application/json' } });
+    const response = await handle(request, upstreamReturning(503, 'Service unavailable at this time, try again later.'));
+    expect(await response.text()).toBe('Service unavailable at this time, try again later.');
   });
 
   it('leaves a JSON 502 from a fetch alone', async () => {

@@ -2,8 +2,8 @@
 
 A Cloudflare Worker that shows the club's own page when a browser navigation
 fails with 502, 504, Cloudflare's 52x origin errors or 530 (tunnel down),
-instead of Cloudflare's stock page. Everything else, including 503 from the
-proxy or maintenance mode, passes through unchanged. See `worker.js`.
+or the proxy's own "no healthy backend" 503, instead of the stock page.
+Everything else, including maintenance mode's 503, passes through unchanged. See `worker.js`.
 
 Test: `npx vitest run integrations/cloudflare-error-page`
 
