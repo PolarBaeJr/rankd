@@ -40,7 +40,7 @@ const RECEIPT_PROBLEM_LABEL: Record<string, string> = {
 
 export const READER_ERROR_LABEL: Record<string, string> = {
   auth: "Google refused the console's service account key. Check the key in the console's settings.",
-  forbidden: 'Google refused access: is the form in the shared folder?',
+  forbidden: 'Google refused access: share the form with the service account as an Editor',
   form_not_found: "Google has no form with this id. Copy the id from the form's edit link again.",
   rate_limited: 'Google asked the console to slow down. It carries on at the next read.',
   google_unavailable: 'Google did not answer. The console tries again at the next read.',
