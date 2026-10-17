@@ -48,6 +48,12 @@ export async function GET(
     .from('fee-proofs')
     .createSignedUrl(sub.screenshot_path, PROOF_URL_TTL_SECONDS);
   if (error || !data?.signedUrl) {
+    // A row whose object is gone (a restored copy of the database without its
+    // storage) is a missing screenshot, not a broken server: a 502 here comes
+    // back through Cloudflare as its own error page.
+    if (error && /not found/i.test(error.message)) {
+      return new NextResponse('That screenshot is not on file', { status: 404 });
+    }
     console.error('[tournaments] could not sign a payment screenshot:', error?.message);
     return new NextResponse('Could not open that screenshot', { status: 502 });
   }
