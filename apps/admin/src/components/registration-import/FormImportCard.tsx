@@ -159,8 +159,9 @@ export function FormImportCard({
         <p className="text-xs text-[var(--text-muted)]">
           {reader.state === 'ready' ? (
             <>
-              The console can read a form itself when the form is in the club&apos;s forms folder, shared with{' '}
-              <code className="break-all">{reader.clientEmail}</code>.
+              The console can read a form itself when the form is shared with{' '}
+              <code className="break-all">{reader.clientEmail}</code> as an Editor. Google shows a form&apos;s
+              responses only to its editors, so a Viewer share, or the forms folder alone, is not enough.
             </>
           ) : reader.state === 'invalid' ? (
             "Reading forms with Google is not working: the console's service account key could not be read."
