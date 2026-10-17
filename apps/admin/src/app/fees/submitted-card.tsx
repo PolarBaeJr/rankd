@@ -181,19 +181,22 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                 {new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' })}
               </td>
-              <td className="px-4 py-3 text-right whitespace-nowrap">
-                <SubmissionActions
-                  submissionId={s.id}
-                  memberName={s.playerName}
-                  line={s.line}
-                  amount={money(s.amountCents)}
-                  reference={s.reference}
-                  proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
-                  method={s.method}
-                  feeType={s.feeType}
-                  fromForm={s.fromForm}
-                  readableScreenshot={s.readableScreenshot}
-                />
+              <td className="px-4 py-3">
+                {/* A form receipt carries five controls; they wrap rather than scroll the table. */}
+                <div className="flex flex-wrap items-center justify-end gap-y-1">
+                  <SubmissionActions
+                    submissionId={s.id}
+                    memberName={s.playerName}
+                    line={s.line}
+                    amount={money(s.amountCents)}
+                    reference={s.reference}
+                    proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
+                    method={s.method}
+                    feeType={s.feeType}
+                    fromForm={s.fromForm}
+                    readableScreenshot={s.readableScreenshot}
+                  />
+                </div>
               </td>
             </tr>
           ))}

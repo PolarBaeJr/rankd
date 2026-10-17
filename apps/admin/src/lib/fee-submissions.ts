@@ -49,6 +49,8 @@ export async function inlineProof(admin: AdminClient, path: string): Promise<Res
   if (!contentType) return new Response('Not found', { status: 404 });
   const { data, error } = await admin.storage.from('fee-proofs').download(path);
   if (error || !data) {
+    // Same reading as the proof routes: an object that is gone is not on file.
+    if (error && /not found/i.test(error.message)) return new Response('Not found', { status: 404 });
     console.error('[fees] could not read a payment screenshot:', error?.message);
     return new Response('Could not open that screenshot', { status: 502 });
   }
