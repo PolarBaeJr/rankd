@@ -80,6 +80,9 @@ let claimed: ReturnType<typeof form>[];
 let importResult: (args: Record<string, unknown>) => { data: unknown; error: { message: string } | null };
 let googleRequests: string[];
 let google: (url: URL) => Response;
+let rpcReplies: Record<string, (args: Record<string, unknown>) => { data: unknown; error: { message: string } | null }>;
+let uploads: { path: string; contentType: string; size: number }[];
+let removed: string[];
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers });
@@ -91,8 +94,22 @@ function admin() {
       rpcs.push({ fn, args });
       if (fn === 'claim_registration_form_polls') return { data: claimed, error: null };
       if (fn === 'forms_api_import_registration') return importResult(args);
+      const reply = rpcReplies[fn];
+      if (reply) return reply(args);
       return { data: true, error: null };
     }),
+    storage: {
+      from: () => ({
+        upload: vi.fn(async (path: string, bytes: Uint8Array, opts: { contentType: string }) => {
+          uploads.push({ path, contentType: opts.contentType, size: bytes.byteLength });
+          return { data: { path }, error: null };
+        }),
+        remove: vi.fn(async (paths: string[]) => {
+          removed.push(...paths);
+          return { data: [], error: null };
+        }),
+      }),
+    },
   } as never;
 }
 
@@ -117,6 +134,9 @@ beforeEach(() => {
   rpcs = [];
   claimed = [];
   googleRequests = [];
+  rpcReplies = {};
+  uploads = [];
+  removed = [];
   captured.length = 0;
   importResult = () => ({
     data: [{ item: 1, event_id: EVENT, status: 'pending', reason: null, replayed: false }],
@@ -335,5 +355,128 @@ describe('what leaves the reader', () => {
     expect(JSON.stringify(receipts())).not.toContain('hidden@example.org');
     expect(JSON.stringify(run)).not.toContain('hidden@example.org');
     expect(JSON.stringify(run)).not.toContain('Pat Player');
+  });
+});
+
+describe('an uploaded receipt (00288)', () => {
+  const RECEIPT_MAPPING = { ...MAPPING, RECEIPT_QUESTION: 'E-transfer screenshot' };
+  const ITEMS_WITH_UPLOAD = {
+    items: [
+      ...FORM_ITEMS.items,
+      { title: 'E-transfer screenshot', questionItem: { question: { questionId: 'qf' } } },
+    ],
+  };
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+
+  function withUpload(id: string, at: string, fileId: string) {
+    const base = response(id, at);
+    return {
+      ...base,
+      answers: {
+        ...base.answers,
+        qf: { questionId: 'qf', fileUploadAnswers: { answers: [{ fileId, fileName: 'my bank.png', mimeType: 'image/png' }] } },
+      },
+    };
+  }
+
+  const records = () => rpcs.filter((r) => r.fn === 'record_registration_import_receipt').map((r) => r.args);
+  const settles = () => rpcs.filter((r) => r.fn === 'settle_registration_import_receipt').map((r) => r.args);
+
+  function readsOneFormWithUpload(fileId = 'drive-1') {
+    claimed = [{ ...form('b1', 'form-1'), read_mapping: RECEIPT_MAPPING }];
+    google = (url) => {
+      if (url.pathname.endsWith('/responses')) return json(200, { responses: [withUpload('r1', '2026-10-09T11:10:00Z', fileId)] });
+      if (url.pathname.startsWith('/drive/')) return json(500, {});
+      return json(200, ITEMS_WITH_UPLOAD);
+    };
+  }
+
+  it('records the upload against the import, with no Drive call while importing', async () => {
+    readsOneFormWithUpload();
+    await runRegistrationFormPoll(admin(), deps());
+    expect(records()).toEqual([
+      { p_binding_id: 'b1', p_response_id: 'r1', p_drive_file_id: 'drive-1', p_mime_type: 'image/png' },
+    ]);
+    // The payload is the script's: the upload is not in it.
+    expect(JSON.stringify(imports())).not.toContain('drive-1');
+    expect(googleRequests.filter((u) => u.includes('/drive/'))).toEqual([]);
+  });
+
+  it('records a replay again and downloads nothing the database has not handed out', async () => {
+    readsOneFormWithUpload();
+    importResult = () => ({
+      data: [{ item: 1, event_id: EVENT, status: 'pending', reason: null, replayed: true }],
+      error: null,
+    });
+    rpcReplies.record_registration_import_receipt = () => ({ data: [{ outcome: 'unchanged', stale_path: null }], error: null });
+    rpcReplies.claim_registration_import_receipts = () => ({ data: [], error: null });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(records()).toHaveLength(1);
+    expect(googleRequests.filter((u) => u.includes('/drive/'))).toEqual([]);
+    expect(uploads).toEqual([]);
+  });
+
+  it('removes the object an upload replaced when nothing holds it', async () => {
+    readsOneFormWithUpload('drive-2');
+    rpcReplies.record_registration_import_receipt = () => ({
+      data: [{ outcome: 'superseded', stale_path: 'forms/b1/i1/old.png' }],
+      error: null,
+    });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(removed).toEqual(['forms/b1/i1/old.png']);
+  });
+
+  it('holds the watermark when the upload could not be recorded', async () => {
+    readsOneFormWithUpload();
+    rpcReplies.record_registration_import_receipt = () => ({ data: null, error: { message: 'deadlock detected' } });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(receipts()[0]).toMatchObject({ p_read: false, p_watermark: null, p_error: 'import_failed' });
+  });
+
+  it('moves the watermark even when the download fails, and leaves the receipt claimed', async () => {
+    readsOneFormWithUpload();
+    rpcReplies.claim_registration_import_receipts = () => ({
+      data: [{ id: 'rc1', import_id: 'i1', binding_id: 'b1', drive_file_id: 'drive-1', mime_type: 'image/png', attempts: 1 }],
+      error: null,
+    });
+    const run = await runRegistrationFormPoll(admin(), deps());
+    expect(receipts()[0]).toMatchObject({ p_read: true, p_watermark: '2026-10-09T11:10:00.000Z', p_error: null });
+    expect(settles()).toEqual([]);
+    expect(run.receipts).toMatchObject({ claimed: 1, downloaded: 0 });
+  });
+
+  it('downloads, checks and stores a claimed receipt, then files every round', async () => {
+    rpcReplies.claim_registration_import_receipts = () => ({
+      data: [{ id: 'rc1', import_id: '00000000-0000-4000-8000-0000000000a1', binding_id: '00000000-0000-4000-8000-0000000000b1', drive_file_id: 'drive-1', mime_type: 'image/png', attempts: 1 }],
+      error: null,
+    });
+    rpcReplies.file_registration_import_receipts = () => ({ data: [{ receipt_id: 'rc1', outcome: 'filed' }], error: null });
+    google = (url) => {
+      if (url.searchParams.get('alt') === 'media') return new Response(PNG, { status: 200 });
+      return json(200, { size: String(PNG.byteLength), mimeType: 'image/png' });
+    };
+    // No form is due: the receipts still run.
+    const run = await runRegistrationFormPoll(admin(), deps());
+    expect(run.claimed).toBe(0);
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]!.path).toMatch(
+      /^forms\/00000000-0000-4000-8000-0000000000b1\/00000000-0000-4000-8000-0000000000a1\/[0-9a-f-]{36}\.png$/,
+    );
+    expect(uploads[0]!.contentType).toBe('image/png');
+    expect(settles()).toEqual([
+      { p_receipt_id: 'rc1', p_drive_file_id: 'drive-1', p_status: 'pending_fee', p_storage_path: uploads[0]!.path, p_size_bytes: PNG.byteLength },
+    ]);
+    expect(run.receipts).toMatchObject({ downloaded: 1, filed: { filed: 1 } });
+  });
+
+  it('downloads nothing once Google has refused the round, and still files', async () => {
+    claimed = [form('b1', 'form-1')];
+    const d = deps();
+    d.fetch.mockImplementation(async (url: string) =>
+      url === GOOGLE_TOKEN_URL ? json(400, { error: 'invalid_grant' }) : json(200, {}),
+    );
+    await runRegistrationFormPoll(admin(), d);
+    expect(rpcs.some((r) => r.fn === 'claim_registration_import_receipts')).toBe(false);
+    expect(rpcs.some((r) => r.fn === 'file_registration_import_receipts')).toBe(true);
   });
 });

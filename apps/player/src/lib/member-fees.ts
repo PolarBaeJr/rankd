@@ -19,7 +19,8 @@ import { createServerSupabaseClient, getActiveSeason } from './supabase-server';
 export type OwnFeeSubmission = {
   id: string;
   status: 'submitted' | 'confirmed' | 'rejected' | 'superseded';
-  reference: string;
+  /** Null for a screenshot sent through a Google Form (00288) until an exec reads it. */
+  reference: string | null;
   reject_reason: string | null;
   submitted_at: string;
 };
