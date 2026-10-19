@@ -544,6 +544,16 @@ export const feeMarkSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
+// Marks a named dues row paid (00290: a Google Form files one unpaid for a
+// non-member). The row is named by id; the amount defaults to the row's own.
+export const namedFeeMarkSchema = z.object({
+  fee_id: z.string().uuid(),
+  amount_cents: z.number().int().positive().optional(),
+  method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
+});
+export type NamedFeeMarkInput = z.infer<typeof namedFeeMarkSchema>;
+
 // A member's payment receipt (00248, 00253). Exactly one of the two ids: feeId
 // for a fee row that exists, duesSeasonId for this season's dues when the
 // member has no dues row yet. detectedMethod is what the browser read off the

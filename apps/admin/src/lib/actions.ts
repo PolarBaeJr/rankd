@@ -121,6 +121,7 @@ export {
   markFeeUnpaid,
   addManualFee,
   removeManualFee,
+  markNamedFeePaid,
   attachNamedPayment,
 } from './actions/fees';
 

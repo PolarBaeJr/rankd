@@ -34,9 +34,13 @@ const RECEIPT_PROBLEM_LABEL: Record<string, string> = {
   bad_type: 'not an image or PDF',
   drive_forbidden: 'Drive would not hand over',
   download_failed: 'never downloaded',
-  no_fee: 'with no fee to match',
+  no_fee: 'with nothing to pay (an exec, a fee-exempt member, or someone not signed up)',
   duplicate: 'for a fee that already had one waiting',
 };
+
+// The problems a resent screenshot can fix. A receipt with no fee to pay, or one
+// already waiting, needs nothing from the person.
+const RESEND_FIXES = new Set(['too_large', 'bad_type', 'drive_forbidden', 'download_failed']);
 
 export const READER_ERROR_LABEL: Record<string, string> = {
   auth: "Google refused the console's service account key. Check the key in the console's settings.",
@@ -192,7 +196,9 @@ export function FormReaderPanel({
           {Object.entries(reader.receiptProblems)
             .map(([status, count]) => `${count} ${RECEIPT_PROBLEM_LABEL[status] ?? status}`)
             .join(', ')}
-          . Ask the person to email the screenshot instead.
+          .
+          {Object.keys(reader.receiptProblems).some((status) => RESEND_FIXES.has(status)) &&
+            ' Ask the person to email the screenshot instead.'}
         </p>
       )}
 
