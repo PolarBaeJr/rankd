@@ -120,13 +120,14 @@ export function FormReaderPanel({
   if (!reader) return null;
 
   function build(): FormMapping {
-    if (targetKind === 'club_event') {
+    if (targetKind === 'club_event' || targetKind === 'season') {
       return {
         EMAIL_QUESTION: emailQuestion.trim(),
         NAME_QUESTION: nameQuestion.trim(),
         EVENT_QUESTION: '',
         EVENTS: {},
-        DEFAULT_EVENT_ID: targetId,
+        // A season's form names no event (00290).
+        DEFAULT_EVENT_ID: targetKind === 'season' ? '' : targetId,
         PARTNERS: {},
         RECEIPT_QUESTION: receiptQuestion.trim(),
       };
@@ -225,7 +226,9 @@ export function FormReaderPanel({
             </label>
           </div>
           <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
-            E-transfer screenshot question (a file upload; leave empty if the form has none)
+            {targetKind === 'season'
+              ? 'E-transfer screenshot question (a file upload)'
+              : 'E-transfer screenshot question (a file upload; leave empty if the form has none)'}
             <input className={inputClass} value={receiptQuestion} onChange={(e) => setReceiptQuestion(e.target.value)} />
           </label>
           {targetKind === 'tournament' && (
@@ -291,7 +294,13 @@ export function FormReaderPanel({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              disabled={pending || emailQuestion.trim() === '' || nameQuestion.trim() === '' || !!repeatedChoice}
+              disabled={
+                pending ||
+                emailQuestion.trim() === '' ||
+                nameQuestion.trim() === '' ||
+                (targetKind === 'season' && receiptQuestion.trim() === '') ||
+                !!repeatedChoice
+              }
               onClick={() => onSave(build(), () => setEditing(false))}
             >
               Save and read

@@ -465,7 +465,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
   registration_import_forms: {
     playerColumns: ['created_by'],
     disposition: 'counted',
-    why: 'Google Forms you bound to a tournament or club event, as an officer. Counted rather than listed: the binding is a club object.',
+    why: 'Google Forms you bound to a tournament, club event or season, as an officer. Counted rather than listed: the binding is a club object.',
   },
   legacy_tournament_participants: {
     playerColumns: ['player_id', 'partner_id'],

@@ -1404,7 +1404,13 @@ export function PastePayments({
                     key={`${i}-${r.raw}`}
                     primary={r.name}
                     secondary={r.raw}
-                    right={<Badge variant="neutral">Named payment</Badge>}
+                    right={
+                      r.unpaid ? (
+                        <Badge variant="warning">Named, not paid</Badge>
+                      ) : (
+                        <Badge variant="neutral">Named payment</Badge>
+                      )
+                    }
                   />
                 ))}
               </Collapsed>
