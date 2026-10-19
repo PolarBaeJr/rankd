@@ -1,0 +1,9 @@
+# Copy to wrangler.toml (gitignored) and fill in the site's host and zone.
+name = "club-error-page"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+routes = [
+  { pattern = "SITE_HOST/*", zone_name = "ZONE" },
+]
