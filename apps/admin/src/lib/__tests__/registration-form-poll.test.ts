@@ -480,3 +480,75 @@ describe('an uploaded receipt (00288)', () => {
     expect(rpcs.some((r) => r.fn === 'file_registration_import_receipts')).toBe(true);
   });
 });
+
+describe("a season's form (00290)", () => {
+  const SEASON_MAPPING = {
+    EMAIL_QUESTION: 'Email address',
+    NAME_QUESTION: 'Full name',
+    EVENT_QUESTION: '',
+    EVENTS: {},
+    DEFAULT_EVENT_ID: '',
+    PARTNERS: {},
+    RECEIPT_QUESTION: 'E-transfer screenshot',
+  };
+  const SEASON_ITEMS = {
+    items: [
+      { title: 'Email address', questionItem: { question: { questionId: 'qe' } } },
+      { title: 'Full name', questionItem: { question: { questionId: 'qn' } } },
+      { title: 'E-transfer screenshot', questionItem: { question: { questionId: 'qf' } } },
+    ],
+  };
+  function duesResponse(id: string, at: string) {
+    return {
+      responseId: id,
+      lastSubmittedTime: at,
+      answers: {
+        qe: { questionId: 'qe', textAnswers: { answers: [{ value: 'pat@example.org' }] } },
+        qn: { questionId: 'qn', textAnswers: { answers: [{ value: 'Pat Player' }] } },
+        qf: { questionId: 'qf', fileUploadAnswers: { answers: [{ fileId: 'drive-9', fileName: 'paid.png', mimeType: 'image/png' }] } },
+      },
+    };
+  }
+  function readsSeasonForm() {
+    claimed = [
+      { ...form('b9', 'form-9'), target_kind: 'season', tournament_id: null as never, read_mapping: SEASON_MAPPING as never },
+    ];
+    google = (url) => {
+      if (url.pathname.endsWith('/responses')) return json(200, { responses: [duesResponse('r9', '2026-10-09T11:10:00Z')] });
+      if (url.pathname.startsWith('/drive/')) return json(500, {});
+      return json(200, SEASON_ITEMS);
+    };
+  }
+
+  it('imports a response with no entries and records its screenshot', async () => {
+    readsSeasonForm();
+    // The database answers one pending row for a season's response.
+    importResult = () => ({ data: [{ item: 1, event_id: null, status: 'pending', reason: null, replayed: false }], error: null });
+    const run = await runRegistrationFormPoll(admin(), deps());
+    expect(imports()).toEqual([
+      {
+        p_binding_id: 'b9',
+        p_payload: {
+          form_id: 'form-9',
+          response_id: 'r9',
+          submitted_at: '2026-10-09T11:10:00.000Z',
+          email: 'pat@example.org',
+          name: 'Pat Player',
+          entries: [],
+        },
+      },
+    ]);
+    expect(rpcs.filter((r) => r.fn === 'record_registration_import_receipt').map((r) => r.args)).toEqual([
+      { p_binding_id: 'b9', p_response_id: 'r9', p_drive_file_id: 'drive-9', p_mime_type: 'image/png' },
+    ]);
+    expect(run.forms[0]).toMatchObject({ read: true, imported: 1, replayed: 0, skipped: 0, error: null });
+  });
+
+  it('counts the one replayed row as a replay', async () => {
+    readsSeasonForm();
+    importResult = () => ({ data: [{ item: 1, event_id: null, status: 'pending', reason: null, replayed: true }], error: null });
+    rpcReplies.record_registration_import_receipt = () => ({ data: [{ outcome: 'unchanged', stale_path: null }], error: null });
+    const run = await runRegistrationFormPoll(admin(), deps());
+    expect(run.forms[0]).toMatchObject({ read: true, imported: 0, replayed: 1 });
+  });
+});

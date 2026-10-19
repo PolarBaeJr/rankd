@@ -261,6 +261,16 @@ describe('matchPastedPayers', () => {
     expect(m.notFound).toHaveLength(0);
   });
 
+  it('says a named row a Google Form filed is not paid yet (00290)', () => {
+    const dues = [due({ manual_name: 'Robin Park', manual_email: 'robin@example.net', paid_at: null, amount_cents: 2000 })];
+    const m = match('robin@example.net', ROSTER, dues);
+    expect(m.alreadyNamed).toEqual([expect.objectContaining({ manualName: 'Robin Park', paid: false })]);
+    expect(m.willMark).toHaveLength(0);
+    const preview = toFeePastePreview({ id: 's', name: 'Fall 2026', competitiveFeeCents: 5000, recreationalFeeCents: 2000 }, m);
+    expect(preview.alreadyNamed).toEqual([expect.objectContaining({ name: 'Robin Park', unpaid: true })]);
+    expect(preview.alreadyNamed[0]!.reason).toContain('not paid yet');
+  });
+
   it('offers weak hints for a name it cannot find, and never marks them', () => {
     const roster = [
       member('j', 'Jennifer Doe'),

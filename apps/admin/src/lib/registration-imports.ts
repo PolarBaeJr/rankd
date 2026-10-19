@@ -8,13 +8,15 @@ import { formMappingSchema, type FormMapping } from './registration-form-mapping
 // One reader for the tournament page and the club event page: the form
 // bindings on the target, the keys' consumers to bind against, and every entry
 // the forms produced, with the guest waiver, the invite and the fee beside it.
+// And for /fees (00290): a season's form makes no entries, so it lists each
+// response with where its screenshot went and the dues it was filed against.
 //
 // SERVER ONLY. It reads with the service client and returns non-members' typed
 // emails, so a page renders it only behind the capability that opens the page.
 
 type Admin = ReturnType<typeof createAdminClient>;
 
-export type ImportTargetKind = 'tournament' | 'club_event';
+export type ImportTargetKind = 'tournament' | 'club_event' | 'season';
 
 export interface FormBinding {
   id: string;
@@ -67,11 +69,31 @@ export interface ImportedEntry {
   invite: 'sent' | 'queued' | 'failed' | 'cancelled' | 'off' | null;
 }
 
+/** One response to a season's form (00290). */
+export interface ImportedResponse {
+  id: string;
+  responseId: string;
+  submittedAt: string | null;
+  /** The member's name, or the name a non-member typed. */
+  person: string;
+  isMember: boolean;
+  /** A non-member's typed email. Never set for a member. */
+  email: string | null;
+  /** A later response by the same person replaced this one. */
+  replaced: boolean;
+  /** The screenshot's status (registration_import_receipts.status), or null when none was uploaded. */
+  receipt: string | null;
+  /** The dues the screenshot was filed against. */
+  fee: { amountCents: number | null; paid: boolean } | null;
+}
+
 export interface RegistrationImportView {
   /** Null when the database is older than 00283. */
   bindings: FormBinding[] | null;
   consumers: { id: string; name: string }[];
   entries: ImportedEntry[];
+  /** A season's responses (00290); empty for a tournament or club event. */
+  responses: ImportedResponse[];
 }
 
 const MISSING = 'PGRST205';
@@ -101,7 +123,7 @@ export async function loadRegistrationImports(
   targetId: string,
   opts: { guestWaiversOn: boolean },
 ): Promise<RegistrationImportView> {
-  const column = kind === 'tournament' ? 'tournament_id' : 'club_event_id';
+  const column = kind === 'tournament' ? 'tournament_id' : kind === 'season' ? 'season_id' : 'club_event_id';
   const baseColumns = 'id, form_id, consumer_id, active, join_waitlist, solo_doubles_ack, created_at';
   const readerColumns = 'read_mapping, poll_read_at, poll_attempted_at, poll_imported_count, poll_error';
   const readBindings = (columns: string) =>
@@ -115,7 +137,11 @@ export async function loadRegistrationImports(
   const readerMissing = firstBindingsRes.error?.code === UNDEFINED_COLUMN;
   const bindingsRes = readerMissing ? await readBindings(baseColumns) : firstBindingsRes;
   if (bindingsRes.error) {
-    if (bindingsRes.error.code === MISSING) return { bindings: null, consumers: [], entries: [] };
+    if (bindingsRes.error.code === MISSING) return { bindings: null, consumers: [], entries: [], responses: [] };
+    // Before 00290 there is no season column: no form can be linked yet.
+    if (kind === 'season' && bindingsRes.error.code === UNDEFINED_COLUMN) {
+      return { bindings: null, consumers: [], entries: [], responses: [] };
+    }
     throw new Error(`Could not read the form bindings: ${bindingsRes.error.message}`);
   }
   if (consumersRes.error) throw new Error(`Could not read the data API consumers: ${consumersRes.error.message}`);
@@ -134,7 +160,7 @@ export async function loadRegistrationImports(
     createdAt: b.created_at as string,
     reader: readerMissing ? null : readerOf(b),
   }));
-  if (bindings.length === 0) return { bindings, consumers, entries: [] };
+  if (bindings.length === 0) return { bindings, consumers, entries: [], responses: [] };
 
   // Before 00288 the table does not exist: no counts.
   const problemsRes = await admin
@@ -158,7 +184,10 @@ export async function loadRegistrationImports(
     .limit(500);
   if (importsRes.error) throw new Error(`Could not read the imported responses: ${importsRes.error.message}`);
   const imports = importsRes.data ?? [];
-  if (imports.length === 0) return { bindings, consumers, entries: [] };
+  if (imports.length === 0) return { bindings, consumers, entries: [], responses: [] };
+  if (kind === 'season') {
+    return { bindings, consumers, entries: [], responses: await loadSeasonResponses(admin, imports.map((i) => i.id as string)) };
+  }
 
   const entriesRes = await admin
     .from('registration_import_entries')
@@ -269,5 +298,70 @@ export async function loadRegistrationImports(
                 : 'queued',
     };
   });
-  return { bindings, consumers, entries };
+  return { bindings, consumers, entries, responses: [] };
+}
+
+/** A season form's responses, newest first, with the screenshot's road and the dues it reached. */
+async function loadSeasonResponses(admin: Admin, importIds: string[]): Promise<ImportedResponse[]> {
+  const [importsRes, receiptsRes] = await Promise.all([
+    admin
+      .from('registration_imports')
+      .select('id, response_id, submitted_at, submitter_player_id, submitter_name, submitter_email, superseded_by')
+      .in('id', importIds)
+      .order('created_at', { ascending: false }),
+    admin.from('registration_import_receipts').select('import_id, status, fee_submission_id').in('import_id', importIds),
+  ]);
+  if (importsRes.error) throw new Error(`Could not read the imported responses: ${importsRes.error.message}`);
+  if (receiptsRes.error) throw new Error(`Could not read the form receipts: ${receiptsRes.error.message}`);
+  const rows = (importsRes.data ?? []) as {
+    id: string;
+    response_id: string;
+    submitted_at: string | null;
+    submitter_player_id: string | null;
+    submitter_name: string | null;
+    submitter_email: string | null;
+    superseded_by: string | null;
+  }[];
+  const receipts = (receiptsRes.data ?? []) as { import_id: string; status: string; fee_submission_id: string | null }[];
+
+  const playerIds = [...new Set(rows.map((r) => r.submitter_player_id).filter((id): id is string => !!id))];
+  const submissionIds = receipts.map((r) => r.fee_submission_id).filter((id): id is string => !!id);
+  const [playersRes, submissionsRes] = await Promise.all([
+    playerIds.length
+      ? admin.from('players').select('id, full_name').in('id', playerIds)
+      : Promise.resolve({ data: [], error: null }),
+    submissionIds.length
+      ? admin.from('fee_submissions').select('id, club_fee_id').in('id', submissionIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (playersRes.error) throw new Error(`Could not read the responses' members: ${playersRes.error.message}`);
+  if (submissionsRes.error) throw new Error(`Could not read the responses' receipts: ${submissionsRes.error.message}`);
+  const submissions = (submissionsRes.data ?? []) as { id: string; club_fee_id: string }[];
+  const feeIds = [...new Set(submissions.map((s) => s.club_fee_id))];
+  const feesRes = feeIds.length
+    ? await admin.from('club_fees').select('id, amount_cents, paid_at').in('id', feeIds)
+    : { data: [], error: null };
+  if (feesRes.error) throw new Error(`Could not read the responses' dues: ${feesRes.error.message}`);
+  const fees = (feesRes.data ?? []) as { id: string; amount_cents: number | null; paid_at: string | null }[];
+  const players = (playersRes.data ?? []) as { id: string; full_name: string }[];
+
+  return rows.map((r) => {
+    const receipt = receipts.find((x) => x.import_id === r.id);
+    const feeId = submissions.find((x) => x.id === receipt?.fee_submission_id)?.club_fee_id;
+    const fee = feeId ? fees.find((f) => f.id === feeId) : undefined;
+    const isMember = !!r.submitter_player_id;
+    return {
+      id: r.id,
+      responseId: r.response_id,
+      submittedAt: r.submitted_at,
+      person: isMember
+        ? (players.find((p) => p.id === r.submitter_player_id)?.full_name ?? 'A member')
+        : (r.submitter_name ?? 'A non-member'),
+      isMember,
+      email: isMember ? null : r.submitter_email,
+      replaced: !!r.superseded_by,
+      receipt: receipt?.status ?? null,
+      fee: fee ? { amountCents: fee.amount_cents, paid: !!fee.paid_at } : null,
+    };
+  });
 }

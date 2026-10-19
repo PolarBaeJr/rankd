@@ -470,7 +470,7 @@ export async function addManualFee(input: ManualFeeInput) {
   // club_fees_manual_email_season_key (00252) is the other unique index a
   // named payment can hit.
   if (error?.code === '23505' && error.message.includes('club_fees_manual_email_season_key')) {
-    throw new ExpectedError('A named payment for that email is already recorded for this season.');
+    throw new ExpectedError('A named fee for that email is already on this season, paid or waiting on its receipt.');
   }
   if (error?.code === '23505') {
     throw new ExpectedError(
@@ -544,7 +544,9 @@ export async function removeManualFee(id: string) {
  * the named row deleted, in that order, so a failure between the two leaves the
  * money counted twice rather than lost. A PAID OR WAIVED ONE is refused: the
  * named payment is then the second record of one payment, and removing it is
- * the exec's call.
+ * the exec's call. AN UNPAID NAMED ROW (a Google Form files one for a
+ * non-member's screenshot, 00290) is not merged either: there is no payment to
+ * copy, and deleting the row would take the receipt waiting on it.
  */
 export async function attachNamedPayment(
   feeId: unknown,
@@ -593,6 +595,12 @@ export async function attachNamedPayment(
       throw new ExpectedError(
         `${playerName}'s fee is already recorded as ${isWaivedFee(existing) ? 'waived' : 'paid'}, so moving this payment onto them would count it twice. ` +
           'Remove the named payment instead if it is the same payment.',
+      );
+    }
+    if (existing && !named.paid_at) {
+      throw new ExpectedError(
+        `"${named.manual_name}" is not paid yet and ${playerName} already has a fee this season. ` +
+          'Settle its receipt under Submitted first, then move it.',
       );
     }
 

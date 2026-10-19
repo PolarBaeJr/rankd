@@ -18,13 +18,14 @@ import { formMappingSchema } from '../registration-form-mapping';
 //
 // No new capability. Binding a form is editing the tournament or club event it
 // fills; undoing an entry is removing that entry, with the remove capability
-// of the field it is in.
+// of the field it is in. A season's form (00290) files dues receipts, so it is
+// bound by whoever may mark club fees paid.
 
 const uuid = z.string().uuid();
 
 const bindSchema = z
   .object({
-    targetKind: z.enum(['tournament', 'club_event']),
+    targetKind: z.enum(['tournament', 'club_event', 'season']),
     targetId: uuid,
     consumerId: uuid,
     // A Google Form id, or whatever stable id the script sends. Same shape the
@@ -40,14 +41,28 @@ const bindSchema = z
 
 export type BindFormInput = z.input<typeof bindSchema>;
 
-function updateCapabilityFor(kind: 'tournament' | 'club_event') {
+type TargetKind = 'tournament' | 'club_event' | 'season';
+
+function updateCapabilityFor(kind: TargetKind) {
+  if (kind === 'season') return 'fees.clubfees.markpaid.write';
   return kind === 'tournament' ? 'tournaments.manage.update.write' : 'events.manage.update.write';
 }
 
-function revalidateTarget(kind: 'tournament' | 'club_event', id: string) {
+/** The target column the binding row records for its kind. */
+function storedTarget(binding: { target_kind: unknown; tournament_id: unknown; club_event_id: unknown; season_id?: unknown }) {
+  const kind = binding.target_kind as TargetKind;
+  const targetId = (
+    kind === 'tournament' ? binding.tournament_id : kind === 'club_event' ? binding.club_event_id : binding.season_id
+  ) as string | null;
+  return { kind, targetId: targetId ?? null };
+}
+
+function revalidateTarget(kind: TargetKind, id: string) {
   if (kind === 'tournament') {
     revalidatePath(`/tournaments/${id}`);
     revalidatePath(`/tournaments/${id}/fees`);
+  } else if (kind === 'season') {
+    revalidatePath('/fees');
   } else {
     revalidatePath(`/events/${id}`);
   }
@@ -65,9 +80,11 @@ async function bindImpl(input: BindFormInput): Promise<void> {
   const targetRes =
     parsed.targetKind === 'tournament'
       ? await admin.from('tournaments').select('id').eq('id', parsed.targetId).maybeSingle()
-      : await admin.from('club_events').select('id').eq('id', parsed.targetId).maybeSingle();
+      : parsed.targetKind === 'season'
+        ? await admin.from('seasons').select('id').eq('id', parsed.targetId).maybeSingle()
+        : await admin.from('club_events').select('id').eq('id', parsed.targetId).maybeSingle();
   if (targetRes.error) throw new Error(`Could not read the target: ${targetRes.error.message}`);
-  if (!targetRes.data) throw new ExpectedError('That tournament or event no longer exists.');
+  if (!targetRes.data) throw new ExpectedError('That tournament, event or season no longer exists.');
 
   const consumerRes = await admin.from('data_api_consumers').select('id').eq('id', parsed.consumerId).maybeSingle();
   if (consumerRes.error) throw new Error(`Could not read the consumer: ${consumerRes.error.message}`);
@@ -81,6 +98,7 @@ async function bindImpl(input: BindFormInput): Promise<void> {
       target_kind: parsed.targetKind,
       tournament_id: parsed.targetKind === 'tournament' ? parsed.targetId : null,
       club_event_id: parsed.targetKind === 'club_event' ? parsed.targetId : null,
+      season_id: parsed.targetKind === 'season' ? parsed.targetId : null,
       join_waitlist: parsed.joinWaitlist,
       solo_doubles_ack: parsed.soloDoublesAck,
       active: true,
@@ -91,7 +109,7 @@ async function bindImpl(input: BindFormInput): Promise<void> {
   if (error) {
     if (error.code === '23505') {
       throw new ExpectedError(
-        'That form is already bound for this consumer, here or on another tournament or event. Switch the old binding off first.',
+        'That form is already bound for this consumer, here or on another tournament, event or season. Switch the old binding off first.',
       );
     }
     throw new Error(`The binding was not written: ${error.message}`);
@@ -126,13 +144,12 @@ async function setActiveImpl(bindingId: string, active: boolean): Promise<void> 
   const admin = createAdminClient();
   const { data: binding, error } = await admin
     .from('registration_import_forms')
-    .select('id, target_kind, tournament_id, club_event_id, active')
+    .select('id, target_kind, tournament_id, club_event_id, season_id, active')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Could not read the binding: ${error.message}`);
   if (!binding) throw new ExpectedError('That form binding no longer exists.');
-  const kind = binding.target_kind as 'tournament' | 'club_event';
-  const targetId = (kind === 'tournament' ? binding.tournament_id : binding.club_event_id) as string | null;
+  const { kind, targetId } = storedTarget(binding);
   const actor = await requireCapability(updateCapabilityFor(kind));
   if (binding.active === on) return;
 
@@ -189,19 +206,26 @@ async function saveMappingImpl(bindingId: string, mapping: unknown): Promise<voi
   const admin = createAdminClient();
   const { data: binding, error } = await admin
     .from('registration_import_forms')
-    .select('id, target_kind, tournament_id, club_event_id')
+    .select('id, target_kind, tournament_id, club_event_id, season_id')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Could not read the binding: ${error.message}`);
   if (!binding) throw new ExpectedError('That form binding no longer exists.');
-  const kind = binding.target_kind as 'tournament' | 'club_event';
-  const targetId = (kind === 'tournament' ? binding.tournament_id : binding.club_event_id) as string | null;
+  const { kind, targetId } = storedTarget(binding);
   const actor = await requireCapability(updateCapabilityFor(kind));
-  if (!targetId) throw new ExpectedError('That form binding has no tournament or event any more.');
+  if (!targetId) throw new ExpectedError('That form binding has no tournament, event or season any more.');
 
   if (parsed) {
     const named = [...Object.values(parsed.EVENTS), ...(parsed.DEFAULT_EVENT_ID ? [parsed.DEFAULT_EVENT_ID] : [])];
-    if (kind === 'tournament') {
+    if (kind === 'season') {
+      // A season's form enters nobody in anything: its screenshot is the point.
+      if (named.length > 0 || Object.keys(parsed.PARTNERS).length > 0) {
+        throw new ExpectedError('A season form names no event.');
+      }
+      if (!parsed.RECEIPT_QUESTION) {
+        throw new ExpectedError('A season form needs its e-transfer screenshot question.');
+      }
+    } else if (kind === 'tournament') {
       const unique = [...new Set(named)];
       if (unique.length > 0) {
         const { data: events, error: eventsError } = await admin

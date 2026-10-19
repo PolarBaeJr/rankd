@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isWaivedFee, summariseFeeCollection, type FeeStatusRow } from '../fee-status';
 
 // THE STRIP HAS TO ADD UP.
@@ -107,5 +109,20 @@ describe('isWaivedFee', () => {
     expect(isWaivedFee(PAID)).toBe(false);
     expect(isWaivedFee(null)).toBe(false);
     expect(isWaivedFee(undefined)).toBe(false);
+  });
+});
+
+// The rows under the strip, read off disk: no test here mounts the page. A
+// named dues row used to be drawn Paid whatever it held, and a Google Form now
+// files unpaid ones for non-members (00290).
+describe('the /fees named rows', () => {
+  const page = readFileSync(join(__dirname, '../../app/fees/page.tsx'), 'utf8');
+  const named = page.slice(page.indexOf('...manualFees.map((fee) =>'), page.indexOf('after={'));
+
+  it('test paid_at the way a member row does', () => {
+    expect(named).toContain('const waived = isWaived(fee);');
+    expect(named).toContain('const paid = Boolean(fee.paid_at) && !waived;');
+    expect(named).not.toContain('<Badge variant="success">Paid</Badge>');
+    expect(named.match(/\{paid \? 'Paid' : waived \? 'Waived' : 'Unpaid'\}/g)).toHaveLength(2);
   });
 });
