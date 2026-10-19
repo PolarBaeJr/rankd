@@ -12,7 +12,7 @@ import type { FeeRowState } from '@/lib/fee-bulk-eligibility';
 import { getSeasonFinances } from '@/lib/season-finance';
 import { foldLedgerRows } from '@/lib/season-income';
 import { outstandingClubFeeCents } from '@/lib/fees-outstanding';
-import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
+import { FeeActions, AddManualFee, RemoveManualFee, MarkNamedFeePaid } from './fee-actions';
 import { BulkFeeActions } from './bulk-fee-actions';
 import { PastePayments } from './paste-payments';
 import { ReinstatementsCard } from './reinstatements-card';
@@ -800,6 +800,9 @@ export default async function FeesPage({
             // exec confirms it under Submitted. Same test as a member's row.
             const waived = isWaived(fee);
             const paid = Boolean(fee.paid_at) && !waived;
+            const markNamed = !paid && !waived && may('fees.clubfees.markpaid.write') ? (
+              <MarkNamedFeePaid id={fee.id} name={fee.manual_name ?? ''} seasonName={season.name} amountCents={fee.amount_cents} />
+            ) : null;
             return {
             id: fee.id,
             name: fee.manual_name ?? '',
@@ -819,7 +822,7 @@ export default async function FeesPage({
                   { label: 'Method', value: paid && fee.method ? formatPaymentMethod(fee.method) : '-' },
                   { label: 'Reference', value: paid && fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
                 ]}
-                actions={<RemoveManualFee id={fee.id} name={fee.manual_name} />}
+                actions={<>{markNamed}<RemoveManualFee id={fee.id} name={fee.manual_name} /></>}
               />
             ),
             row: (
@@ -855,7 +858,10 @@ export default async function FeesPage({
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <RemoveManualFee id={fee.id} name={fee.manual_name} />
+                    <div className="flex justify-end gap-2">
+                      {markNamed}
+                      <RemoveManualFee id={fee.id} name={fee.manual_name} />
+                    </div>
                   </td>
                 </tr>
             ),

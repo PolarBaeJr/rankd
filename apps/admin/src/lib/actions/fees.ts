@@ -9,11 +9,13 @@ import {
   feeMarkSchema,
   feeWaiveSchema,
   manualFeeSchema,
+  namedFeeMarkSchema,
   playerFlagsSchema,
   ExpectedError,
   type FeeMarkInput,
   type FeeWaiveInput,
   type ManualFeeInput,
+  type NamedFeeMarkInput,
   type PlayerFlagsInput,
 } from '@badminton/shared';
 import { isWaivedFee } from '../fee-status';
@@ -490,6 +492,79 @@ export async function addManualFee(input: ManualFeeInput) {
       manual_email: email ?? null,
       season_id: input.season_id,
       amount_cents: input.amount_cents ?? null,
+      method: input.method ?? null,
+      reference: input.reference ?? null,
+    },
+  });
+
+  revalidatePath('/fees');
+}
+
+/**
+ * Mark a named dues row paid. A Google Form files one unpaid for a non-member
+ * (00290), and confirming its receipt under Submitted settles it; this is for
+ * the payment that arrived some other way, cash at a session or an e-transfer
+ * with no screenshot. Same refusals as markFeePaid: a paid or waived row is
+ * left alone, and the write only lands while the row is still unpaid.
+ */
+export async function markNamedFeePaid(input: NamedFeeMarkInput) {
+  parseOrThrow(namedFeeMarkSchema, input);
+  const admin = await requireCapability('fees.clubfees.markpaid.write');
+  const adminClient = createAdminClient();
+
+  const { data: existing, error: readError } = await adminClient
+    .from('club_fees')
+    .select('id, manual_name, manual_email, season_id, amount_cents, paid_at, method, reference')
+    .eq('id', input.fee_id)
+    // Named dues only: the id comes from a rendered table, and a member's row
+    // or an entry fee has its own control with its own rules.
+    .eq('fee_type', 'dues')
+    .is('player_id', null)
+    .not('manual_name', 'is', null)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+  if (!existing) throw new ExpectedError('That named fee is no longer on this season. Reload and check.');
+  if (existing.paid_at) {
+    throw new ExpectedError(
+      `That fee is already recorded as ${isWaivedFee(existing) ? 'waived' : `paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)})`}.`,
+    );
+  }
+
+  // club_fees_settled_has_amount refuses a paid row with no amount.
+  const amountCents = input.amount_cents ?? existing.amount_cents;
+  if (amountCents == null) throw new ExpectedError('Enter the amount they paid.');
+
+  const payment = {
+    paid_at: new Date().toISOString(),
+    marked_by: admin.id,
+    amount_cents: amountCents,
+    method: input.method ?? null,
+    reference: input.reference ?? null,
+  };
+  const { data: updated, error } = await adminClient
+    .from('club_fees')
+    .update(payment)
+    .eq('id', existing.id)
+    .is('paid_at', null)
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!updated) {
+    throw new ExpectedError(
+      'That fee was recorded as paid while you were marking it, most likely by confirming its receipt. Reload and check.',
+    );
+  }
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'fee_marked_paid',
+    target_type: 'club_fee',
+    target_id: existing.id,
+    old_value: existing,
+    new_value: {
+      manual_name: existing.manual_name,
+      season_id: existing.season_id,
+      amount_cents: amountCents,
       method: input.method ?? null,
       reference: input.reference ?? null,
     },
