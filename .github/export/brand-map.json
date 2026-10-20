@@ -2,7 +2,7 @@
   "//": "Export-time brand replacement. Literal, case-sensitive, longest `from` first. `paths` limits a rule to those globs, `exclude` keeps it out of them. Never map DB identifiers (sfu_rec, sfss_purchase_url), the auth cookie name or package.json name fields. Prefer rewording a comment in source over adding a rule here. `\"path\": true` also renames every exported path the rule matches (a Kotlin package directory, an Xcode target folder), so a file's location changes in step with the contents naming it.",
   "skip": [
     "package-lock.json",
-    "apps/player/public/tesseract/**",
+    "apps/*/public/tesseract/**",
     "apps/*/src/fonts/**"
   ],
   "rules": [

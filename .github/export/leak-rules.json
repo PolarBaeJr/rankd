@@ -76,12 +76,12 @@
   ],
   "binaryAllow": [
     "apps/*/src/fonts/**",
-    "apps/player/public/tesseract/**",
+    "apps/*/public/tesseract/**",
     "apps/mobile/android/app/src/main/res/font/*.ttf",
     "apps/mobile/android/gradle/wrapper/gradle-wrapper.jar"
   ],
   "exceptions": [
-    {"path": "apps/player/public/tesseract/**", "rule": "home-dir", "reason": "vendored Emscripten build output; the paths are the upstream build machine's, not ours"},
+    {"path": "apps/*/public/tesseract/**", "rule": "home-dir", "reason": "vendored Emscripten build output; the paths are the upstream build machine's, not ours"},
     {"path": "apps/player/src/lib/__tests__/guest-waiver-action.test.ts", "rule": "private-ip", "match": "x-forwarded-for", "reason": "a forwarded-for fixture; the private hop is what the test strips"},
     {"path": "apps/player/src/lib/discord-card.tsx", "rule": "private-ip", "match": "http://10\\.0\\.0\\.5:8000/", "reason": "the SSRF example the guard below it refuses"},
     {"path": "packages/shared/src/utils/member-identity.ts", "rule": "brand-word", "match": "^\\s*'sfu',\\s*$", "reason": "a reserved handle; it must match the v_reserved arrays in the migrations"},
