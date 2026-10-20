@@ -156,6 +156,7 @@ services:
       DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env.staging}
       # Optional. Point it at a channel in the test server, not the real one.
       DISCORD_AUDIT_CHANNEL_ID: ${DISCORD_AUDIT_CHANNEL_ID:-}
+      DISCORD_SERVER_LOG: ${DISCORD_SERVER_LOG:-}
       # NO DEFAULT ON PURPOSE. This used to be `${APP_API_URL:-http://player:3000}`,
       # which assumed the player app is a compose service on this project's
       # network. It is not, in either environment: player and admin are

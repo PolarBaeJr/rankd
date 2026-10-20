@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { startGateway, type GatewaySocket } from '../gateway.js';
+import { startGateway, type GatewaySocket, type StartGatewayOptions } from '../gateway.js';
 
 // The gateway is a protocol state machine with no return value -- what it does
 // is SEND things at the right moment. Nothing about it is observable without
@@ -42,7 +42,7 @@ class FakeSocket implements GatewaySocket {
   }
 }
 
-function harness() {
+function harness(extra: Partial<StartGatewayOptions> = {}) {
   const sockets: FakeSocket[] = [];
   const urls: string[] = [];
   let nextId = 0;
@@ -67,6 +67,7 @@ function harness() {
     // Removes jitter so backoff and the first-heartbeat offset are assertable.
     random: () => 0.5,
     log: () => {},
+    ...extra,
   });
 
   return {
@@ -257,5 +258,42 @@ describe('startGateway', () => {
     h.socket().onmessage?.({ data: 'not json' });
     h.socket().onmessage?.({ data: 42 });
     expect(h.handle.state()).toBe('connecting');
+  });
+
+  describe('with the server log on', () => {
+    it('identifies with the intents it was given', () => {
+      const h = harness({ intents: (1 << 2) | (1 << 9) });
+      h.socket().receive(HELLO);
+      const identify = h.socket().payloads().find((p) => p.op === 2);
+      expect((identify?.d as { intents: number }).intents).toBe((1 << 2) | (1 << 9));
+    });
+
+    it('hands every other dispatch to the handler, and survives one that throws', () => {
+      const seen: string[] = [];
+      const h = harness({
+        intents: 1 << 9,
+        onDispatch: (type) => {
+          seen.push(type);
+          if (type === 'MESSAGE_DELETE') throw new Error('boom');
+        },
+      });
+      h.socket().receive(HELLO);
+      h.socket().receive(READY);
+      h.socket().receive({ op: 0, s: 2, t: 'MESSAGE_DELETE', d: { id: '1' } });
+      h.socket().receive({ op: 0, s: 3, t: 'GUILD_MEMBER_ADD', d: {} });
+      expect(seen).toEqual(['MESSAGE_DELETE', 'GUILD_MEMBER_ADD']);
+      expect(h.handle.state()).toBe('ready');
+    });
+
+    it('drops to no intents on 4014 instead of going offline', () => {
+      const h = harness({ intents: 1 << 15 });
+      h.socket().receive(HELLO);
+      h.socket().fireClose(4014);
+      expect(h.handle.state()).toBe('reconnecting');
+      h.tick();
+      h.socket().receive(HELLO);
+      const identify = h.socket().payloads().find((p) => p.op === 2);
+      expect((identify?.d as { intents: number }).intents).toBe(0);
+    });
   });
 });

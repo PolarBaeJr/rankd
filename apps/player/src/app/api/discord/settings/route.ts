@@ -55,6 +55,7 @@ const WRITABLE: Record<string, Check> = {
   feedback_channel_id: channel,
   event_feedback_channel_id: channel,
   audit_channel_id: channel,
+  server_log_channel_id: channel,
   // Read by the session-pings route before it falls back to /rolepicker rows.
   session_ping_all_role_id: role,
   session_ping_competitive_role_id: role,

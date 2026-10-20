@@ -77,6 +77,14 @@ export const CHANNEL_SETTINGS: readonly SettingSpec[] = [
     label: 'Audit log',
     whenUnset: 'role changes are made but not logged',
   },
+  {
+    // What people do in the server, as opposed to what the bot does (the audit
+    // log above). Which events reach it is DISCORD_SERVER_LOG; see server-log.ts.
+    key: 'server_log_channel_id',
+    option: 'server_log',
+    label: 'Server log',
+    whenUnset: 'bans, kicks, joins, leaves and deleted messages are not logged',
+  },
 ] as const;
 
 /**
