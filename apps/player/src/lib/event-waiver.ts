@@ -29,6 +29,7 @@ import {
   raise,
   resolveEventWaiverText,
   eventWaiverStatus,
+  formSignedWaivers,
   type AcceptedEventWaiver,
   type EventWaiverStatus,
 } from '@badminton/shared';
@@ -78,10 +79,24 @@ export async function loadTournamentWaiverContext(
     .eq('tournament_id', tournamentId);
   if (rowsError) throw raise('TRN-102', rowsError);
 
+  const requiredHash = eventWaiverHash(text);
   return {
-    requiredHash: eventWaiverHash(text),
-    acceptances: (rows ?? []) as AcceptedEventWaiver[],
+    requiredHash,
+    acceptances: [...((rows ?? []) as AcceptedEventWaiver[]), ...await formSignedFor(service, tournamentId, requiredHash)],
   };
+}
+
+/**
+ * Signed on the Google Form (00292): a club event run as this tournament took
+ * its sign-ups from a Form that carries the waiver, so those entrants are not
+ * asked again here. Same failure discipline as the reads above.
+ */
+async function formSignedFor(service: ServiceClient, tournamentId: string, requiredHash: string) {
+  try {
+    return await formSignedWaivers(service, tournamentId, requiredHash);
+  } catch (err) {
+    throw raise('TRN-102', err);
+  }
 }
 
 /**
@@ -115,10 +130,11 @@ export async function loadMyEventWaiver(
     .eq('player_id', playerId);
   if (rowsError) throw raise('TRN-102', rowsError);
 
+  const formSigned = (await formSignedFor(service, tournamentId, requiredHash)).filter((a) => a.player_id === playerId);
   return {
     text,
     requiredHash,
-    status: eventWaiverStatus(playerId, requiredHash, (rows ?? []) as AcceptedEventWaiver[]),
+    status: eventWaiverStatus(playerId, requiredHash, [...((rows ?? []) as AcceptedEventWaiver[]), ...formSigned]),
   };
 }
 

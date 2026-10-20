@@ -305,6 +305,8 @@ export default async function FeesPage({
           .in('status', ['competitive', 'recreational'])
           .eq('is_exec', false)
           .eq('fee_exempt', false)
+          // Guests (00292) owe no dues: they are entered in one event, not members.
+          .eq('is_guest', false)
           .order('full_name'),
         'FEE-101',
       )

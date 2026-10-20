@@ -124,4 +124,10 @@ describe('the All tab', () => {
     const actions = rosterActionsFor('all', { status: 'suspended' });
     expect(actions.map((a) => a.kind)).not.toContain('inactive');
   });
+
+  it('offers nothing on an erased guest, even Restore from Inactive (00292)', () => {
+    for (const tab of ['inactive', 'guests', 'all', 'suspended']) {
+      expect(rosterActionsFor(tab, { status: 'recreational', erasedGuest: true }, { isAdmin: true })).toEqual([]);
+    }
+  });
 });

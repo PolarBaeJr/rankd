@@ -128,6 +128,10 @@ export const PLAYER_EXPORT_COLUMNS = [
   'eligibility_flag',
   'fee_exempt',
   'membership_type',
+  // 00292. Always false by the time a member can export: signing in clears it.
+  'is_guest',
+  'guest_member_requested_by',
+  'guest_member_requested_at',
   'competition_category',
   'skill_tier',
   'passkey_setup',

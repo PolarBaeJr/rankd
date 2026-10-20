@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const suppressionResult = { data: null as unknown, error: null as unknown };
 const preferenceResult = { data: null as unknown, error: null as unknown };
+const guestResult = { data: [] as unknown, error: null as unknown };
 const sent: { to: string; subject: string }[] = [];
 
 vi.mock('resend', () => ({
@@ -38,6 +39,8 @@ vi.mock('@supabase/supabase-js', () => ({
         eq: () => ({
           maybeSingle: async () =>
             table === 'email_suppressions' ? suppressionResult : preferenceResult,
+          // The guest read (00292): players by email AND is_guest.
+          eq: () => ({ limit: async () => guestResult }),
         }),
       }),
     }),
@@ -69,6 +72,8 @@ describe('sendCategoryEmail gates', () => {
     suppressionResult.error = null;
     preferenceResult.data = null;
     preferenceResult.error = null;
+    guestResult.data = [];
+    guestResult.error = null;
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
@@ -107,6 +112,22 @@ describe('sendCategoryEmail gates', () => {
     const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
     expect(outcome).toEqual({ sent: false, reason: 'suppressed' });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('sends a guest record (00292) nothing, not even transactional mail, and refuses when it cannot tell', async () => {
+    guestResult.data = [{ id: 'guest' }];
+    const { sendChallengeReceivedEmail, sendPlayerApprovedEmail } = await loadSender();
+
+    expect(await sendChallengeReceivedEmail('guest@example.test', 'Alex', 'singles', 'ranked', 'ch-1'))
+      .toEqual({ sent: false, reason: 'suppressed' });
+    expect(await sendPlayerApprovedEmail('guest@example.test', 'Ann')).toEqual({ sent: false, reason: 'suppressed' });
+
+    guestResult.data = null;
+    guestResult.error = { message: 'column players.is_guest does not exist' };
+    await expect(
+      sendChallengeReceivedEmail('guest@example.test', 'Alex', 'singles', 'ranked', 'ch-1')
+    ).rejects.toThrow(/Guest check failed, refusing to send/);
     expect(sent).toHaveLength(0);
   });
 

@@ -16,6 +16,7 @@ import { ClubEventSignupsTable, type ClubEventSignupRow } from '../signups-table
 import { loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
+import { ClubEventTournamentCard } from '../tournament-link';
 
 type EventRow = {
   id: string;
@@ -32,6 +33,7 @@ type EventRow = {
   status: string;
   cancelled_at: string | null;
   cancelled_reason: string | null;
+  tournament_event_id: string | null;
 };
 
 type SignupRow = {
@@ -59,7 +61,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const { data: eventData } = await adminClient
     .from('club_events')
     .select(
-      'id, title, kind, description, location, starts_at, ends_at, capacity, cost_cents, signup_opens_at, signup_closes_at, status, cancelled_at, cancelled_reason',
+      'id, title, kind, description, location, starts_at, ends_at, capacity, cost_cents, signup_opens_at, signup_closes_at, status, cancelled_at, cancelled_reason, tournament_event_id',
     )
     .eq('id', id)
     .maybeSingle();
@@ -97,6 +99,28 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     const player = Array.isArray(row.players) ? row.players[0] : row.players;
     return { player_id: row.player_id, created_at: row.created_at, name: player?.full_name ?? 'A member' };
   });
+
+  // The linked tournament event (00292), for the Tournament card.
+  const { data: linkedData } = event.tournament_event_id
+    ? await adminClient
+        .from('tournament_events')
+        .select('id, tournament_id, tournament:tournaments(status)')
+        .eq('id', event.tournament_event_id)
+        .maybeSingle()
+    : { data: null };
+  const linkedTournament = linkedData as
+    | { id: string; tournament_id: string; tournament: { status: string } | { status: string }[] | null }
+    | null;
+  const linked = linkedTournament
+    ? {
+        tournamentId: linkedTournament.tournament_id,
+        eventId: linkedTournament.id,
+        status:
+          (Array.isArray(linkedTournament.tournament)
+            ? linkedTournament.tournament[0]?.status
+            : linkedTournament.tournament?.status) ?? 'draft',
+      }
+    : null;
 
   const cancelled = event.status === 'cancelled';
   const cost = formatClubEventCost(event.cost_cents);
@@ -155,6 +179,15 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           canCancel={canCancel && !cancelled}
           canDelete={canDelete && taken === 0}
         />
+
+        {(linked || !cancelled) && (
+          <ClubEventTournamentCard
+            eventId={event.id}
+            linked={linked}
+            canLink={canEdit && may('tournaments.manage.create.write') && !cancelled}
+            nonMembers={externals}
+          />
+        )}
 
         {canSeeSignups && (
           <Card className="p-0">

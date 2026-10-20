@@ -179,6 +179,19 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // binding off is when it stopped. Same weight as minting and revoking.
   'registration_form_bound',
   'registration_form_unbound',
+  // A club event handed to a tournament event (00292): from then on entries
+  // there sign people up, and bill them, here.
+  'club_event_tournament_linked',
+  // A non-member given a player record so they can be entered (00292).
+  'club_event_external_admitted',
+  // A guest erased on request (00292). Their export's row,
+  // guest_data_exported, is written by the member app, which holds the
+  // assembler, like data_export_downloaded.
+  'guest_erased',
+  // Making a guest a member without a sign-in: an exec asks, an admin decides.
+  'guest_made_member',
+  'guest_membership_requested',
+  'guest_membership_declined',
 
   // CLUB CHANGES (00286). Posting is the club speaking to every member, so the
   // record of who posted what is classified by hand; post_club_changes writes

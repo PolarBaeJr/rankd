@@ -37,6 +37,7 @@ import {
 // By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
 // the barrel is imported by client components in both apps.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
+import { formSignedWaivers } from '@badminton/shared';
 import type {
   TournamentEventType,
   RatingSettings,
@@ -327,7 +328,16 @@ export async function loadTournamentWaiverContext(
     throw new Error('Could not check who has signed the event waiver. Nothing was changed — try again.');
   }
 
-  return { requiredHash, acceptances: (acceptances ?? []) as AcceptedEventWaiver[] };
+  // The Form's waiver counts too, for a club event run as this tournament.
+  let formSigned: AcceptedEventWaiver[];
+  try {
+    formSigned = await formSignedWaivers(adminClient, tournamentId, requiredHash);
+  } catch (err) {
+    Sentry.captureException(err);
+    throw err;
+  }
+
+  return { requiredHash, acceptances: [...((acceptances ?? []) as AcceptedEventWaiver[]), ...formSigned] };
 }
 
 /**

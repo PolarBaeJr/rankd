@@ -4,6 +4,7 @@ What each release of the SFU Badminton Club app changes, for members, for execs 
 
 | Release | Summary |
 | --- | --- |
+| [1.1.2](1.1.2.md) | A club event runs as a tournament, Form non-members as guests, instant Form sign-ups, and `/softban` with a Discord server log. |
 | [1.1.1](1.1.1.md) | Console commands on Discord (`/session`, `/event`), `/schedule`, a Calendar page, tournaments in the calendar feed, and passkeys in in-app browsers. |
 | [1.1.0](1.1.0.md) | Membership fees and receipts, password sign-in, club events, the guided tour, the Data API service and native member apps for Android and iPhone. |
 | [1.0.8](1.0.8.md) | Search the court desk, and check-in times in club time. |

@@ -241,6 +241,9 @@ async function removeSignupImpl(eventId: string, playerId: string): Promise<void
     .eq('event_id', eventId)
     .eq('player_id', playerId)
     .select('player_id');
+  // 23514: the linked tournament's draw is made (00292), and the message says
+  // to withdraw them from the tournament instead.
+  if (error?.code === '23514') throw new ExpectedError(error.message);
   if (error) throw new Error(`The sign-up was not removed: ${error.message}`);
   if ((data ?? []).length === 0) {
     throw new ExpectedError('That member is not signed up for this event.');
@@ -315,4 +318,80 @@ async function countSignups(
   // Fail closed: an unread count is not zero sign-ups.
   if (error || count === null) throw new Error(`The sign-ups could not be counted: ${error?.message ?? 'no count'}`);
   return count;
+}
+
+// ============================================================
+// RUN AS A TOURNAMENT (00292)
+// ============================================================
+//
+// Makes a tournament event for this club event and links them, so the draw,
+// pairing, check-in and scores run on the tournament pages and every sign-up is
+// an entry there (and back). The database does all of it in one transaction;
+// this checks the caller may both edit club events and create tournaments.
+
+const linkTournamentSchema = z
+  .object({
+    event_type: z.enum([
+      'mens_singles',
+      'womens_singles',
+      'open_singles',
+      'mens_doubles',
+      'womens_doubles',
+      'mixed_doubles',
+      'open_doubles',
+    ]),
+    format: z.enum(['single_elimination', 'round_robin', 'pool_to_bracket']),
+    rated: z.boolean(),
+  })
+  .strict();
+
+export type LinkTournamentInput = z.infer<typeof linkTournamentSchema>;
+
+export async function linkClubEventTournament(
+  id: string,
+  input: LinkTournamentInput,
+): Promise<ActionResult<{ tournamentId: string; eventId: string }>> {
+  return runAction(() => linkTournamentImpl(id, input));
+}
+
+async function linkTournamentImpl(
+  id: string,
+  input: LinkTournamentInput,
+): Promise<{ tournamentId: string; eventId: string }> {
+  await requireCapability('events.manage.update.write');
+  const actor = await requireCapability('tournaments.manage.create.write');
+  parseOrThrow(z.string().uuid(), id);
+  const body = parseOrThrow(linkTournamentSchema, input);
+  const adminClient = createAdminClient();
+
+  const { data, error } = await adminClient.rpc('link_club_event_tournament', {
+    p_club_event_id: id,
+    p_actor_id: actor.id as string,
+    p_event_type: body.event_type,
+    p_format: body.format,
+    p_rated: body.rated,
+  });
+  if (error) throw new Error(`The tournament was not made: ${error.message}`);
+  const result = data as {
+    ok: boolean;
+    reason?: string;
+    tournament_id?: string;
+    event_id?: string;
+  } | null;
+  if (!result?.ok || !result.tournament_id || !result.event_id) {
+    switch (result?.reason) {
+      case 'cancelled':
+        throw new ExpectedError('This event is cancelled.');
+      case 'no_active_season':
+        throw new ExpectedError('There must be exactly one active season to make a tournament.');
+      case 'not_found':
+        throw new ExpectedError('That event no longer exists.');
+      default:
+        throw new Error(`The tournament was not made: ${result?.reason ?? 'no answer'}`);
+    }
+  }
+
+  revalidatePath(`/events/${id}`);
+  revalidatePath('/tournaments');
+  return { tournamentId: result.tournament_id, eventId: result.event_id };
 }

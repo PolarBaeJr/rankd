@@ -122,3 +122,35 @@ export function ConfirmImportForm({
     </div>
   );
 }
+
+// 00291: a club event form signs a member up at once. "Not me" takes the
+// sign-up back, and its unpaid fee with it.
+export function UndoImportForm({ entryId, doneHref }: { entryId: string; doneHref: string }) {
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
+  const router = useRouter();
+
+  async function reject() {
+    setBusy(true);
+    try {
+      const res = await rejectImportedEntry(entryId);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        return;
+      }
+      toast('Thanks. Your sign-up was taken back, and the club has been told.', 'success');
+      router.push(doneHref);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+      <Button variant="secondary" onClick={reject} loading={busy} disabled={busy}>
+        Not me
+      </Button>
+    </div>
+  );
+}
