@@ -316,6 +316,23 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `match_results_channel_id` | the match result relay (00171) | SQL |
 | `feedback_channel_id` | `/bug` and `/feedback` (00173) | SQL |
 | `event_feedback_channel_id` | tournament survey comments (00173) | SQL |
+| `server_log_channel_id` | the server log: bans, kicks, timeouts, role changes, joins, leaves, deleted and edited messages | `/config channels server_log:` |
+
+**The server log also needs `DISCORD_SERVER_LOG`** on the bot, a comma list of
+scopes, each costing a gateway intent:
+
+| Scope | Logs | Intent | Portal toggle |
+|---|---|---|---|
+| `moderation` | Discord's audit log: bans, kicks, timeouts, role/channel/invite changes, moderator deletes | GUILD_MODERATION | none; the bot role needs **View Audit Log** |
+| `members` | joins (with account age) and leaves | GUILD_MEMBERS | **Server Members Intent** |
+| `messages` | deleted and edited messages, by author and channel | GUILD_MESSAGES | none |
+| `content` | adds the TEXT of deleted and edited messages | MESSAGE_CONTENT | **Message Content Intent** |
+
+A privileged scope without its portal toggle gets close code 4014; the bot then
+reconnects with no intents, stays online, and logs that the server log is off.
+Deleted-message text comes from an in-memory cache, so a message older than
+the running container shows as not cached. The channel is a log of members'
+words: make it exec-only.
 
 **THE LAST TWO MUST BE EXEC-ONLY CHANNELS, AND THEY ARE SEPARATE ON PURPOSE.**
 A bug report names its reporter. A tournament survey comment names its author

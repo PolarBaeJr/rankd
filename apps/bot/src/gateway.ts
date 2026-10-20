@@ -1,4 +1,5 @@
-// A Discord gateway connection, held open for one reason: presence.
+// A Discord gateway connection, held open for presence and, when the server
+// log is switched on, for the guild events it records (server-log.ts).
 //
 // This bot answers interactions over HTTP -- Discord POSTs to us, we reply --
 // which is a complete and supported way to build a bot, but it leaves no
@@ -7,8 +8,8 @@
 // renders grey forever no matter how well it works. This module opens that
 // socket, heartbeats it, and does nothing else with it.
 //
-// DELIBERATELY EVENT-FREE. We identify with `intents: 0`, so Discord sends us
-// no guild events at all. Publishing our own presence needs no intents --
+// EVENT-FREE BY DEFAULT. With no `intents` passed we identify with 0, so
+// Discord sends us no guild events at all. Publishing our own presence needs no intents --
 // GUILD_PRESENCES is for RECEIVING other people's -- and asking for a
 // privileged intent that is not ticked in the developer portal is what earns
 // close code 4014 and a bot that never connects.
@@ -19,7 +20,9 @@
 // stops being true: every process holding a socket receives every event and
 // would act on it once each. Anything event-driven needs a duplicate answer
 // first (a single designated shard, or a Postgres advisory lock, or an
-// idempotent write), not just a handler.
+// idempotent write), not just a handler. The server log's answer is the
+// idempotent write: every entry is posted with a nonce derived from the event
+// and `enforce_nonce`, so the second replica's copy is dropped by Discord.
 //
 // And do NOT reach for proxy.unscalable as that answer. An earlier version of
 // this comment said the service omits the label; it sets it
@@ -98,6 +101,13 @@ export interface StartGatewayOptions {
   /** Injectable so a test can make backoff and heartbeat jitter deterministic. */
   random?: () => number;
   log?: (message: string) => void;
+  /** The gateway intents bitmask. 0 (the default) asks for no events. */
+  intents?: number;
+  /**
+   * Called for every dispatch other than READY and RESUMED. It must not throw
+   * far: a throw is caught and logged, and the socket carries on.
+   */
+  onDispatch?: (type: string, data: unknown) => void;
 }
 
 export interface GatewayHandle {
@@ -118,7 +128,11 @@ export function startGateway(options: StartGatewayOptions): GatewayHandle {
     clearTimer = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     random = Math.random,
     log = (message: string) => console.log(message),
+    onDispatch,
   } = options;
+  // Mutable for one reason: a 4014 (privileged intent not ticked in the
+  // portal) drops back to 0 rather than taking presence down with it.
+  let intents = options.intents ?? 0;
 
   let state: GatewayState = 'idle';
   let socket: GatewaySocket | null = null;
@@ -227,7 +241,7 @@ export function startGateway(options: StartGatewayOptions): GatewayHandle {
       op: OP.IDENTIFY,
       d: {
         token,
-        intents: 0,
+        intents,
         properties: { os: 'linux', browser: 'sfu-badminton-bot', device: 'sfu-badminton-bot' },
         presence: {
           since: null,
@@ -315,8 +329,15 @@ export function startGateway(options: StartGatewayOptions): GatewayHandle {
           connectedAt = Date.now();
           log('[gateway] resumed');
         }
-        // Every other dispatch is ignored on purpose. With intents 0 there
-        // should not be any beyond the lifecycle ones above.
+        // Every other dispatch goes to the handler, if there is one. With
+        // intents 0 there should not be any beyond the lifecycle ones above.
+        else if (onDispatch && typeof payload.t === 'string') {
+          try {
+            onDispatch(payload.t, payload.d);
+          } catch (error) {
+            log(`[gateway] ${payload.t} handler failed: ${String(error)}`);
+          }
+        }
         return;
       }
 
@@ -361,6 +382,19 @@ export function startGateway(options: StartGatewayOptions): GatewayHandle {
       clearHeartbeat();
       socket = null;
       connectedAt = null;
+      // A privileged intent the portal has not granted. Presence needs no
+      // intents, so come back with none: the server log goes quiet and says
+      // why, and the bot stays online.
+      if ((event.code === 4013 || event.code === 4014) && intents !== 0) {
+        log(
+          `[gateway] closed ${event.code}: ${FATAL_CLOSE_CODES.get(event.code)} -- ` +
+            'reconnecting with no intents, so the server log is OFF until the portal is fixed'
+        );
+        intents = 0;
+        forgetSession();
+        if (!stopped) scheduleReconnect();
+        return;
+      }
       const fatal = FATAL_CLOSE_CODES.get(event.code);
       if (fatal) {
         giveUp(`closed ${event.code}: ${fatal}`);

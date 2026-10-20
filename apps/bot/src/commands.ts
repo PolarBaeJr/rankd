@@ -60,6 +60,7 @@ import {
   type TournamentEntryReply,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
+import { SOFTBAN_WINDOWS, describeWindow, softban, windowSeconds } from './moderation.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
@@ -157,6 +158,9 @@ const MANAGE_GUILD = '32';
  * outside the admins. The wrong people never get it by accident.
  */
 const EXEC_ONLY = '0';
+
+/** BAN_MEMBERS (1 << 2). Only /softban uses it; see the note on its definition. */
+const BAN_MEMBERS = '4';
 
 /**
  * The club event kinds, as /event create offers them. A copy of
@@ -1395,6 +1399,33 @@ export const COMMAND_DEFINITIONS = [
       },
     ],
   },
+  {
+    // A Discord moderation action, so a Discord permission is the gate, on
+    // /setup's argument for MANAGE_GUILD: whoever holds Ban Members could do
+    // this by hand. moderation.ts re-checks the caller's permissions and rank,
+    // because a server admin can open any command to any role.
+    name: 'softban',
+    description: 'Remove someone from the server and delete their recent messages; they can rejoin',
+    default_member_permissions: BAN_MEMBERS,
+    dm_permission: false,
+    options: [
+      { type: 6, name: 'member', description: 'Who to soft-ban', required: true },
+      {
+        type: 3,
+        name: 'delete',
+        description: 'How far back to delete their messages (default: last day)',
+        required: false,
+        choices: SOFTBAN_WINDOWS.map((w) => ({ name: w.name, value: w.value })),
+      },
+      {
+        type: 3,
+        name: 'reason',
+        description: 'Why, for the logs',
+        required: false,
+        max_length: 300,
+      },
+    ],
+  },
 ];
 
 /**
@@ -1431,6 +1462,8 @@ export const COMMAND_DEFINITIONS = [
  */
 export const DEFERRED_COMMANDS = new Set([
   'setup',
+  // Five or six Discord calls, plus up to three unban retries.
+  'softban',
   'config',
   'forcelink',
   'forceunlink',
@@ -1526,6 +1559,8 @@ export interface InteractionContext {
    * audience.
    */
   permissions?: string | null;
+  /** The caller's role ids in this guild. /softban compares ranks with them. */
+  memberRoles?: string[] | null;
   /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
   applicationId?: string | null;
   interactionToken?: string | null;
@@ -7305,6 +7340,55 @@ export async function handleTourneyAutocomplete(
   return empty;
 }
 
+export async function handleSoftban(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const targetId = stringOption(options, 'member');
+  if (!context.guildId || !context.discordUserId) {
+    return ephemeral('Run /softban in the server.');
+  }
+  if (!targetId) return ephemeral('Pick who to soft-ban.');
+  if (!token) {
+    console.error('[bot] /softban: DISCORD_BOT_TOKEN is not set');
+    return ephemeral('The bot is not set up to do that right now.');
+  }
+
+  const deleteSeconds = windowSeconds(stringOption(options, 'delete') ?? undefined);
+  const reason = stringOption(options, 'reason') ?? 'No reason given';
+  const api = new DiscordApi({ token });
+  const outcome = await softban(api, {
+    guildId: context.guildId,
+    callerId: context.discordUserId,
+    callerRoles: context.memberRoles ?? [],
+    callerPermissions: context.permissions,
+    targetId,
+    deleteSeconds,
+    reason,
+  });
+  if (!outcome.ok) return ephemeral(outcome.message);
+
+  const windowLabel = describeWindow(deleteSeconds);
+  const { auditChannelId } = await loadConfig();
+  await postAuditEntry(api, auditChannelId, {
+    kind: 'softban',
+    moderatorId: context.discordUserId,
+    targetId,
+    deleteSeconds,
+    windowLabel,
+    reason,
+    unbanned: outcome.unbanned,
+  });
+
+  return ephemeral(
+    outcome.unbanned
+      ? `Soft-banned <@${targetId}>: removed, messages from the ${windowLabel} deleted. They can rejoin with the invite.`
+      : `<@${targetId}> was banned and their messages deleted, but **the unban failed, so they are still banned**. ` +
+          'Lift it in Server Settings > Bans.'
+  );
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
@@ -7366,6 +7450,8 @@ export async function dispatch(
         return handleEventAdmin(options, context);
       case 'tourney':
         return handleTourney(options, context);
+      case 'softban':
+        return await handleSoftban(options, context);
       default:
         return ephemeral('Unknown command.');
     }

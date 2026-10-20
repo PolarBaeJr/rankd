@@ -160,6 +160,7 @@ services:
       # it a private, exec-only channel - the entries mention the members whose
       # roles changed.
       DISCORD_AUDIT_CHANNEL_ID: ${DISCORD_AUDIT_CHANNEL_ID:-}
+      DISCORD_SERVER_LOG: ${DISCORD_SERVER_LOG:-}
       # In-cluster by default: bot and player share the compose `default`
       # network, so this needs no trip out to Cloudflare and back. The readiness
       # probe's hairpin (see apps/player/.../health/ready) is NOT repeated here.
