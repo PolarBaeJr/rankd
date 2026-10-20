@@ -531,6 +531,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Remove a member from a club event', area: 'events', group: null, mode: 'write',
     gate: 'actions/club-events.ts removeClubEventSignup',
   },
+  'events.signups.checkin.write': {
+    label: 'Check people in at a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts setClubEventCheckIn',
+  },
   'events.manage.create.write': {
     label: 'Create a club event', area: 'events', group: null, mode: 'write',
     gate: 'actions/club-events.ts createClubEvent',

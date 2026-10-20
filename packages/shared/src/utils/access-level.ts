@@ -390,6 +390,7 @@ export const CAPABILITIES = [
   'events.page',
   'events.signups.read',
   'events.signups.remove.write',
+  'events.signups.checkin.write',
   'events.manage.create.write',
   'events.manage.update.write',
   'events.manage.cancel.write',

@@ -266,6 +266,82 @@ async function removeSignupImpl(eventId: string, playerId: string): Promise<void
   revalidatePath(`/events/${eventId}`);
 }
 
+// CHECK-IN AT THE DOOR (00293). One action for both lists: a member's sign-up
+// is keyed by player, a non-member's (from the Google Form) by its own row id.
+// `here` false is the undo. The actor goes in audit_logs, not on the row: a
+// checked_in_by column would be a player foreign key that blocks merges.
+export async function setClubEventCheckIn(
+  eventId: string,
+  who: { kind: 'member' | 'guest'; id: string },
+  here: boolean,
+): Promise<ActionResult<{ checkedInAt: string | null }>> {
+  return runAction(() => setCheckInImpl(eventId, who, here));
+}
+
+const checkInWhoSchema = z.object({ kind: z.enum(['member', 'guest']), id: z.string().uuid() }).strict();
+
+async function setCheckInImpl(
+  eventId: string,
+  who: { kind: 'member' | 'guest'; id: string },
+  here: boolean,
+): Promise<{ checkedInAt: string | null }> {
+  const actor = await requireCapability('events.signups.checkin.write');
+  parseOrThrow(z.string().uuid(), eventId);
+  const target = parseOrThrow(checkInWhoSchema, who);
+  const checkedIn = parseOrThrow(z.boolean(), here);
+  const adminClient = createAdminClient();
+
+  const { data: event, error: eventError } = await adminClient
+    .from('club_events')
+    .select('id, status, tournament_event_id')
+    .eq('id', eventId)
+    .maybeSingle();
+  if (eventError) throw new Error(`The event could not be read: ${eventError.message}`);
+  if (!event) throw new ExpectedError('That event no longer exists.');
+  if (event.status === 'cancelled') throw new ExpectedError('This event is cancelled.');
+  // A linked event's sign-ups are tournament entries, and the tournament's
+  // check-in (with its waiver block) is the one record of who is here.
+  if (event.tournament_event_id) {
+    throw new ExpectedError('This event runs as a tournament. Check people in on the tournament.');
+  }
+
+  const checkedInAt = checkedIn ? new Date().toISOString() : null;
+  const { data, error } =
+    target.kind === 'member'
+      ? await adminClient
+          .from('club_event_signups')
+          .update({ checked_in_at: checkedInAt })
+          .eq('event_id', eventId)
+          .eq('player_id', target.id)
+          .select('event_id')
+      : await adminClient
+          .from('club_event_external_signups')
+          .update({ checked_in_at: checkedInAt })
+          .eq('event_id', eventId)
+          .eq('id', target.id)
+          .select('event_id');
+  if (error) throw new Error(`Check-in was not saved: ${error.message}`);
+  if ((data ?? []).length === 0) {
+    throw new ExpectedError('That person is not signed up for this event.');
+  }
+
+  await logAdminAudit(
+    adminClient,
+    {
+      actor_id: actor.id as string,
+      action_type: checkedIn ? 'club_event_checked_in' : 'club_event_check_in_undone',
+      target_type: 'club_event',
+      target_id: eventId,
+      new_value: target.kind === 'member' ? { player_id: target.id } : { external_signup_id: target.id },
+      reason: checkedIn ? 'Checked in at a club event' : 'A club event check-in was undone',
+    },
+    { eventId },
+  );
+
+  revalidatePath(`/events/${eventId}`);
+  return { checkedInAt };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers. Not exported: an exported function in a 'use server' module is a
 // POST endpoint.
