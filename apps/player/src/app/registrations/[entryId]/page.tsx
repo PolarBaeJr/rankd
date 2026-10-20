@@ -3,7 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import { PageHeader, Badge } from '@badminton/ui';
 import { formatClubEventTime, isDoublesEvent, isUuid } from '@badminton/shared';
 import { createServiceRoleClient, getViewer } from '@/lib/supabase-server';
-import { ConfirmImportForm } from './confirm-form';
+import { ConfirmImportForm, UndoImportForm } from './confirm-form';
 
 // CONFIRM A GOOGLE FORM ENTRY (00283).
 //
@@ -95,10 +95,12 @@ export default async function ConfirmRegistrationPage({
   }
 
   const waiting = entry.status === 'awaiting_member';
+  // 00291: a club event form signed the member up already; they can undo it.
+  const undoable = entry.status === 'entered' && !!entry.club_event_id;
 
   return (
     <div>
-      <PageHeader title="Confirm your entry" sub={<Link href={backHref}>{title}</Link>} />
+      <PageHeader title={undoable ? "Your sign-up" : "Confirm your entry"} sub={<Link href={backHref}>{title}</Link>} />
       <div style={{ display: 'grid', gap: 12, maxWidth: 560 }}>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <Badge variant={entry.status === 'entered' ? 'success' : waiting ? 'warning' : 'neutral'}>
@@ -125,6 +127,15 @@ export default async function ConfirmRegistrationPage({
               partnerName={partnerName}
               doneHref={backHref}
             />
+          </>
+        ) : undoable ? (
+          <>
+            <p style={{ margin: 0, lineHeight: 1.55 }}>
+              A response to the club&apos;s sign-up form used your email address, so you are signed up,
+              fee included. If it was not you, say so below: the sign-up is taken back and the club is
+              told.
+            </p>
+            <UndoImportForm entryId={entry.id} doneHref={backHref} />
           </>
         ) : (
           <p className="muted" style={{ margin: 0 }}>

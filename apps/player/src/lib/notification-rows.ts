@@ -224,6 +224,13 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
       // them, so the link goes to the page where they confirm it or say it
       // was not them. Checked before the tournament link, which the same row
       // also carries.
+      // 00291: a club event form signed them up; the page lets them undo it.
+      if (str(metadata, 'kind') === 'registration_import_signed_up') {
+        const entryId = str(metadata, 'entry_id');
+        return entryId && isUuid(entryId)
+          ? { href: `/registrations/${entryId}`, label: 'View' }
+          : { href: '/notifications', label: 'View' };
+      }
       if (str(metadata, 'kind') === 'registration_import_confirm') {
         const entryId = str(metadata, 'entry_id');
         return entryId && isUuid(entryId)
