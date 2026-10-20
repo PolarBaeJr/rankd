@@ -35,7 +35,11 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      // Offline with nothing cached, caches.match resolves undefined, and
+      // handing respondWith undefined is itself an error (Safari reports it
+      // as "FetchEvent.respondWith received an error"). Response.error() is
+      // the plain network failure the page would have had with no worker.
+      .catch(() => caches.match(event.request).then((cached) => cached || Response.error()))
   );
 });
 
