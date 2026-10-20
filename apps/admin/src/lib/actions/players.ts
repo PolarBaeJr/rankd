@@ -214,19 +214,36 @@ async function createPlayerImpl(data: {
   const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).maybeSingle();
   if (existing) throw new Error('A player with this email already exists');
 
+  // 'guest' (00292) is a recreational record flagged is_guest, not a status.
+  // A guest holds no console access, so neither marker goes with it.
+  const isGuest = data.status === 'guest';
+  if (isGuest && (data.is_exec || data.is_trainer)) {
+    throw new ExpectedError('A guest cannot be an executive or a trainer. Add them as a member instead.');
+  }
+  const status = isGuest ? 'recreational' : data.status || 'recreational';
+
   // create_player_with_rating (migration 00003_functions.sql) inserts the
-  // player and ratings rows in one transaction.
-  const { data: playerId, error } = await adminClient.rpc('create_player_with_rating', {
-    p_user_id: null,
-    p_email: data.email,
-    p_first_name: data.first_name,
-    p_last_name: data.last_name || null,
-    // Admin-created players have always had display_name seeded with the
-    // whole name; joinName reproduces exactly what full_name will generate.
-    p_display_name: joinName(data.first_name, data.last_name),
-    p_status: data.status || 'recreational',
-    p_role: data.role || 'player',
-  });
+  // player and ratings rows in one transaction. A guest is made by
+  // create_guest_player (00292) instead, flagged from the insert, so a failure
+  // can never leave a half-made record that is listed, mailed and challengeable.
+  const { data: playerId, error } = isGuest
+    ? await adminClient.rpc('create_guest_player', {
+      p_email: data.email,
+      p_first_name: data.first_name,
+      p_last_name: data.last_name || null,
+      p_display_name: joinName(data.first_name, data.last_name),
+    })
+    : await adminClient.rpc('create_player_with_rating', {
+      p_user_id: null,
+      p_email: data.email,
+      p_first_name: data.first_name,
+      p_last_name: data.last_name || null,
+      // Admin-created players have always had display_name seeded with the
+      // whole name; joinName reproduces exactly what full_name will generate.
+      p_display_name: joinName(data.first_name, data.last_name),
+      p_status: status,
+      p_role: data.role || 'player',
+    });
 
   if (error) {
     Sentry.captureException(error);
@@ -248,7 +265,8 @@ async function createPlayerImpl(data: {
   // created as pending_approval: that one has an approval ahead of it, and
   // getting a code before the decision is made would be the console
   // pre-empting itself.
-  if ((data.status || 'recreational') !== 'pending_approval') {
+  // Nor a guest, who is not a member yet: the code comes with membership.
+  if (status !== 'pending_approval' && !isGuest) {
     const { error: codeError } = await adminClient.rpc('assign_member_code', {
       p_player_id: playerId,
     });
@@ -309,6 +327,20 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
     .single();
   if (oldPlayerError) throw new Error(oldPlayerError.message);
   const { data: oldRating } = await adminClient.from('ratings').select('*').eq('player_id', playerId).single();
+
+  // A GUEST'S STANDING IS AN ADMIN'S (00292). A status or group change is how an
+  // exec would turn a guest into a division member by the side door; theirs is
+  // to ask an admin from the guest's row, and the admin's is Make a member.
+  if (
+    oldPlayer?.is_guest
+    && !isAdminActor(actor)
+    && ((data.status !== undefined && data.status !== oldPlayer.status)
+      || (data.membership_type !== undefined && data.membership_type !== oldPlayer.membership_type))
+  ) {
+    throw new ExpectedError(
+      'A guest\'s status and membership are changed by an admin. Ask an admin to make them a member.',
+    );
+  }
 
   // LETTING A PENDING SIGNUP INTO A DIVISION IS AN APPROVAL, AND THIS IS NOT THE
   // FUNCTION THAT DOES APPROVALS. isApprovalEdit is the same predicate the Edit
@@ -773,10 +805,17 @@ async function discordForceLinkFacts(
 
   const { data: target } = await adminClient
     .from('players')
-    .select('id, full_name')
+    .select('id, full_name, is_guest')
     .eq('id', playerId)
     .maybeSingle();
   if (!target) throw new ExpectedError('That member no longer exists.');
+  // 00292 refuses this in the database too; said here so the panel can say why.
+  if (target.is_guest) {
+    throw new ExpectedError(
+      'A guest cannot be linked to Discord. They become a member by signing in, or by /signup in '
+      + 'Discord, with the email they gave the Google Form; that links them.',
+    );
+  }
 
   // Who holds this snowflake now. FOR THE MESSAGE ONLY: the UNIQUE index on
   // player_discord_links.discord_user_id is the actual guarantee, and the write

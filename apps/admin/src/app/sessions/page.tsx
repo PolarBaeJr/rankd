@@ -489,6 +489,8 @@ export default async function SessionsPage({
           .in('status', ['competitive', 'recreational'])
           .eq('is_exec', false)
           .eq('fee_exempt', false)
+          // Guests (00292) owe no dues: they are entered in one event, not members.
+          .eq('is_guest', false)
       : Promise.resolve({ data: [] as { id: string; status: string }[] }),
     readFees
       ? supabase

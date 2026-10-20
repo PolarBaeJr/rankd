@@ -29,6 +29,7 @@ let confirmRows: unknown[];
 let inviteRows: unknown[];
 let suppressed: Set<string>;
 let suppressionError: string | null;
+let guests: Set<string>;
 
 function fakeAdmin() {
   return {
@@ -39,14 +40,16 @@ function fakeAdmin() {
       return { data: null, error: null };
     }),
     from: (table: string) => {
-      expect(table).toBe('email_suppressions');
+      expect(['email_suppressions', 'players']).toContain(table);
       let address = '';
       const chain = {
         select: () => chain,
-        eq: (_column: string, value: string) => {
-          address = value;
+        eq: (column: string, value: string) => {
+          if (column === 'email') address = value;
           return chain;
         },
+        // The guest read (00292).
+        limit: async () => ({ data: guests.has(address) ? [{ id: 'guest' }] : [], error: null }),
         maybeSingle: async () =>
           suppressionError
             ? { data: null, error: { message: suppressionError } }
@@ -78,6 +81,7 @@ beforeEach(() => {
   confirmRows = [];
   inviteRows = [];
   suppressed = new Set();
+  guests = new Set();
   suppressionError = null;
   flags = { guest_waivers: true };
   sendEmail.mockClear();
@@ -125,6 +129,14 @@ describe('registration mail', () => {
     run = await runRegistrationMail(fakeAdmin());
     expect(sendEmail).not.toHaveBeenCalled();
     expect(run.confirmations.failed).toBe(1);
+  });
+
+  it('never mails a guest record (00292), a confirmation or an invite', async () => {
+    confirmRows = [member];
+    guests.add('member@example.com');
+    const run = await runRegistrationMail(fakeAdmin());
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(run.confirmations.suppressed).toBe(1);
   });
 
   it('holds every invite while guest waivers are off, and when the flag cannot be read', async () => {

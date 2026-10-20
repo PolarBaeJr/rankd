@@ -7,7 +7,11 @@ import { useRouter } from 'next/navigation';
 import { createPlayer } from '@/lib/actions';
 import { Plus } from 'lucide-react';
 
+// Guest first and the default (00292): somebody added by hand has no login
+// until they sign in, and a guest is sent nothing and kept off the member lists
+// until then. Pick a division to add them as a full member straight away.
 const STATUS_OPTIONS = [
+  { value: 'guest', label: 'Guest' },
   { value: 'competitive', label: 'Competitive' },
   { value: 'recreational', label: 'Recreational' },
 ];
@@ -29,7 +33,7 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState('recreational');
+  const [status, setStatus] = useState('guest');
   const [role, setRole] = useState('player');
   const [isTrainer, setIsTrainer] = useState(false);
   const { toast } = useToast();
@@ -48,8 +52,8 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
           email: email.trim().toLowerCase(),
           status,
           role: 'player',
-          is_exec: isAdmin && role === 'exec',
-          is_trainer: isAdmin && isTrainer,
+          is_exec: isAdmin && status !== 'guest' && role === 'exec',
+          is_trainer: isAdmin && status !== 'guest' && isTrainer,
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player created', 'success');
@@ -57,7 +61,7 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
         setFirstName('');
         setLastName('');
         setEmail('');
-        setStatus('recreational');
+        setStatus('guest');
         setRole('player');
         setIsTrainer(false);
         router.refresh();
@@ -99,7 +103,13 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
             value={status}
             onChange={(e) => setStatus(e.target.value)}
           />
-          {isAdmin && (
+          {status === 'guest' && (
+            <p className="m-0 text-xs text-[var(--text-muted)]">
+              No login, sent nothing, off the leaderboard and challenges, no dues. They become a
+              member by signing in with this email.
+            </p>
+          )}
+          {isAdmin && status !== 'guest' && (
             <>
               <Select
                 label="Role"

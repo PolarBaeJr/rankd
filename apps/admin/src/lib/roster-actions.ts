@@ -64,6 +64,8 @@ export type RosterAction =
 export interface RosterRowState {
   is_banned?: boolean | null;
   status?: string | null;
+  /** An erased guest (00292): kept only as "Former guest#...", so nothing to act on. */
+  erasedGuest?: boolean;
 }
 
 // removePlayer asks for players.remove.write, which no baseline below admin
@@ -96,12 +98,17 @@ export function rosterActionsFor(
   // the two buttons were one action with a worse version of itself attached.
   // removePlayer() is still exported for an off-console/bulk path; it is the
   // button that was wrong, not the audited action.
+  if (player.erasedGuest) return [];
   switch (tab) {
     case 'inactive':
       return [{ kind: 'edit' }, { kind: 'restore' }];
     case 'suspended':
       return [{ kind: 'edit' }, player.is_banned ? { kind: 'unban' } : { kind: 'restore' }];
     case 'attention':
+      return [{ kind: 'edit' }];
+    // A guest (00292) is not on the roster to be banned or marked inactive;
+    // their own controls are Export data and Erase (GuestActions).
+    case 'guests':
       return [{ kind: 'edit' }];
     default: {
       // "when a user is suspended please make it so they cannot be marked as

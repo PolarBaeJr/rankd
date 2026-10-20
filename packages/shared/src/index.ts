@@ -59,6 +59,7 @@ export * from './utils/member-identity';
 export * from './utils/membership';
 export * from './utils/fee-tiers';
 export * from './utils/entry-fee';
+export * from './utils/form-signed-waivers';
 export * from './utils/entry-membership';
 export * from './utils/match-result';
 export * from './utils/game-rules';

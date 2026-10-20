@@ -81,7 +81,7 @@ export async function getPublicProfile(
 ): Promise<PublicProfile | null> {
   const { data, error } = await createServiceRoleClient()
     .from('players')
-    .select('id, full_name, avatar_url, status, bio, hide_from_leaderboard')
+    .select('id, full_name, avatar_url, status, bio, hide_from_leaderboard, is_guest')
     .eq('id', playerId)
     .maybeSingle();
 
@@ -94,6 +94,8 @@ export async function getPublicProfile(
   const isSelf = !!viewer?.id && viewer.id === data.id;
   const isAdmin = viewer?.role === 'admin';
   if (!mayViewRow(data.status, isSelf, isAdmin)) return null;
+  // A guest (00292) is a Google Form entrant, not a member: no public profile.
+  if (data.is_guest && !isAdmin) return null;
 
   return {
     id: data.id,

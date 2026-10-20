@@ -26,7 +26,11 @@ vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from: (table: Table) => ({
       select: () => ({
-        eq: () => ({ maybeSingle: async () => answers[table] }),
+        eq: () => ({
+          maybeSingle: async () => answers[table],
+          // The guest read (00292); no guests here.
+          eq: () => ({ limit: async () => ({ data: [], error: null }) }),
+        }),
       }),
     }),
   }),

@@ -91,6 +91,13 @@ async function withdrawImpl(eventId: string): Promise<void> {
 }
 
 function settle(action: string, data: unknown, error: unknown): void {
+  // 23514 from 00292: the event runs as a tournament whose draw is already
+  // made, so nobody joins or leaves from the event page any more.
+  if ((error as { code?: string } | null)?.code === '23514') {
+    throw new ExpectedError(
+      'This event\'s tournament draw is already made, so sign-ups can no longer change here. Ask an exec.',
+    );
+  }
   if (error) {
     Sentry.captureException(error, { tags: { action } });
     throw new ExpectedError('That did not go through. Please try again shortly.');

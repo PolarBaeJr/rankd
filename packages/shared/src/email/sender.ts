@@ -86,7 +86,7 @@ export type SendOutcome =
  *
  * Two gates before anything is handed to the provider:
  *   1. the address is on email_suppressions (hard bounce, complaint, or a
- *      one-click unsubscribe-from-all);
+ *      one-click unsubscribe-from-all), or belongs to a guest record;
  *   2. the member turned this category's email off.
  *
  * A blocked send is NOT an error. `sendEmail` throws by design so that genuine
@@ -139,6 +139,20 @@ async function sendCategoryEmail(
       throw new Error(`Suppression check failed, refusing to send: ${blockedError.message}`);
     }
     if (blocked) return { sent: false, reason: 'suppressed' };
+
+    // A guest record (00292: a Google Form non-member entered in a tournament)
+    // is sent nothing until they sign in, and transactional mail is no
+    // exception. Like the suppression list, a failed read refuses to send.
+    const { data: guests, error: guestError } = await db
+      .from('players')
+      .select('id')
+      .eq('email', address)
+      .eq('is_guest', true)
+      .limit(1);
+    if (guestError) {
+      throw new Error(`Guest check failed, refusing to send: ${guestError.message}`);
+    }
+    if ((guests ?? []).length > 0) return { sent: false, reason: 'suppressed' };
 
     // Preferences are looked up by address because that is all the call sites
     // have. Since 00058 the model is opt-IN: a stored preference now has to say

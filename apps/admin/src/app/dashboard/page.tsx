@@ -319,11 +319,12 @@ export default async function DashboardPage({
     { data: legalDocs },
   ] = await Promise.all([
     // ---- players.read ----------------------------------------------------
+    // Member counts leave out guests (00292), who are Form entrants.
     canReadRoster
-      ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval')
+      ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval').eq('is_guest', false)
       : noCount,
     canReadRoster
-      ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval').eq('active_flag', true)
+      ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval').eq('active_flag', true).eq('is_guest', false)
       : noCount,
 
     // ---- players.approve.write -------------------------------------------

@@ -496,8 +496,11 @@ export const adminPlayerCreateSchema = z.object({
   first_name: firstNameSchema,
   last_name: lastNameSchema,
   email: z.string().email('Invalid email address'),
+  // 'guest' (00292) is not a player_status: it makes a recreational record
+  // with players.is_guest set, which the app sends nothing and keeps off the
+  // member lists until they sign in with that email.
   status: z.enum([
-    'competitive', 'recreational', 'suspended', 'pending_approval',
+    'guest', 'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
   // 'admin' intentionally absent: admin accounts are promoted from existing
   // members (updatePlayer), never created directly.

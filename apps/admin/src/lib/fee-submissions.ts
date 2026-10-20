@@ -279,7 +279,9 @@ export async function loadOutstandingMembers(admin: AdminClient, season: Season,
       .select('id, full_name, email, avatar_url, status, is_exec, fee_exempt')
       .in('status', ['competitive', 'recreational'])
       .eq('is_exec', false)
-      .eq('fee_exempt', false),
+      .eq('fee_exempt', false)
+      // Guests (00292) owe no dues: they are entered in one event, not members.
+      .eq('is_guest', false),
     admin
       .from('club_fees')
       .select('id, player_id, amount_cents, paid_at, payment_reminded_at')
