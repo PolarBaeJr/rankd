@@ -17,6 +17,8 @@ import { loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 import { ClubEventTournamentCard } from '../tournament-link';
+import { ClubEventCheckIn } from '../checkin-card';
+import type { CheckInRow } from '@/components/checkin-list';
 
 type EventRow = {
   id: string;
@@ -39,6 +41,7 @@ type EventRow = {
 type SignupRow = {
   player_id: string;
   created_at: string;
+  checked_in_at?: string | null;
   players: { full_name: string | null } | { full_name: string | null }[] | null;
 };
 
@@ -56,6 +59,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   // database, rather than being hidden in markup that still carries them.
   const canSeeSignups = may('events.signups.read');
   const canRemoveSignup = may('events.signups.remove.write');
+  const canCheckIn = may('events.signups.checkin.write');
 
   const adminClient = createAdminClient();
   const { data: eventData } = await adminClient
@@ -88,17 +92,54 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
 
   // The service-role client, so the players embed is not narrowed by the
   // column grants members are held to.
-  const { data: signupData } = canSeeSignups
-    ? await adminClient
-        .from('club_event_signups')
-        .select('player_id, created_at, players(full_name)')
-        .eq('event_id', id)
-        .order('created_at', { ascending: true })
-    : { data: null };
-  const signups: ClubEventSignupRow[] = ((signupData ?? []) as SignupRow[]).map((row) => {
+  //
+  // checked_in_at is 00293's. Before it is applied the read with it fails, and
+  // a failed PostgREST read arrives as an empty list, which at the door would
+  // say nobody signed up. So a failure retries without it and the check-in
+  // card says the migration is missing instead.
+  const readSignups = (columns: string) =>
+    adminClient
+      .from('club_event_signups')
+      .select(columns)
+      .eq('event_id', id)
+      .order('created_at', { ascending: true });
+  let checkInReady = true;
+  let { data: signupData, error: signupError } = canSeeSignups
+    ? await readSignups('player_id, created_at, checked_in_at, players(full_name)')
+    : { data: null, error: null };
+  if (signupError) {
+    checkInReady = false;
+    ({ data: signupData } = await readSignups('player_id, created_at, players(full_name)'));
+  }
+  const signupRows = (signupData ?? []) as unknown as SignupRow[];
+  const signups: ClubEventSignupRow[] = signupRows.map((row) => {
     const player = Array.isArray(row.players) ? row.players[0] : row.players;
     return { player_id: row.player_id, created_at: row.created_at, name: player?.full_name ?? 'A member' };
   });
+
+  // The door list: members, then the Form's non-members (00284), who carry no
+  // player id and are keyed by their own row.
+  const { data: externalData, error: externalReadError } =
+    canSeeSignups && checkInReady && externals > 0
+      ? await adminClient
+          .from('club_event_external_signups')
+          .select('id, full_name, checked_in_at')
+          .eq('event_id', id)
+      : { data: [], error: null };
+  if (externalReadError) checkInReady = false;
+  const checkInRows: CheckInRow[] = [
+    ...signupRows.map((row) => ({
+      key: `member:${row.player_id}`,
+      name: signups.find((signup) => signup.player_id === row.player_id)?.name ?? 'A member',
+      here: !!row.checked_in_at,
+    })),
+    ...((externalData ?? []) as { id: string; full_name: string; checked_in_at: string | null }[]).map((row) => ({
+      key: `guest:${row.id}`,
+      name: row.full_name,
+      detail: 'Non-member (Google Form)',
+      here: !!row.checked_in_at,
+    })),
+  ];
 
   // The linked tournament event (00292), for the Tournament card.
   const { data: linkedData } = event.tournament_event_id
@@ -187,6 +228,32 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             canLink={canEdit && may('tournaments.manage.create.write') && !cancelled}
             nonMembers={externals}
           />
+        )}
+
+        {canSeeSignups && !cancelled && (
+          <Card className="p-0">
+            <h2
+              className="px-5 pb-4 pt-5 text-[13px] font-bold uppercase tracking-[0.14em] text-[var(--ink)]"
+              style={{ fontFamily: 'var(--display)' }}
+            >
+              Check-in
+            </h2>
+            {linked ? (
+              <p className="px-5 pb-5 text-sm text-[var(--ink-2)]">
+                This event runs as a tournament, so check people in there.{' '}
+                <Link
+                  href={`/tournaments/${linked.tournamentId}/checkin`}
+                  className="underline"
+                >
+                  Open the tournament&apos;s check-in list
+                </Link>
+              </p>
+            ) : !checkInReady ? (
+              <p className="px-5 pb-5 text-sm text-[var(--mute)]">Check-in needs migration 00293.</p>
+            ) : (
+              <ClubEventCheckIn eventId={event.id} rows={checkInRows} canWrite={canCheckIn} />
+            )}
+          </Card>
         )}
 
         {canSeeSignups && (

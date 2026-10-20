@@ -266,6 +266,7 @@ const TODAY: Row[] = [
   { capability: 'events.page',                         admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
   { capability: 'events.signups.read',                 admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
   { capability: 'events.signups.remove.write',         admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.signups.checkin.write',        admin: T, exec: F, trainer: F, was: 'no prior gate: club event check-in is new in 00293' },
   { capability: 'events.manage.create.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
   { capability: 'events.manage.update.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
   { capability: 'events.manage.cancel.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
