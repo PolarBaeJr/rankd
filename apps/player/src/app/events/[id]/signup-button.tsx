@@ -21,19 +21,24 @@ const DONE: Record<Act, string> = {
   leave: 'You left the waitlist',
 };
 
-// Offers only what the server would accept in this state; the server decides
-// again either way. `position` is the member's place on the waitlist (00294),
-// and `canWait` says the event is full and takes a waitlist.
+// The "your spot" panel under the event's details: one line saying where the
+// member stands, and only the buttons the server would accept in that state
+// (it decides again either way). `position` is the member's place on the
+// waitlist (00294), and `canWait` says the event takes a waitlist.
 export function SignupButton({
   eventId,
   state,
   position = null,
   canWait = false,
+  opensAt = null,
+  closesAt = null,
 }: {
   eventId: string;
   state: ClubEventSignupState;
   position?: number | null;
   canWait?: boolean;
+  opensAt?: string | null;
+  closesAt?: string | null;
 }) {
   const [loading, setLoading] = useState<Act | null>(null);
   const { toast } = useToast();
@@ -61,50 +66,81 @@ export function SignupButton({
     }
   }
 
+  const button = (what: Act, label: string, variant: 'primary' | 'secondary' = 'primary') => (
+    <Button
+      key={what}
+      variant={variant}
+      onClick={() => act(what)}
+      loading={loading === what}
+      disabled={loading !== null && loading !== what}
+    >
+      {label}
+    </Button>
+  );
+
+  let title: string;
+  let detail: string | null = null;
+  const buttons: React.ReactNode[] = [];
+
   if (state === 'going') {
-    return (
-      <Button variant="secondary" onClick={() => act('withdraw')} loading={loading === 'withdraw'}>
-        Withdraw
-      </Button>
-    );
+    title = 'You are going';
+    detail = 'See you there. Withdraw if you cannot make it, so someone else gets the place.';
+    buttons.push(button('withdraw', 'Withdraw', 'secondary'));
+  } else if (position !== null) {
+    title = `You are number ${position} on the waitlist`;
+    detail =
+      state === 'open'
+        ? 'A place is free. Take it before someone else does.'
+        : 'We will tell you here if a place opens.';
+    if (state === 'open') buttons.push(button('sign_up', 'Take the place'));
+    buttons.push(button('leave', 'Leave the waitlist', 'secondary'));
+  } else if (state === 'open') {
+    title = 'Places are open';
+    detail = closesAt ? `Sign-ups close ${closesAt}.` : null;
+    buttons.push(button('sign_up', 'Sign up'));
+    if (canWait) {
+      detail = 'Members on the waitlist are ahead of you for the free place.';
+      buttons.push(button('join', 'Join the waitlist', 'secondary'));
+    }
+  } else if (canWait) {
+    title = 'This event is full';
+    detail = 'Join the waitlist and we will tell you here if a place opens.';
+    buttons.push(button('join', 'Join the waitlist'));
+  } else {
+    title =
+      state === 'full'
+        ? 'This event is full'
+        : state === 'not_open_yet'
+          ? 'Sign-ups are not open yet'
+          : state === 'started'
+            ? 'This event has started'
+            : state === 'cancelled'
+              ? 'This event is cancelled'
+              : 'Sign-ups are closed';
+    if (state === 'not_open_yet' && opensAt) detail = `They open ${opensAt}.`;
   }
-  if (position !== null) {
-    return (
-      <>
-        <span className="muted" style={{ alignSelf: 'center' }}>
-          You are number {position} on the waitlist
-        </span>
-        {state === 'open' && (
-          <Button onClick={() => act('sign_up')} loading={loading === 'sign_up'} disabled={loading !== null}>
-            Take the place
-          </Button>
+
+  return (
+    <div
+      className="row"
+      style={{ gap: 16, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div className="stat-label" style={{ marginBottom: 4 }}>
+          YOUR SPOT
+        </div>
+        <div style={{ fontWeight: 600, fontSize: 16 }}>{title}</div>
+        {detail && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+            {detail}
+          </div>
         )}
-        <Button variant="secondary" onClick={() => act('leave')} loading={loading === 'leave'} disabled={loading !== null}>
-          Leave the waitlist
-        </Button>
-      </>
-    );
-  }
-  if (state === 'open') {
-    return (
-      <>
-        <Button onClick={() => act('sign_up')} loading={loading === 'sign_up'} disabled={loading !== null}>
-          Sign up
-        </Button>
-        {canWait && (
-          <Button variant="secondary" onClick={() => act('join')} loading={loading === 'join'} disabled={loading !== null}>
-            Join the waitlist
-          </Button>
-        )}
-      </>
-    );
-  }
-  if (canWait) {
-    return (
-      <Button onClick={() => act('join')} loading={loading === 'join'}>
-        Join the waitlist
-      </Button>
-    );
-  }
-  return null;
+      </div>
+      {buttons.length > 0 && (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {buttons}
+        </div>
+      )}
+    </div>
+  );
 }
