@@ -120,7 +120,7 @@ export default async function TournamentCheckInPage({ params }: { params: Promis
   ];
 
   return (
-    <div>
+    <div className="mx-auto max-w-4xl">
       <PageHeader
         eyebrow="CHECK-IN"
         title={tournament.name as string}
