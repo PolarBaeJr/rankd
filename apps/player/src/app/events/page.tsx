@@ -89,7 +89,7 @@ export default async function ClubEventsPage({ searchParams }: { searchParams: P
           <div className="day">{when.day}</div>
           <div className="weekday">{when.weekday}</div>
         </div>
-        <div style={{ flex: '999 1 360px', minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 10 }}>
+        <div style={{ flex: '999 1 360px', minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6 }}>
           <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
             <span className="ev-label red">Next up · {kindOf(event)}</span>
             <span className={tagOf(state)}>{SIGNUP_STATE_LABEL[state]}</span>
