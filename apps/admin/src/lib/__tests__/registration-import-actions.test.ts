@@ -181,10 +181,34 @@ describe('reading a form with Google (00287)', () => {
     expect(updates).toEqual([
       {
         table: 'registration_import_forms',
-        values: expect.objectContaining({ read_mapping: mapping, poll_watermark: null, poll_error: null }),
+        values: expect.objectContaining({
+          read_mapping: {
+            ...mapping,
+            WAIVER_QUESTION: '',
+            WAIVER_VERSION: '',
+            SIGNATURE_QUESTION: '',
+            MEDIA_QUESTION: '',
+            MEDIA_ALLOW_ANSWER: '',
+          },
+          poll_watermark: null,
+          poll_error: null,
+        }),
       },
     ]);
     expect(audits.map((a) => a.action_type)).toEqual(['registration_form_bound']);
+  });
+
+  it('stamps the live waiver version on a mapping that reads the waiver without one (00295)', async () => {
+    rows = {
+      registration_import_forms: { id: BINDING, target_kind: 'tournament', tournament_id: TOURNAMENT, club_event_id: null },
+      legal_documents: { version: '2026-07-19' },
+    };
+    lists = { tournament_events: [{ id: EVENT }] };
+    const result = await actions.saveRegistrationFormMapping(BINDING, { ...mapping, WAIVER_QUESTION: 'I agree' });
+    expect(result.ok).toBe(true);
+    expect(updates[0]?.values).toMatchObject({
+      read_mapping: { WAIVER_QUESTION: 'I agree', WAIVER_VERSION: '2026-07-19' },
+    });
   });
 
   it('refuses an event that is not in the binding\'s tournament', async () => {
