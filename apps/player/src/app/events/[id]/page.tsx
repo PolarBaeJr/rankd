@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, CalendarDays, MapPin, Users, Wallet } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, Clock, MapPin, Wallet } from 'lucide-react';
 import {
   CLUB_EVENT_KIND_LABELS,
   clubEventSignupState,
@@ -10,7 +10,13 @@ import {
   type ClubEventKind,
 } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
-import { CLUB_EVENT_COLUMNS, SIGNUP_STATE_LABEL, type ClubEventRow } from '@/lib/club-event-view';
+import {
+  CLUB_EVENT_COLUMNS,
+  SIGNUP_STATE_LABEL,
+  clubDateParts,
+  googleCalendarLink,
+  type ClubEventRow,
+} from '@/lib/club-event-view';
 import { clubEventFormLink } from '@/lib/event-form-link';
 import { VisitorSignup } from '@/components/visitor-signup';
 import { SignupButton } from './signup-button';
@@ -76,21 +82,20 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       ? `/tournaments/${linkedEvent.tournament_id}`
       : null;
 
-  const [startDay, startTime] = splitTime(event.starts_at);
-  const [endDay, endTime] = event.ends_at ? splitTime(event.ends_at) : [null, null];
+  const starts = clubDateParts(event.starts_at);
+  const ends = event.ends_at ? clubDateParts(event.ends_at) : null;
+  const timeRange = ends
+    ? `${starts.time} to ${ends.date === starts.date ? ends.time : `${ends.date}, ${ends.time}`}`
+    : starts.time;
   const fill = event.capacity ? Math.min(100, Math.round((taken / event.capacity) * 100)) : 0;
+  const left = event.capacity === null ? null : Math.max(0, event.capacity - taken);
   const stateTag =
     state === 'going' ? 'tag tag-win' : state === 'cancelled' || state === 'full' ? 'tag tag-red' : 'tag';
+  const kindLabel = CLUB_EVENT_KIND_LABELS[event.kind as ClubEventKind] ?? event.kind;
+  const opensLater = !!event.signup_opens_at && state === 'not_open_yet';
 
   return (
     <div>
-      <div className="page-header" style={{ marginBottom: 18 }}>
-        <Link href="/events" className="row press" style={{ gap: 8, fontSize: 13, color: 'var(--mute)' }}>
-          <ArrowLeft size={16} />
-          All club events
-        </Link>
-      </div>
-
       {event.status === 'cancelled' && (
         <div className="card-base" role="status" style={{ marginBottom: 20, borderColor: 'var(--red)' }}>
           <h3 className="card-title">This event is cancelled</h3>
@@ -98,104 +103,139 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         </div>
       )}
 
-      <div className="card-base" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
-        <div className="card-head" style={{ alignItems: 'flex-start', padding: '20px 20px 0' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="page-eyebrow" style={{ marginBottom: 4 }}>
-              <span className="bar" /> CLUB EVENT · {(CLUB_EVENT_KIND_LABELS[event.kind as ClubEventKind] ?? event.kind).toUpperCase()}
-            </div>
-            <h1
-              style={{
-                fontFamily: 'var(--display)',
-                fontSize: 30,
-                fontWeight: 700,
-                letterSpacing: '-.02em',
-                margin: 0,
-              }}
-            >
-              {event.title}
-            </h1>
+      <header className="ev-hero">
+        <div className="ev-hero-watermark" aria-hidden="true">
+          {starts.month} {String(starts.day).padStart(2, '0')}
+        </div>
+        <Link
+          href="/events"
+          className="row press"
+          style={{ gap: 8, fontSize: 13, color: 'var(--mute)', position: 'relative' }}
+        >
+          <ArrowLeft size={16} />
+          All club events
+        </Link>
+        <div className="ev-hero-body">
+          <div className="ev-date">
+            <div className="month">{starts.month}</div>
+            <div className="day">{starts.day}</div>
+            <div className="weekday">{starts.weekday}</div>
           </div>
-          <span className={stateTag}>{SIGNUP_STATE_LABEL[state].toUpperCase()}</span>
+          <div style={{ minWidth: 0 }}>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+              <span className="ev-label red">Club event · {kindLabel}</span>
+              <span className={stateTag}>{SIGNUP_STATE_LABEL[state]}</span>
+            </div>
+            <h1 className="ev-title">{event.title}</h1>
+            <div className="ev-meta">
+              <span>
+                <Clock size={17} /> {timeRange}
+              </span>
+              <span>
+                <MapPin size={17} /> {event.location ?? 'Place to be announced'}
+              </span>
+              <span>
+                <Wallet size={17} /> {cost ?? 'Free'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="ev-layout">
+        <div style={{ display: 'grid', gap: 20, minWidth: 0 }}>
+          <section className="ev-panel">
+            <div className="ev-label">About</div>
+            <p className="ev-about">{event.description || 'No details yet.'}</p>
+          </section>
+          <section className="ev-panel">
+            <div className="ev-label">Good to know</div>
+            <div className="ev-facts">
+              <div className="ev-fact">
+                <div className="k">{opensLater ? 'Sign-ups open' : 'Sign-ups close'}</div>
+                <div className="v">
+                  {opensLater
+                    ? formatClubEventTime(event.signup_opens_at as string)
+                    : event.signup_closes_at
+                      ? formatClubEventTime(event.signup_closes_at)
+                      : 'When it starts'}
+                </div>
+              </div>
+              <div className="ev-fact">
+                <div className="k">When it is full</div>
+                <div className="v">{event.capacity === null ? 'No limit on places' : 'Join the waitlist'}</div>
+              </div>
+              <div className="ev-fact">
+                <div className="k">Fee</div>
+                <div className="v">{cost ? 'Kept if you do not show' : 'Nothing to pay'}</div>
+              </div>
+            </div>
+          </section>
         </div>
 
-        <div className="stat-strip" style={{ marginTop: 4 }}>
-          <div className="stat">
-            <div className="stat-label row" style={{ gap: 6 }}>
-              <CalendarDays size={12} /> WHEN
-            </div>
-            <div style={{ fontWeight: 600 }}>{startDay}</div>
-            <div className="muted mono" style={{ fontSize: 12 }}>
-              {startTime}
-              {endTime ? ` to ${endDay === startDay ? endTime : `${endDay}, ${endTime}`}` : ''}
-            </div>
-          </div>
-          <div className="stat">
-            <div className="stat-label row" style={{ gap: 6 }}>
-              <MapPin size={12} /> WHERE
-            </div>
-            <div style={{ fontWeight: 600 }}>{event.location ?? 'To be announced'}</div>
-          </div>
-          <div className="stat">
-            <div className="stat-label row" style={{ gap: 6 }}>
-              <Users size={12} /> PLACES
-            </div>
-            <div style={{ fontWeight: 600 }}>
-              {event.capacity === null ? `${taken} going` : `${taken} of ${event.capacity}`}
+        <aside className="ev-panel ev-spot">
+          <section>
+            {player ? (
+              <SignupButton
+                eventId={event.id}
+                state={state}
+                position={waitlist.position}
+                canWait={canWait}
+                closesAt={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
+                opensAt={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
+              />
+            ) : (
+              <VisitorSignup formUrl={formUrl} open={state === 'open' || state === 'full'} />
+            )}
+          </section>
+          <section>
+            <div className="ev-places">
+              <span className="ev-label">Places</span>
+              <span className="mono" style={{ fontSize: 13 }}>
+                <b>{taken}</b>
+                {event.capacity !== null && ` / ${event.capacity}`}
+              </span>
             </div>
             {event.capacity !== null && (
-              <div className="capacity-bar" style={{ marginTop: 4 }}>
-                <div className={`fill${fill >= 100 ? ' full' : fill >= 80 ? ' warn' : ''}`} style={{ width: `${fill}%` }} />
+              <div className="capacity-bar">
+                <div
+                  className={`fill${fill >= 100 ? ' full' : fill >= 80 ? ' warn' : ''}`}
+                  style={{ width: `${fill}%` }}
+                />
               </div>
             )}
-          </div>
-          <div className="stat">
-            <div className="stat-label row" style={{ gap: 6 }}>
-              <Wallet size={12} /> COST
+            <div className="muted" style={{ fontSize: 13 }}>
+              {left === null
+                ? `${taken} going`
+                : left === 0
+                  ? 'Full. New sign-ups join the waitlist.'
+                  : `${left} ${left === 1 ? 'place' : 'places'} left`}
             </div>
-            <div style={{ fontWeight: 600 }}>{cost ?? 'Free'}</div>
-          </div>
-        </div>
-
-        <div style={{ padding: 20 }}>
-          {player ? (
-            <SignupButton
-              eventId={event.id}
-              state={state}
-              position={waitlist.position}
-              canWait={canWait}
-              closesAt={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
-              opensAt={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
-            />
-          ) : (
-            <VisitorSignup formUrl={formUrl} open={state === 'open' || state === 'full'} />
+          </section>
+          {(drawHref || event.status !== 'cancelled') && (
+            <section style={{ display: 'grid', gap: 8 }}>
+              {drawHref && (
+                <Link href={drawHref} className="btn btn-ghost" style={{ justifyContent: 'center' }}>
+                  See the draw
+                </Link>
+              )}
+              {event.status !== 'cancelled' && (
+                <a
+                  href={googleCalendarLink(event)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="row press"
+                  style={{ gap: 8, justifyContent: 'center', fontSize: 14, color: 'var(--ink-2)', minHeight: 40 }}
+                >
+                  <CalendarPlus size={16} /> Add to Google Calendar
+                </a>
+              )}
+            </section>
           )}
-          {drawHref && (
-            <Link href={drawHref} className="btn btn-ghost" style={{ marginTop: 12 }}>
-              See the draw
-            </Link>
-          )}
-        </div>
+        </aside>
       </div>
-
-      {event.description && (
-        <div className="card-base">
-          <div className="stat-label" style={{ marginBottom: 8 }}>
-            ABOUT
-          </div>
-          <p style={{ whiteSpace: 'pre-wrap', margin: 0, lineHeight: 1.6 }}>{event.description}</p>
-        </div>
-      )}
     </div>
   );
-}
-
-// "Nov 3, 2026, 7:30 PM" as the day and the time, so the strip can show the
-// day once.
-function splitTime(iso: string): [string, string] {
-  const text = formatClubEventTime(iso);
-  const cut = text.lastIndexOf(', ');
-  return cut === -1 ? [text, ''] : [text.slice(0, cut), text.slice(cut + 2)];
 }
 
 // The member's own place on the waitlist (00294), read with the service role
