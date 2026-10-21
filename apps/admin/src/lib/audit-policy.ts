@@ -208,6 +208,11 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'club_event_deleted',
   'club_event_signup_removed',
   'club_event_cancelled',
+  // The door (00294). Taking somebody off the waitlist matches the removal
+  // pattern; giving a waiting member the place is classified by hand because
+  // it creates their fee.
+  'club_event_waitlist_removed',
+  'club_event_waitlist_promoted',
 
   // THE TOURNAMENT TRAIL, WHICH THIS SET SILENTLY DID NOT COVER.
   //
