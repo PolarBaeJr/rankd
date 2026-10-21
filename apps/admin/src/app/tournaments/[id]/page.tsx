@@ -65,6 +65,18 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       })
     : null;
 
+  // A club event run as this tournament (00292) takes its sign-ups through its
+  // own Google Form, which already enters them here. A second link on the
+  // tournament would import each response twice, so the card points there.
+  const { data: linkedClubEvents } =
+    events && events.length > 0
+      ? await supabase
+          .from('club_events')
+          .select('id, title')
+          .in('tournament_event_id', events.map((ev) => ev.id))
+      : { data: null };
+  const linkedClubEvent = (linkedClubEvents ?? [])[0] as { id: string; title: string } | undefined;
+
   // Get participant counts per event (batch queries instead of N+1)
   const eventCounts: Record<string, number> = {};
   if (events && events.length > 0) {
@@ -314,6 +326,16 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             )}
           </h2>
         </div>
+        {linkedClubEvent && (formImports.bindings ?? []).length === 0 ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 text-sm text-[var(--text-muted)]">
+            This tournament runs the club event{' '}
+            <Link href={`/events/${linkedClubEvent.id}`} className="text-[var(--text-primary)] underline">
+              {linkedClubEvent.title}
+            </Link>
+            . Its Google Form signs people up there, and every sign-up is entered here on its own, so there is
+            nothing to link on the tournament.
+          </div>
+        ) : (
         <FormImportCard
           targetKind="tournament"
           targetId={id}
@@ -330,6 +352,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             doubles: isDoublesEvent(ev.event_type as TournamentEventType),
           }))}
         />
+        )}
       </div>
       )}
 
