@@ -27,6 +27,8 @@ import Link from 'next/link';
 import { EventRegistrationButton } from './EventRegistrationButton';
 import { FeedbackForm } from './feedback-form';
 import { LiveTournament } from '../live-tournament';
+import { tournamentFormLink } from '@/lib/event-form-link';
+import { VisitorSignup } from '@/components/visitor-signup';
 
 /**
  * The teams this member is in, across these events, and WHO WITH.
@@ -74,7 +76,12 @@ async function loadMyPairs(
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = await createServerSupabaseClient();
+  const { player: currentPlayer } = await getViewer();
+  // A signed-out visitor may read a tournament's overview (not its draws or
+  // entries, which are one level down and stay behind sign-in). They have no
+  // grant, so they read through the service role; the draft check below is
+  // what keeps an unpublished tournament private for both.
+  const supabase = currentPlayer ? await createServerSupabaseClient() : createServiceRoleClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   // A draft is unpublished. RLS lets a member read it (tournaments_select is
@@ -99,7 +106,6 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     return { registration: registrationWindowNotice(w.registration, now), checkin: checkinWindowNotice(w.checkin, now) };
   };
 
-  const { player: currentPlayer } = await getViewer();
   // `paired` is the discriminator and `partnerName` is only ever display: a
   // pair whose partner name did not resolve is still a pair, and inferring the
   // state from the name would show a paired member "Waiting for a partner".
@@ -190,6 +196,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   const [membership, flags] = couldEnter
     ? await Promise.all([loadMyMembershipScreen(supabase, tournament, currentPlayer), getFeatureFlags()])
     : [null, null];
+  const formUrl = currentPlayer ? null : await tournamentFormLink(createServiceRoleClient(), id);
   const feeNeeded =
     flags && membership && !membership.screen.ok && membership.screen.reason === 'membership_unpaid'
       ? { receiptPending: membership.receiptPending, payOnline: flags.membership }
@@ -205,11 +212,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           `draw` STAYS FALSE. This page never reads tournament_matches; the
           brackets are one level down. Watching matches here would wake the
           overview for every score in every event it is only summarising. */}
-      <LiveTournament
-        channel={`player-tournament-${id}`}
-        tournamentId={id}
-        eventIds={(events ?? []).map((e) => e.id as string)}
-      />
+      {currentPlayer && (
+        <LiveTournament
+          channel={`player-tournament-${id}`}
+          tournamentId={id}
+          eventIds={(events ?? []).map((e) => e.id as string)}
+        />
+      )}
       <div className="page-header" style={{ marginBottom: 18 }}>
         <Link href="/tournaments" className="row press" style={{ gap: 8, fontSize: 13, color: 'var(--mute)' }}>
           <ArrowLeft size={16} />
@@ -284,6 +293,15 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <ChevronRight size={14} />
             </Link>
           )}
+        </div>
+      )}
+
+      {!currentPlayer && (
+        <div className="card-base" style={{ marginBottom: 20 }}>
+          <VisitorSignup
+            formUrl={formUrl}
+            open={!tournament.suspended_at && (events ?? []).some((e) => e.status === 'registration')}
+          />
         </div>
       )}
 
@@ -373,7 +391,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                   {/* An external event (00269) is entered by the organisers. */}
                   {event.external_event ? (
                     <span className="mono muted" style={{ fontSize: 12 }}>External</span>
-                  ) : (
+                  ) : !currentPlayer ? null : (
                   <EventRegistrationButton
                     eventId={event.id}
                     eventStatus={eventStatus}
