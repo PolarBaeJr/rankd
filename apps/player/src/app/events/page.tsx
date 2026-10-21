@@ -51,6 +51,15 @@ export default async function ClubEventsPage({ searchParams }: { searchParams: P
   for (const row of (takenRows ?? []) as { event_id: string }[]) {
     taken.set(row.event_id, (taken.get(row.event_id) ?? 0) + 1);
   }
+  // The places taken as the sign-up RPC counts them (guests in, no-shows out,
+  // 00294), as the event page shows them. Before 00294 the row count stands.
+  const service = createServiceRoleClient();
+  await Promise.all(
+    ids.map(async (id) => {
+      const { data, error } = await service.rpc('club_event_taken' as never, { p_event_id: id } as never);
+      if (!error && typeof data === 'number') taken.set(id, data);
+    }),
+  );
   const mine = new Set(((mineRows ?? []) as { event_id: string }[]).map((r) => r.event_id));
 
   const card = (event: ClubEventRow, past = false) => {
