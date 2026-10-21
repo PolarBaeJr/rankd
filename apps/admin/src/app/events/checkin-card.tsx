@@ -1,5 +1,7 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { CheckInList, type CheckInRow } from '@/components/checkin-list';
 import { setClubEventCheckIn } from '@/lib/actions/club-events';
 
@@ -15,6 +17,15 @@ export function ClubEventCheckIn({
   rows: CheckInRow[];
   canWrite: boolean;
 }) {
+  const router = useRouter();
+
+  // More than one exec can be at the door, so the list re-reads every 20
+  // seconds while it is open.
+  useEffect(() => {
+    const timer = setInterval(() => router.refresh(), 20_000);
+    return () => clearInterval(timer);
+  }, [router]);
+
   async function onToggle(row: CheckInRow, here: boolean) {
     const [kind, id] = row.key.split(':') as ['member' | 'guest', string];
     const result = await setClubEventCheckIn(eventId, { kind, id }, here);

@@ -17,7 +17,6 @@ import { loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 import { ClubEventTournamentCard } from '../tournament-link';
-import { ClubEventCheckIn } from '../checkin-card';
 import type { CheckInRow } from '@/components/checkin-list';
 
 type EventRow = {
@@ -251,7 +250,20 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             ) : !checkInReady ? (
               <p className="px-5 pb-5 text-sm text-[var(--mute)]">Check-in needs migration 00293.</p>
             ) : (
-              <ClubEventCheckIn eventId={event.id} rows={checkInRows} canWrite={canCheckIn} />
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-5">
+                <p className="text-sm text-[var(--ink-2)]">
+                  <span className="font-mono text-lg font-bold text-[var(--ink)]">
+                    {checkInRows.filter((row) => row.here).length}
+                  </span>{' '}
+                  of {checkInRows.length} here
+                </p>
+                <Link
+                  href={`/events/${event.id}/checkin`}
+                  className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--bg-elevated)]"
+                >
+                  Open check-in
+                </Link>
+              </div>
             )}
           </Card>
         )}
