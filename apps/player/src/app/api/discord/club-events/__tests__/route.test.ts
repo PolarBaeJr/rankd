@@ -344,18 +344,19 @@ describe("GET /api/discord/club-events", () => {
     expect(action.description.endsWith(`https://example.test/events/${E1}`)).toBe(true);
   });
 
-  it("adds the event's Google Form for non-members, newest active form first", async () => {
+  it("adds the event's Google Form, newest active form first, and never calls the page a sign-up", async () => {
     forms = [
       { form_id: "OLD", club_event_id: E1, active: true, created_at: "2026-10-01T00:00:00Z" },
       { form_id: "OFF", club_event_id: E1, active: false, created_at: "2026-10-20T00:00:00Z" },
       { form_id: "NEW", club_event_id: E1, active: true, created_at: "2026-10-10T00:00:00Z" },
     ];
     const action = only((await run()).actions);
-    expect(action.description).toContain(`Details and member sign-up: https://example.test/events/${E1}`);
+    expect(action.description).toContain(`Event details: https://example.test/events/${E1}`);
     expect(action.description).toContain(
-      "Not a member? Sign up with the Google Form: https://docs.google.com/forms/d/NEW/viewform",
+      "Sign up with the Google Form: https://docs.google.com/forms/d/NEW/viewform",
     );
     expect(action.description).not.toContain("OLD");
+    expect(action.description).not.toMatch(/sign-up/i);
   });
 
   it("keeps both links when the description is at its limit", async () => {

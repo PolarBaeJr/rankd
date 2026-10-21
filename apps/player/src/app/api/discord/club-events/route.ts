@@ -100,13 +100,12 @@ function describeClubEvent(e: ClubEventRow, appUrl: string | null, formUrl: stri
   const cost = formatClubEventCost(e.cost_cents);
   const kind = CLUB_EVENT_KIND_LABELS[e.kind as ClubEventKind] ?? e.kind;
   const header = cost ? `${kind}, ${cost}` : kind;
-  // The links are what make the Discord event useful: members sign up on the
-  // website, and anyone else with the event's Google Form, which enters them
-  // as a guest. So they are reserved for first, and the body is what gets cut.
-  const link = appUrl
-    ? `${formUrl ? 'Details and member sign-up' : 'Details and sign-up'}: ${appUrl}/events/${e.id}`
-    : null;
-  const form = formUrl ? `Not a member? Sign up with the Google Form: ${formUrl}` : null;
+  // The links are what make the Discord event useful, so they are reserved for
+  // first and the body is what gets cut. The page link only says "details":
+  // most people reading Discord are not signed in, and the page cannot sign
+  // them up. The event's Google Form can, member or not.
+  const link = appUrl ? `Event details: ${appUrl}/events/${e.id}` : null;
+  const form = formUrl ? `Sign up with the Google Form: ${formUrl}` : null;
 
   const fixed = [header, link, form].filter((p): p is string => p !== null);
   const reserved = fixed.reduce((n, p) => n + p.length, 0) + fixed.length * 2;
