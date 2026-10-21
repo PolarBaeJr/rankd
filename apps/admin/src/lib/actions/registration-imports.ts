@@ -248,6 +248,20 @@ async function saveMappingImpl(bindingId: string, mapping: unknown): Promise<voi
     }
   }
 
+  // The Form's waiver text is the live waiver unless the mapping says which
+  // version it shows (00295): the officer saving the mapping is the one who
+  // looked at the form.
+  if (parsed?.WAIVER_QUESTION && !parsed.WAIVER_VERSION) {
+    const { data: waiver, error: waiverError } = await admin
+      .from('legal_documents')
+      .select('version')
+      .eq('document', 'waiver')
+      .maybeSingle();
+    if (waiverError) throw new Error(`Could not read the waiver: ${waiverError.message}`);
+    if (!waiver?.version) throw new ExpectedError('No waiver is published, so the form cannot sign one.');
+    parsed.WAIVER_VERSION = waiver.version as string;
+  }
+
   const { error: updateError } = await admin
     .from('registration_import_forms')
     .update({

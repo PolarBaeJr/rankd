@@ -552,3 +552,77 @@ describe("a season's form (00290)", () => {
     expect(run.forms[0]).toMatchObject({ read: true, imported: 0, replayed: 1 });
   });
 });
+
+describe("the form's waiver (00295)", () => {
+  const WAIVER_MAPPING = {
+    ...MAPPING,
+    WAIVER_QUESTION: 'I agree',
+    WAIVER_VERSION: '2026-07-19',
+    SIGNATURE_QUESTION: 'Signature',
+    MEDIA_QUESTION: 'Photos?',
+    MEDIA_ALLOW_ANSWER: 'Allow',
+  };
+  const ITEMS_WITH_WAIVER = {
+    items: [
+      ...FORM_ITEMS.items,
+      { title: 'I agree', questionItem: { question: { questionId: 'qa' } } },
+      { title: 'Signature', questionItem: { question: { questionId: 'qs' } } },
+      { title: 'Photos?', questionItem: { question: { questionId: 'qp' } } },
+    ],
+  };
+  const signings = () => rpcs.filter((r) => r.fn === 'record_form_guest_waiver').map((r) => r.args);
+
+  function withWaiver(agree: string | null, photos: string) {
+    const base = response('r1', '2026-10-09T11:10:00Z');
+    const answers: Record<string, unknown> = {
+      ...base.answers,
+      qs: { questionId: 'qs', textAnswers: { answers: [{ value: 'Pat  Player' }] } },
+      qp: { questionId: 'qp', textAnswers: { answers: [{ value: photos }] } },
+    };
+    if (agree) answers.qa = { questionId: 'qa', textAnswers: { answers: [{ value: agree }] } };
+    return { ...base, answers };
+  }
+
+  function readsOne(mapping: unknown, reply: unknown) {
+    claimed = [{ ...form('b1', 'form-1'), read_mapping: mapping as typeof MAPPING }];
+    google = (url) =>
+      url.pathname.endsWith('/responses') ? json(200, { responses: [reply] }) : json(200, ITEMS_WITH_WAIVER);
+  }
+
+  it('signs a response that agreed, with its signature, photo answer and the mapped version', async () => {
+    readsOne(WAIVER_MAPPING, withWaiver('I agree', 'Allow'));
+    await runRegistrationFormPoll(admin(), deps());
+    expect(signings()).toEqual([
+      {
+        p_binding_id: 'b1',
+        p_response_id: 'r1',
+        p_signature: 'Pat  Player',
+        p_media_consent: true,
+        p_waiver_version: '2026-07-19',
+      },
+    ]);
+    // The waiver never enters the payload both import roads hash.
+    expect(JSON.stringify(imports())).not.toContain('Allow');
+  });
+
+  it('reads any answer but the yes choice as no photos', async () => {
+    readsOne(WAIVER_MAPPING, withWaiver('I agree', 'No'));
+    await runRegistrationFormPoll(admin(), deps());
+    expect(signings()[0]?.p_media_consent).toBe(false);
+  });
+
+  it('signs nobody who did not agree, or when the mapping reads no waiver', async () => {
+    readsOne(WAIVER_MAPPING, withWaiver(null, 'Allow'));
+    await runRegistrationFormPoll(admin(), deps());
+    readsOne(MAPPING, withWaiver('I agree', 'Allow'));
+    await runRegistrationFormPoll(admin(), deps());
+    expect(signings()).toEqual([]);
+  });
+
+  it('holds the watermark when the signing fails', async () => {
+    readsOne(WAIVER_MAPPING, withWaiver('I agree', 'Allow'));
+    rpcReplies.record_form_guest_waiver = () => ({ data: null, error: { message: 'boom' } });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(receipts().at(-1)).toMatchObject({ p_read: false, p_watermark: null, p_error: 'import_failed' });
+  });
+});

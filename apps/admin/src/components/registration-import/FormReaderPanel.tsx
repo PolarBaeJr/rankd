@@ -7,6 +7,10 @@ import {
   DEFAULT_EVENT_QUESTION,
   DEFAULT_NAME_QUESTION,
   DEFAULT_RECEIPT_QUESTION,
+  DEFAULT_WAIVER_QUESTION,
+  DEFAULT_SIGNATURE_QUESTION,
+  DEFAULT_MEDIA_QUESTION,
+  DEFAULT_MEDIA_ALLOW_ANSWER,
   defaultPartnerQuestions,
   type FormMapping,
 } from '@/lib/registration-form-mapping';
@@ -119,9 +123,29 @@ export function FormReaderPanel({
   const [eventQuestion, setEventQuestion] = useState(mapping?.EVENT_QUESTION ?? DEFAULT_EVENT_QUESTION);
   // A saved mapping keeps what it has, '' (no receipt question) included.
   const [receiptQuestion, setReceiptQuestion] = useState(mapping ? mapping.RECEIPT_QUESTION : DEFAULT_RECEIPT_QUESTION);
+  // The waiver questions (00295): a new mapping starts from the Chaos Cards
+  // form's titles, a saved one keeps what it has.
+  const [waiverQuestion, setWaiverQuestion] = useState(mapping ? mapping.WAIVER_QUESTION : DEFAULT_WAIVER_QUESTION);
+  const [signatureQuestion, setSignatureQuestion] = useState(
+    mapping ? mapping.SIGNATURE_QUESTION : DEFAULT_SIGNATURE_QUESTION,
+  );
+  const [mediaQuestion, setMediaQuestion] = useState(mapping ? mapping.MEDIA_QUESTION : DEFAULT_MEDIA_QUESTION);
+  const [mediaAllow, setMediaAllow] = useState(mapping ? mapping.MEDIA_ALLOW_ANSWER : DEFAULT_MEDIA_ALLOW_ANSWER);
+  const [waiverVersion, setWaiverVersion] = useState(mapping?.WAIVER_VERSION ?? '');
   const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
 
   if (!reader) return null;
+
+  const waiverFields = () =>
+    targetKind === 'season'
+      ? { WAIVER_QUESTION: '', WAIVER_VERSION: '', SIGNATURE_QUESTION: '', MEDIA_QUESTION: '', MEDIA_ALLOW_ANSWER: '' }
+      : {
+          WAIVER_QUESTION: waiverQuestion.trim(),
+          WAIVER_VERSION: waiverQuestion.trim() ? waiverVersion.trim() : '',
+          SIGNATURE_QUESTION: signatureQuestion.trim(),
+          MEDIA_QUESTION: mediaQuestion.trim(),
+          MEDIA_ALLOW_ANSWER: mediaAllow.trim(),
+        };
 
   function build(): FormMapping {
     if (targetKind === 'club_event' || targetKind === 'season') {
@@ -134,6 +158,7 @@ export function FormReaderPanel({
         DEFAULT_EVENT_ID: targetKind === 'season' ? '' : targetId,
         PARTNERS: {},
         RECEIPT_QUESTION: receiptQuestion.trim(),
+        ...waiverFields(),
       };
     }
     const eventsMap: Record<string, string> = {};
@@ -159,6 +184,7 @@ export function FormReaderPanel({
       DEFAULT_EVENT_ID: '',
       PARTNERS: partners,
       RECEIPT_QUESTION: receiptQuestion.trim(),
+      ...waiverFields(),
     };
   }
 
@@ -237,6 +263,48 @@ export function FormReaderPanel({
               : 'E-transfer screenshot question (a file upload; leave empty if the form has none)'}
             <input className={inputClass} value={receiptQuestion} onChange={(e) => setReceiptQuestion(e.target.value)} />
           </label>
+          {targetKind !== 'season' && (
+            <fieldset className="space-y-2 border-t border-[var(--border)] pt-2">
+              <legend className="text-xs font-semibold text-[var(--text-secondary)]">Waiver on the form</legend>
+              <p className="text-xs text-[var(--text-muted)]">
+                A non-member who agrees on the form is signed for the guest waiver, with the signature and photo
+                answer they gave. Leave the agree question empty if the form has no waiver.
+              </p>
+              <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+                &quot;I agree&quot; question
+                <input className={inputClass} value={waiverQuestion} onChange={(e) => setWaiverQuestion(e.target.value)} />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
+                  Signature question
+                  <input
+                    className={inputClass}
+                    value={signatureQuestion}
+                    onChange={(e) => setSignatureQuestion(e.target.value)}
+                  />
+                </label>
+                <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-[var(--text-secondary)]">
+                  Waiver version the form shows
+                  <input
+                    className={inputClass}
+                    value={waiverVersion}
+                    placeholder="Empty: the current waiver"
+                    onChange={(e) => setWaiverVersion(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
+                  Photo and video question
+                  <input className={inputClass} value={mediaQuestion} onChange={(e) => setMediaQuestion(e.target.value)} />
+                </label>
+                <label className="flex flex-1 min-w-[8rem] flex-col gap-1 text-[var(--text-secondary)]">
+                  Its &quot;yes&quot; choice
+                  <input className={inputClass} value={mediaAllow} onChange={(e) => setMediaAllow(e.target.value)} />
+                </label>
+              </div>
+            </fieldset>
+          )}
           {targetKind === 'tournament' && (
             <>
               <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
