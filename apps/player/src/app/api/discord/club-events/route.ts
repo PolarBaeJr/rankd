@@ -7,6 +7,7 @@ import {
   type ClubEventKind,
 } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { clubEventFormLinks } from '@/lib/event-form-link';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -95,19 +96,23 @@ function fit(s: string, max: number): string {
   return out;
 }
 
-function describeClubEvent(e: ClubEventRow, appUrl: string | null): string {
+function describeClubEvent(e: ClubEventRow, appUrl: string | null, formUrl: string | null): string {
   const cost = formatClubEventCost(e.cost_cents);
   const kind = CLUB_EVENT_KIND_LABELS[e.kind as ClubEventKind] ?? e.kind;
   const header = cost ? `${kind}, ${cost}` : kind;
-  // The link is what makes the Discord event useful: sign-up only happens on
-  // the website. So it is reserved for first, and the body is what gets cut.
-  const link = appUrl ? `Details and sign-up: ${appUrl}/events/${e.id}` : null;
+  // The links are what make the Discord event useful: members sign up on the
+  // website, and anyone else with the event's Google Form, which enters them
+  // as a guest. So they are reserved for first, and the body is what gets cut.
+  const link = appUrl
+    ? `${formUrl ? 'Details and member sign-up' : 'Details and sign-up'}: ${appUrl}/events/${e.id}`
+    : null;
+  const form = formUrl ? `Not a member? Sign up with the Google Form: ${formUrl}` : null;
 
-  const fixed = [header, link].filter((p): p is string => p !== null);
+  const fixed = [header, link, form].filter((p): p is string => p !== null);
   const reserved = fixed.reduce((n, p) => n + p.length, 0) + fixed.length * 2;
   const body = fit(e.description?.trim() ?? '', Math.max(0, MAX_DESCRIPTION - reserved)).trim();
 
-  const parts = [header, body, link].filter((p): p is string => !!p);
+  const parts = [header, body, link, form].filter((p): p is string => !!p);
   return fit(parts.join('\n\n'), MAX_DESCRIPTION);
 }
 
@@ -203,6 +208,15 @@ export async function GET(request: Request) {
     byId.set(row.id, row);
   }
 
+  // Each event's Google Form, for the non-member line. Never degraded to "no
+  // forms": that would rewrite every Discord event's description, and again
+  // when the read comes back.
+  const forms = await clubEventFormLinks(supabase, [...byId.keys()]);
+  if (forms.error) {
+    console.error('[discord] club-events form read failed:', forms.error);
+    return NextResponse.json({ error: 'forms_unavailable', detail: forms.error }, { status: 503 });
+  }
+
   const actions: Action[] = [];
   const skipped: { eventId: string; reason: string }[] = [];
 
@@ -288,7 +302,7 @@ export async function GET(request: Request) {
 
     const name = fit(e.title.trim(), MAX_NAME);
     const location = e.location?.trim() ? fit(e.location.trim(), MAX_LOCATION) : null;
-    const description = describeClubEvent(e, appUrl);
+    const description = describeClubEvent(e, appUrl, forms.links.get(e.id) ?? null);
     // Clamped to send, unclamped to record, for the tournament route's reason.
     const sendStart = Math.max(start, now + CLAMP_SLACK_MS);
 
