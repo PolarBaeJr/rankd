@@ -20,7 +20,9 @@ import { MergePlayersButton } from './merge-players-button';
 import { PrivilegeReviewActions } from './privilege-review-actions';
 import { EloReviewActions } from './elo-review-actions';
 import { ConsoleAccessActions } from './console-access-actions';
+import { GuestActions } from './guest-actions';
 import { RosterTable, type RosterRow } from './roster-table';
+import { RosterViewMenu } from './roster-view-menu';
 import { RowLink } from '@/components/row-link';
 import { RowSelectCheckbox, SelectAllCheckbox } from '@/components/selection';
 import { BulkPlayerActions } from './bulk-player-actions';
@@ -44,13 +46,16 @@ import { rosterActionsFor, rosterActionKey, type RosterAction } from '@/lib/rost
  * status change), and roster-actions.ts turns on exactly that distinction.
  */
 function standingOf(
-  player: { status: string; is_banned?: boolean | null; active_flag?: boolean | null },
+  player: { status: string; is_banned?: boolean | null; active_flag?: boolean | null; is_guest?: boolean | null },
   waiverCurrent: boolean,
 ): { label: string; variant: 'success' | 'warning' | 'danger' | 'neutral' } {
   if (player.is_banned) return { label: 'Banned', variant: 'danger' };
   if (player.status === 'suspended') return { label: 'Suspended', variant: 'danger' };
   if (player.active_flag === false) return { label: 'Inactive', variant: 'neutral' };
   if (player.status === 'pending_approval') return { label: 'New', variant: 'neutral' };
+  // 00292: a Google Form entrant given a record to play a linked tournament.
+  // They signed the waiver on the Form, so "No waiver" would mislead.
+  if (player.is_guest) return { label: 'Guest', variant: 'neutral' };
   if (!waiverCurrent) return { label: 'No waiver', variant: 'warning' };
   return { label: 'Active', variant: 'success' };
 }
@@ -179,7 +184,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_guest, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -199,7 +204,9 @@ export default async function PlayersPage({
     // Show all active players (not recreational, suspended, or pending)
     query = query.not('status', 'in', '("recreational","suspended","pending_approval")');
   } else if (tab === 'recreational') {
-    query = query.eq('status', 'recreational');
+    query = query.eq('status', 'recreational').eq('is_guest', false);
+  } else if (tab === 'guests') {
+    query = query.eq('is_guest', true);
   } else if (tab === 'attention') {
     // Pending approval ONLY. Suspended members used to match here too, so they
     // appeared on this tab AND on Suspended — and this tab offers Recreational /
@@ -265,7 +272,7 @@ export default async function PlayersPage({
     ? await supabase
         .from('players')
         .select(
-          'id, full_name, handle, email, avatar_url, user_id, status, is_banned, active_flag, onboarding_completed, privilege_claim_review',
+          'id, full_name, handle, email, avatar_url, user_id, status, is_guest, is_banned, active_flag, onboarding_completed, privilege_claim_review',
         )
         .order('full_name')
         .limit(5000)
@@ -279,7 +286,8 @@ export default async function PlayersPage({
   const members = forCount.filter((p) => !isIncompleteSignup(p));
   const isCompetitive = (s: string) => !['recreational', 'suspended', 'pending_approval'].includes(s);
   const compCount = forCount.filter((p) => isCompetitive(p.status)).length;
-  const recCount = forCount.filter((p) => p.status === 'recreational').length;
+  const recCount = forCount.filter((p) => p.status === 'recreational' && !p.is_guest).length;
+  const guestCount = forCount.filter((p) => p.is_guest).length;
   // Must use the same predicate as the tab's list filter above, or the badge
   // counts rows the tab will not show.
   const attCount = forCount.filter(
@@ -304,6 +312,8 @@ export default async function PlayersPage({
     ...(canModerate ? [{ id: 'all', label: 'All', count: forCount.length }] : []),
     { id: 'competitive', label: 'Competitive', count: compCount },
     { id: 'recreational', label: 'Recreational', count: recCount },
+    // Google Form entrants in a linked tournament (00292). Hidden at zero.
+    ...(guestCount > 0 ? [{ id: 'guests', label: 'Guests', count: guestCount }] : []),
     ...(canModerate ? [
       { id: 'attention', label: 'Needs Attention', count: attCount },
       // Both hidden at zero rather than shown as "0". They are new queues most
@@ -482,7 +492,21 @@ export default async function PlayersPage({
           isSelf={player.id === viewer.id}
           viewerIsAdmin={isAdmin}
         />
-        {rosterActionsFor(tab, player, { isAdmin })
+        {/* A guest's own data requests, which they cannot make themselves. Not
+            for an erased guest: there is nothing left to export or erase. */}
+        {player.is_guest && !player.email?.endsWith('@deleted.invalid') && (
+          <GuestActions
+            playerId={player.id}
+            playerName={displayName}
+            canExport={canRead}
+            canErase={canRemove}
+          />
+        )}
+        {rosterActionsFor(
+          tab,
+          { ...player, erasedGuest: !!player.is_guest && !!player.email?.endsWith('@deleted.invalid') },
+          { isAdmin },
+        )
           .filter((action) => mayRun(action, player.status === 'pending_approval'))
           .map((action) => (
             <PlayerActions
@@ -672,29 +696,7 @@ export default async function PlayersPage({
           // but telling a trainer costs them a line about a button they will
           // never see.
           note={canBan || canManage ? 'Suspensions and removals take a typed reason' : undefined}
-          tabs={
-            <div className="-mx-1 flex gap-1 overflow-x-auto px-1">
-              {tabs.map((t) => (
-                <Link
-                  key={t.id}
-                  href={`/players?tab=${t.id}`}
-                  aria-current={tab === t.id ? 'page' : undefined}
-                  // Radius 0, and the tab you are on is marked by a red rule
-                  // rather than a filled pill — the same 2px underline the
-                  // console's top bar gives the section you are in, so "where
-                  // am I" is answered the same way twice on one screen.
-                  className={`flex min-h-[44px] items-center gap-2 whitespace-nowrap border-b-2 px-3 text-sm transition-colors ${
-                    tab === t.id
-                      ? 'border-[var(--color-accent)] text-[var(--text-primary)]'
-                      : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  {t.label}
-                  <span className="font-mono text-xs text-[var(--text-muted)]">{t.count}</span>
-                </Link>
-              ))}
-            </div>
-          }
+          tabs={<RosterViewMenu views={tabs} current={tab} />}
           head={
             <tr className="border-b border-[var(--border)]">
               {canBulk && (

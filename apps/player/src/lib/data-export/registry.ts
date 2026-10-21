@@ -128,6 +128,10 @@ export const PLAYER_EXPORT_COLUMNS = [
   'eligibility_flag',
   'fee_exempt',
   'membership_type',
+  // 00292. Always false by the time a member can export: signing in clears it.
+  'is_guest',
+  'guest_member_requested_by',
+  'guest_member_requested_at',
   'competition_category',
   'skill_tier',
   'passkey_setup',
@@ -423,6 +427,14 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     withheldColumns: ['resolved_by'],
     why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
   },
+  club_event_waitlist: {
+    playerColumns: ['player_id', 'resolved_by'],
+    disposition: 'export',
+    // resolved_by is the OFFICER who gave the member the place or removed
+    // them (00294), as on tournament_event_waitlist.
+    withheldColumns: ['resolved_by'],
+    why: 'Every club event waitlist you joined, when, whether you were told a place opened, and whether you got the place, left or were removed.',
+  },
   data_api_predictions: {
     playerColumns: ['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2'],
     disposition: 'project',
@@ -465,7 +477,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
   registration_import_forms: {
     playerColumns: ['created_by'],
     disposition: 'counted',
-    why: 'Google Forms you bound to a tournament or club event, as an officer. Counted rather than listed: the binding is a club object.',
+    why: 'Google Forms you bound to a tournament, club event or season, as an officer. Counted rather than listed: the binding is a club object.',
   },
   legacy_tournament_participants: {
     playerColumns: ['player_id', 'partner_id'],
@@ -897,6 +909,8 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   seasons: 'The club\'s seasons. A club-wide object.',
   tournament_fee_tiers: 'Tournament price tiers. A club-wide object.',
   tournament_courts: 'The courts of a tournament (00273). A venue object, with no player reference.',
+  registration_import_receipts:
+    'The download state of a file a Google Form response uploaded (00288): a Drive file id, a storage path, a status and a retry count. It holds no player column; it is keyed to the response, which is one join from a member\'s own registration_imports row. A receipt it files reaches that member\'s export as their fee_submissions row, with screenshot_held; one that never filed (too large, the wrong type, no fee to match) is not in the export.',
   match_games:
     'Game scores hanging off a match id, with no player reference. Exported as the context for the member\'s own matches.',
   tournament_events:

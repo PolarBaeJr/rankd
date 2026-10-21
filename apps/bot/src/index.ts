@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { clearRevocations, fetchLinkedMembers } from './api.js';
+import { clearRevocations, fetchDiscordSettings, fetchLinkedMembers } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
@@ -7,7 +7,17 @@ import {
   LINKED_ACCOUNT_PICKERS,
   OPEN_CHALLENGE_PICKERS,
   OWN_FEE_PICKERS,
+  SESSION_PICKERS,
+  EVENT_PICKERS,
+  MEMBER_TOURNAMENT_PICKERS,
+  TOURNEY_PICKERS,
   dispatch,
+  handleConsoleModal,
+  handleEventAutocomplete,
+  handleSessionAutocomplete,
+  handleTournamentAutocomplete,
+  handleTourneyAutocomplete,
+  isConsoleModal,
   handleChallengeAutocomplete,
   handleReceiptAutocomplete,
   handleLinkedAccountAutocomplete,
@@ -57,6 +67,7 @@ import { runServerRoleSync } from './server-roles.js';
 import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
+import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -112,6 +123,38 @@ function answerSignup(
           components: [],
           embeds: [],
         });
+      }
+    }
+  })();
+}
+
+/**
+ * Send a handler's response, and when it carries `finish`, run that after the
+ * acknowledgement and write its answer over the message. answerSignup's shape
+ * with the failure line passed in, for the console command modals.
+ */
+function answerDeferred(
+  res: ServerResponse,
+  response: BotResponse,
+  appId: string | undefined,
+  interactionToken: string | undefined,
+  failureText: string
+) {
+  const { finish, ...ack } = response;
+  send(res, 200, ack);
+  if (!finish) return;
+  void (async () => {
+    try {
+      const final = await finish();
+      if (!appId || !interactionToken) {
+        console.error('[bot] deferred modal finished but had no interaction token');
+        return;
+      }
+      await editDeferredReply(appId, interactionToken, final.data ?? {});
+    } catch (error) {
+      console.error('[bot] deferred modal failed:', error instanceof Error ? error.message : 'unknown');
+      if (appId && interactionToken) {
+        await editDeferredReply(appId, interactionToken, { content: failureText });
       }
     }
   })();
@@ -558,6 +601,10 @@ const server = createServer(async (req, res) => {
       applicationId: interaction.application_id ?? null,
       interactionToken: interaction.token ?? null,
       attachments: interaction.data.resolved?.attachments ?? null,
+      // The caller's own permissions and roles. /softban checks both so the bot
+      // never acts with more rank than the person asking.
+      permissions: interaction.member?.permissions ?? null,
+      memberRoles: interaction.member?.roles ?? null,
     };
 
     // DEFERRED PATH. Discord gives an interaction 3 seconds to be acknowledged
@@ -695,6 +742,19 @@ const server = createServer(async (req, res) => {
         handleSignupInteraction(customId as string, interaction.data.components, modalContext),
         interaction.application_id,
         interaction.token
+      );
+    }
+
+    // /session and /event modals: a reason or a confirmation, then a console
+    // write that can outlast this submit's three seconds, so the handler
+    // acknowledges ephemerally and finishes by editing that message.
+    if (isConsoleModal(customId)) {
+      return answerDeferred(
+        res,
+        handleConsoleModal(customId as string, interaction.data.components, modalContext),
+        interaction.application_id,
+        interaction.token,
+        "Something went wrong. Check the console before you try again, in case it went through."
       );
     }
 
@@ -971,6 +1031,14 @@ const server = createServer(async (req, res) => {
           ? handleChallengeAutocomplete(options, context)
           : OWN_FEE_PICKERS.has(interaction.data.name)
             ? handleReceiptAutocomplete(options, context)
+            : SESSION_PICKERS.has(interaction.data.name)
+            ? handleSessionAutocomplete(options, context)
+            : EVENT_PICKERS.has(interaction.data.name)
+            ? handleEventAutocomplete(options, context)
+            : MEMBER_TOURNAMENT_PICKERS.has(interaction.data.name)
+            ? handleTournamentAutocomplete(options)
+            : TOURNEY_PICKERS.has(interaction.data.name)
+            ? handleTourneyAutocomplete(options, context)
             : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
             ? handleLinkedAccountAutocomplete(options, context)
             : handleProfileAutocomplete(options),
@@ -993,6 +1061,33 @@ const server = createServer(async (req, res) => {
   return send(res, 200, { type: 1 });
 });
 
+/**
+ * The server log's half of the gateway: its intents and its event handler.
+ * Empty, so the gateway stays event-free, unless DISCORD_SERVER_LOG names a
+ * scope. See server-log.ts.
+ */
+function serverLogOptions(token: string) {
+  const { scopes, unknown } = parseServerLogScopes(process.env.DISCORD_SERVER_LOG);
+  if (unknown.length) {
+    console.error(`[server-log] ignoring unknown DISCORD_SERVER_LOG scope(s): ${unknown.join(', ')}`);
+  }
+  if (scopes.size === 0) return {};
+  console.log(`[server-log] on: ${[...scopes].join(', ')}`);
+
+  // The channel is a /config setting, read through the app and held for a
+  // minute so a busy server does not ask the app on every event.
+  let cached: { channelId: string | null; at: number } | null = null;
+  async function resolveChannel(): Promise<string | null> {
+    if (cached && Date.now() - cached.at < 60_000) return cached.channelId;
+    const { settings } = await fetchDiscordSettings();
+    cached = { channelId: settings.server_log_channel_id ?? null, at: Date.now() };
+    return cached.channelId;
+  }
+
+  const serverLog = createServerLog({ api: new DiscordApi({ token }), scopes, resolveChannel });
+  return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[bot] listening on ${PORT}`);
 
@@ -1001,7 +1096,7 @@ server.listen(PORT, '0.0.0.0', () => {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (token) {
     try {
-      gateway = startGateway({ token });
+      gateway = startGateway({ token, ...serverLogOptions(token) });
     } catch (error) {
       console.error(`[bot] gateway failed to start: ${String(error)}`);
     }

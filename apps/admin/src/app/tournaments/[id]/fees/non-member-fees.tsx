@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Button } from '@badminton/ui';
 import { PAYMENT_METHODS } from '@badminton/shared';
@@ -9,7 +9,9 @@ import { markNonMemberFeePaid, markNonMemberFeeUnpaid } from '@/lib/actions/regi
 // Entry fees owed by non-members a Google Form entered (00283). They have no
 // account, so the row carries the name and email the form gave and is settled
 // by its own id. Kept apart from the members' table above because that table,
-// its bulk bar and its dialogs are all keyed by player id.
+// its bulk bar and its dialogs are all keyed by player id. A receipt the form
+// collected for the row (00288) is reviewed here, with the controls the page
+// builds for it.
 
 export interface NonMemberFeeRow {
   id: string;
@@ -27,10 +29,13 @@ export function NonMemberFees({
   rows,
   canMarkPaid,
   canMarkUnpaid,
+  reviews = {},
 }: {
   rows: NonMemberFeeRow[];
   canMarkPaid: boolean;
   canMarkUnpaid: boolean;
+  /** Receipt review controls by fee id, for a row with a receipt waiting. */
+  reviews?: Record<string, ReactNode>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -96,6 +101,7 @@ export function NonMemberFees({
                   </Badge>
                 </td>
                 <td className="px-4 py-2 text-right whitespace-nowrap">
+                  {reviews[row.id]}
                   {!row.paid && !row.waived && canMarkPaid && (
                     <Button size="sm" disabled={pending} onClick={() => run(() => markNonMemberFeePaid(row.id, method))}>
                       Mark paid

@@ -5,6 +5,7 @@ import {
   formatICSDates,
   sessionToVEvent,
   clubEventToVEvent,
+  tournamentToVEvent,
   buildICSCalendar,
   type ICSClubEventFields,
   type ICSSessionFields,
@@ -227,5 +228,57 @@ describe('buildICSCalendar with club events', () => {
     const session = makeSession();
     expect(buildICSCalendar([session], { clubEvents: [] })).toBe(buildICSCalendar([session]));
     expect(buildICSCalendar([session])).not.toContain('club-event-');
+  });
+});
+
+describe('tournamentToVEvent', () => {
+  const makeTournament = (over: Partial<Parameters<typeof tournamentToVEvent>[0]> = {}) => ({
+    id: 't-1',
+    name: 'Fall Open',
+    start_date: '2026-11-14',
+    end_date: '2026-11-14' as string | null,
+    status: 'active',
+    updated_at: '2026-10-01T12:00:00.000Z',
+    ...over,
+  });
+
+  it('is an all-day event ending the next day for a one-day tournament', () => {
+    const lines = tournamentToVEvent(makeTournament());
+    expect(lines).toContain('DTSTART;VALUE=DATE:20261114');
+    expect(lines).toContain('DTEND;VALUE=DATE:20261115');
+  });
+
+  it('ends the day after the last day of a multi-day tournament (exclusive end)', () => {
+    const lines = tournamentToVEvent(makeTournament({ start_date: '2026-11-28', end_date: '2026-12-01' }));
+    expect(lines).toContain('DTSTART;VALUE=DATE:20261128');
+    expect(lines).toContain('DTEND;VALUE=DATE:20261202');
+  });
+
+  it('reads a missing end date, or one before the start, as one day', () => {
+    expect(tournamentToVEvent(makeTournament({ end_date: null }))).toContain('DTEND;VALUE=DATE:20261115');
+    expect(tournamentToVEvent(makeTournament({ end_date: '2026-11-01' }))).toContain('DTEND;VALUE=DATE:20261115');
+  });
+
+  it('crosses a year boundary', () => {
+    expect(tournamentToVEvent(makeTournament({ start_date: '2026-12-31', end_date: null }))).toContain(
+      'DTEND;VALUE=DATE:20270101',
+    );
+  });
+
+  it('has its own UID namespace and no location', () => {
+    const lines = tournamentToVEvent(makeTournament());
+    expect(lines).toContain('UID:tournament-t-1@club-ladder');
+    expect(lines.some((l) => l.startsWith('LOCATION'))).toBe(false);
+  });
+
+  it('escapes the name and links the tournament page', () => {
+    const lines = tournamentToVEvent(makeTournament({ name: 'Doubles, mixed; open' }), 'https://x.test');
+    expect(lines).toContain('SUMMARY:Doubles\\, mixed\\; open');
+    expect(lines).toContain('URL:https://x.test/tournaments/t-1');
+  });
+
+  it('is included by buildICSCalendar', () => {
+    const ics = buildICSCalendar([], { tournaments: [makeTournament()] });
+    expect(ics).toContain('UID:tournament-t-1@club-ladder');
   });
 });

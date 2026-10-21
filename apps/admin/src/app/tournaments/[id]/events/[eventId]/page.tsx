@@ -13,6 +13,7 @@ import {
 } from '@badminton/shared';
 // By SUBPATH — node:crypto, server only.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
+import { formSignedWaivers } from '@badminton/shared';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
@@ -63,6 +64,14 @@ export default async function EventPage({
   if (!event) notFound();
 
   const doubles = isDoublesEvent(event.event_type);
+
+  // The club event this one runs (00292), if any: its sign-ups are this
+  // event's entries, both ways. Missing column (before 00292): none.
+  const { data: linkedClubEvent } = await supabase
+    .from('club_events')
+    .select('id, title')
+    .eq('tournament_event_id', eventId)
+    .maybeSingle();
 
   // TWO OF THE SIX READS BELOW BELONG TO A CONTROL RATHER THAN TO THE PAGE, and
   // each is asked for with the capability that control's own server action
@@ -329,8 +338,12 @@ export default async function EventPage({
   // not see who signed. Neither should render an empty column implying nobody
   // has signed.
   const waiverText = resolveEventWaiverText(tournament);
+  // Signed on the Google Form counts as signed (00292), as check-in reads it.
+  const shownAcceptances = waiverText && waiverAcceptances
+    ? [...waiverAcceptances, ...await formSignedWaivers(createAdminClient(), tournamentId, eventWaiverHash(waiverText))]
+    : null;
   const waiverStates: Record<string, EventWaiverStatus> | null =
-    waiverText && waiverAcceptances
+    waiverText && shownAcceptances
       ? Object.fromEntries(
           // BOTH LISTS FOR A DOUBLES EVENT. A member waiting for a partner is
           // asked for the same signature at the same moment a paired one is —
@@ -341,7 +354,7 @@ export default async function EventPage({
             : participants.map((p) => p.player_id)
           ).filter((id): id is string => id != null).map((playerId) => [
             playerId,
-            eventWaiverStatus(playerId, eventWaiverHash(waiverText), waiverAcceptances),
+            eventWaiverStatus(playerId, eventWaiverHash(waiverText), shownAcceptances),
           ]),
         )
       : null;
@@ -384,6 +397,16 @@ export default async function EventPage({
 
   return (
     <div className="space-y-6">
+      {linkedClubEvent && (
+        <div className="rounded-lg border border-[var(--border)] px-4 py-3 text-sm text-[var(--ink-2)]">
+          Runs the club event{' '}
+          <Link href={`/events/${linkedClubEvent.id}`} className="font-medium underline">
+            {linkedClubEvent.title}
+          </Link>
+          . Entries here and sign-ups there stay the same both ways, and the fee is charged once,
+          on the club event.
+        </div>
+      )}
       {/* THE CONSOLE SIDE OF THE SAME THING. Two execs running two halves of a
           tournament both have this open, and neither sees the other's work
           without a reload — which is how a draw gets generated against

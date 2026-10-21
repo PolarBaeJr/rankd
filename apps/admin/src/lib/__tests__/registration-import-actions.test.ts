@@ -161,6 +161,7 @@ describe('reading a form with Google (00287)', () => {
     EVENTS: { Singles: EVENT },
     DEFAULT_EVENT_ID: '',
     PARTNERS: {},
+    RECEIPT_QUESTION: 'E-transfer screenshot',
   };
 
   it('refuses a malformed id or mapping before asking for a capability', async () => {
@@ -205,5 +206,87 @@ describe('reading a form with Google (00287)', () => {
     rows = { registration_import_forms: { id: BINDING, target_kind: 'tournament', tournament_id: TOURNAMENT, club_event_id: null } };
     expect((await actions.saveRegistrationFormMapping(BINDING, null)).ok).toBe(true);
     expect(updates[0]!.values).toMatchObject({ read_mapping: null });
+  });
+});
+
+describe("a season's form (00290)", () => {
+  const BINDING = '66666666-6666-4666-8666-666666666666';
+  const SEASON = '77777777-7777-4777-8777-777777777777';
+  const seasonMapping = {
+    EMAIL_QUESTION: 'Email address',
+    NAME_QUESTION: 'Full name',
+    EVENT_QUESTION: '',
+    EVENTS: {},
+    DEFAULT_EVENT_ID: '',
+    PARTNERS: {},
+    RECEIPT_QUESTION: 'E-transfer screenshot',
+  };
+  const stored = { id: BINDING, target_kind: 'season', tournament_id: null, club_event_id: null, season_id: SEASON, active: true };
+
+  it('binds with the club fees settle capability and writes the season column only', async () => {
+    rows = { seasons: { id: SEASON }, data_api_consumers: { id: CONSUMER } };
+    const result = await actions.bindRegistrationForm({
+      targetKind: 'season',
+      targetId: SEASON,
+      consumerId: CONSUMER,
+      formId: 'form_1',
+      joinWaitlist: false,
+      soloDoublesAck: false,
+    });
+    expect(result.ok).toBe(true);
+    expect(capabilities).toEqual(['fees.clubfees.markpaid.write']);
+    expect(updates[0]!.values).toMatchObject({
+      target_kind: 'season',
+      season_id: SEASON,
+      tournament_id: null,
+      club_event_id: null,
+    });
+  });
+
+  it('refuses a season that does not exist', async () => {
+    rows = { data_api_consumers: { id: CONSUMER } };
+    const result = await actions.bindRegistrationForm({
+      targetKind: 'season',
+      targetId: SEASON,
+      consumerId: CONSUMER,
+      formId: 'form_1',
+      joinWaitlist: false,
+      soloDoublesAck: false,
+    });
+    expect(result.ok).toBe(false);
+    expect(updates).toEqual([]);
+  });
+
+  it('switches a season binding with the capability the stored row implies', async () => {
+    rows = { registration_import_forms: stored };
+    expect((await actions.setRegistrationFormActive(BINDING, false)).ok).toBe(true);
+    expect(capabilities).toEqual(['fees.clubfees.markpaid.write']);
+  });
+
+  it('takes a mapping that names no event and asks for the screenshot', async () => {
+    rows = { registration_import_forms: stored };
+    expect((await actions.saveRegistrationFormMapping(BINDING, seasonMapping)).ok).toBe(true);
+    expect(capabilities).toEqual(['fees.clubfees.markpaid.write']);
+    expect(updates[0]!.values).toMatchObject({ read_mapping: seasonMapping, poll_watermark: null });
+  });
+
+  it('refuses a season mapping with an event, a partner question or no screenshot question', async () => {
+    rows = { registration_import_forms: stored };
+    for (const bad of [
+      { ...seasonMapping, DEFAULT_EVENT_ID: EVENT },
+      { ...seasonMapping, EVENTS: { Singles: EVENT } },
+      { ...seasonMapping, PARTNERS: { Singles: { NAME_QUESTION: 'a', EMAIL_QUESTION: 'b', CATEGORY_QUESTION: '' } } },
+      { ...seasonMapping, RECEIPT_QUESTION: '' },
+    ]) {
+      expect((await actions.saveRegistrationFormMapping(BINDING, bad)).ok).toBe(false);
+    }
+    expect(updates).toEqual([]);
+  });
+
+  it('never takes the season from the client', async () => {
+    // A stored club event binding stays a club event binding whatever is posted.
+    rows = { registration_import_forms: { ...stored, target_kind: 'club_event', season_id: null, club_event_id: EVENT } };
+    expect((await actions.saveRegistrationFormMapping(BINDING, seasonMapping)).ok).toBe(true);
+    expect(capabilities).toEqual(['events.manage.update.write']);
   });
 });

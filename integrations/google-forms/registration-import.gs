@@ -55,6 +55,10 @@
  *   registration may import its earlier responses again as new ones; avoid
  *   it, or check the form's imported entries afterwards. For a club event
  *   form, set DEFAULT_EVENT_ID to the event's id (as the console does).
+ *
+ *   Only the console carries a file upload question's answer (an e-transfer
+ *   screenshot) into the fee review, as its receipt question. This script
+ *   never sends files: a form read here has its screenshots stay in Drive.
  */
 
 var CONFIG = {

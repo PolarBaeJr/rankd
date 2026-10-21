@@ -6,6 +6,7 @@ import {
   DEFAULT_EMAIL_QUESTION,
   DEFAULT_EVENT_QUESTION,
   DEFAULT_NAME_QUESTION,
+  DEFAULT_RECEIPT_QUESTION,
   defaultPartnerQuestions,
   type FormMapping,
 } from '@/lib/registration-form-mapping';
@@ -27,9 +28,23 @@ export interface MappableEvent {
 }
 
 /** What each poll_error code means, in the desk's words. */
+// Why an uploaded receipt (00288) did not reach the review, after its count.
+const RECEIPT_PROBLEM_LABEL: Record<string, string> = {
+  too_large: 'over 10 MB',
+  bad_type: 'not an image or PDF',
+  drive_forbidden: 'Drive would not hand over',
+  download_failed: 'never downloaded',
+  no_fee: 'with nothing to pay (an exec, a fee-exempt member, or someone not signed up)',
+  duplicate: 'for a fee that already had one waiting',
+};
+
+// The problems a resent screenshot can fix. A receipt with no fee to pay, or one
+// already waiting, needs nothing from the person.
+const RESEND_FIXES = new Set(['too_large', 'bad_type', 'drive_forbidden', 'download_failed']);
+
 export const READER_ERROR_LABEL: Record<string, string> = {
   auth: "Google refused the console's service account key. Check the key in the console's settings.",
-  forbidden: 'Google refused access: is the form in the shared folder?',
+  forbidden: 'Google refused access: share the form with the service account as an Editor',
   form_not_found: "Google has no form with this id. Copy the id from the form's edit link again.",
   rate_limited: 'Google asked the console to slow down. It carries on at the next read.',
   google_unavailable: 'Google did not answer. The console tries again at the next read.',
@@ -102,19 +117,23 @@ export function FormReaderPanel({
   const [emailQuestion, setEmailQuestion] = useState(mapping?.EMAIL_QUESTION ?? DEFAULT_EMAIL_QUESTION);
   const [nameQuestion, setNameQuestion] = useState(mapping?.NAME_QUESTION ?? DEFAULT_NAME_QUESTION);
   const [eventQuestion, setEventQuestion] = useState(mapping?.EVENT_QUESTION ?? DEFAULT_EVENT_QUESTION);
+  // A saved mapping keeps what it has, '' (no receipt question) included.
+  const [receiptQuestion, setReceiptQuestion] = useState(mapping ? mapping.RECEIPT_QUESTION : DEFAULT_RECEIPT_QUESTION);
   const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
 
   if (!reader) return null;
 
   function build(): FormMapping {
-    if (targetKind === 'club_event') {
+    if (targetKind === 'club_event' || targetKind === 'season') {
       return {
         EMAIL_QUESTION: emailQuestion.trim(),
         NAME_QUESTION: nameQuestion.trim(),
         EVENT_QUESTION: '',
         EVENTS: {},
-        DEFAULT_EVENT_ID: targetId,
+        // A season's form names no event (00290).
+        DEFAULT_EVENT_ID: targetKind === 'season' ? '' : targetId,
         PARTNERS: {},
+        RECEIPT_QUESTION: receiptQuestion.trim(),
       };
     }
     const eventsMap: Record<string, string> = {};
@@ -139,6 +158,7 @@ export function FormReaderPanel({
       EVENTS: eventsMap,
       DEFAULT_EVENT_ID: '',
       PARTNERS: partners,
+      RECEIPT_QUESTION: receiptQuestion.trim(),
     };
   }
 
@@ -168,6 +188,17 @@ export function FormReaderPanel({
       {mapping && reader.error && (
         <p role="status" className="text-[var(--color-danger)]">
           {READER_ERROR_LABEL[reader.error] ?? 'The last read failed.'}
+        </p>
+      )}
+      {mapping && Object.keys(reader.receiptProblems).length > 0 && (
+        <p role="status" className="text-[var(--color-warning)]">
+          Uploaded receipts not in the review:{' '}
+          {Object.entries(reader.receiptProblems)
+            .map(([status, count]) => `${count} ${RECEIPT_PROBLEM_LABEL[status] ?? status}`)
+            .join(', ')}
+          .
+          {Object.keys(reader.receiptProblems).some((status) => RESEND_FIXES.has(status)) &&
+            ' Ask the person to email the screenshot instead.'}
         </p>
       )}
 
@@ -200,6 +231,12 @@ export function FormReaderPanel({
               <input className={inputClass} value={nameQuestion} onChange={(e) => setNameQuestion(e.target.value)} />
             </label>
           </div>
+          <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+            {targetKind === 'season'
+              ? 'E-transfer screenshot question (a file upload)'
+              : 'E-transfer screenshot question (a file upload; leave empty if the form has none)'}
+            <input className={inputClass} value={receiptQuestion} onChange={(e) => setReceiptQuestion(e.target.value)} />
+          </label>
           {targetKind === 'tournament' && (
             <>
               <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
@@ -263,7 +300,13 @@ export function FormReaderPanel({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              disabled={pending || emailQuestion.trim() === '' || nameQuestion.trim() === '' || !!repeatedChoice}
+              disabled={
+                pending ||
+                emailQuestion.trim() === '' ||
+                nameQuestion.trim() === '' ||
+                (targetKind === 'season' && receiptQuestion.trim() === '') ||
+                !!repeatedChoice
+              }
               onClick={() => onSave(build(), () => setEditing(false))}
             >
               Save and read

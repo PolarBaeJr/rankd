@@ -99,7 +99,9 @@ export async function getOutstandingClubFees(
       .select('id, status')
       .in('status', ['competitive', 'recreational'])
       .eq('is_exec', false)
-      .eq('fee_exempt', false),
+      .eq('fee_exempt', false)
+      // Guests (00292) owe no dues: they are entered in one event, not members.
+      .eq('is_guest', false),
     supabase
       .from('club_fees')
       .select('player_id, paid_at, method')

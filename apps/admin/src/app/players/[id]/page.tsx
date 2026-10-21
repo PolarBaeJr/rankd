@@ -25,9 +25,10 @@ import { ReliabilityEditor } from './reliability-editor';
 import { CancelDeletionButton } from './cancel-deletion-button';
 import { RequireWaiverResignatureButton } from './require-waiver-resignature-button';
 import { DiscordLinkPanel } from './discord-link-panel';
+import { GuestMembership } from './guest-membership';
 import { Panel, PanelLabel, PanelRow } from './panel';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Shield, Trophy, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight, SquarePen, Link2 } from 'lucide-react';
+import { ArrowLeft, Shield, Trophy, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight, SquarePen, Link2, UserCheck } from 'lucide-react';
 import Link from 'next/link';
 import { SeasonPicker } from './season-picker';
 import { RecentMatches } from './recent-matches';
@@ -265,6 +266,14 @@ export default async function PlayerDetailPage({
   ]);
 
   if (!player) notFound();
+
+  // A guest (00292), and who asked an admin to make them a member, if anyone.
+  const guest = player as { is_guest?: boolean; email?: string | null; guest_member_requested_by?: string | null; guest_member_requested_at?: string | null };
+  const isLiveGuest = !!guest.is_guest && !guest.email?.endsWith('@deleted.invalid');
+  const guestRequester = isLiveGuest && guest.guest_member_requested_by
+    ? ((await supabase.from('players').select('full_name').eq('id', guest.guest_member_requested_by).maybeSingle())
+        .data?.full_name as string | undefined) ?? 'An officer'
+    : null;
 
   // THIS SEASON'S DUES, for the door: Paid, Waived, Exempt or Unpaid. Only a
   // holder of the capability that records a payment is shown any of it, and
@@ -859,7 +868,21 @@ export default async function PlayerDetailPage({
           The member-run /link flow is unchanged and is still the ordinary way
           this row appears. What this panel adds is the officer's path for the
           member who will not or cannot walk it. */}
-      {canForceLink && (
+      {isLiveGuest && canManage && (
+        <Panel title="Guest" icon={<UserCheck className="h-4 w-4 text-[var(--text-muted)]" />}>
+          <GuestMembership
+            playerId={player.id}
+            playerName={player.full_name}
+            isAdmin={isAdmin}
+            requestedBy={guestRequester}
+            requestedAt={guest.guest_member_requested_at ?? null}
+          />
+        </Panel>
+      )}
+
+      {/* Not for a guest (00292): nothing links one, and they become a member,
+          and link, by signing in or /signup with the Form's email. */}
+      {canForceLink && !(player as { is_guest?: boolean }).is_guest && (
         <Panel title="Discord" icon={<Link2 className="h-4 w-4 text-[var(--text-muted)]" />}>
           <div className="divide-y divide-[var(--border)]">
             <PanelRow

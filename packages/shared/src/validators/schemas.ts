@@ -496,8 +496,11 @@ export const adminPlayerCreateSchema = z.object({
   first_name: firstNameSchema,
   last_name: lastNameSchema,
   email: z.string().email('Invalid email address'),
+  // 'guest' (00292) is not a player_status: it makes a recreational record
+  // with players.is_guest set, which the app sends nothing and keeps off the
+  // member lists until they sign in with that email.
   status: z.enum([
-    'competitive', 'recreational', 'suspended', 'pending_approval',
+    'guest', 'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
   // 'admin' intentionally absent: admin accounts are promoted from existing
   // members (updatePlayer), never created directly.
@@ -543,6 +546,16 @@ export const feeMarkSchema = z.object({
   method: z.string().max(40).optional(),
   reference: z.string().max(120).optional(),
 });
+
+// Marks a named dues row paid (00290: a Google Form files one unpaid for a
+// non-member). The row is named by id; the amount defaults to the row's own.
+export const namedFeeMarkSchema = z.object({
+  fee_id: z.string().uuid(),
+  amount_cents: z.number().int().positive().optional(),
+  method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
+});
+export type NamedFeeMarkInput = z.infer<typeof namedFeeMarkSchema>;
 
 // A member's payment receipt (00248, 00253). Exactly one of the two ids: feeId
 // for a fee row that exists, duesSeasonId for this season's dues when the

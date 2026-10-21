@@ -12,7 +12,7 @@ import type { FeeRowState } from '@/lib/fee-bulk-eligibility';
 import { getSeasonFinances } from '@/lib/season-finance';
 import { foldLedgerRows } from '@/lib/season-income';
 import { outstandingClubFeeCents } from '@/lib/fees-outstanding';
-import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
+import { FeeActions, AddManualFee, RemoveManualFee, MarkNamedFeePaid } from './fee-actions';
 import { BulkFeeActions } from './bulk-fee-actions';
 import { PastePayments } from './paste-payments';
 import { ReinstatementsCard } from './reinstatements-card';
@@ -24,6 +24,9 @@ import { CardHeading } from './card-heading';
 import { FeeTable } from './fee-table';
 import { SubmittedCard } from './submitted-card';
 import { OutstandingCard } from './outstanding-card';
+import { loadRegistrationImports } from '@/lib/registration-imports';
+import { readerStatus } from '@/lib/google-forms';
+import { FormImportCard } from '@/components/registration-import/FormImportCard';
 
 // The three sections of the money page. 'fees' is the original table; the other
 // two are the ledgers the club owner asked for ("add other fees", "add another
@@ -302,6 +305,8 @@ export default async function FeesPage({
           .in('status', ['competitive', 'recreational'])
           .eq('is_exec', false)
           .eq('fee_exempt', false)
+          // Guests (00292) owe no dues: they are entered in one event, not members.
+          .eq('is_guest', false)
           .order('full_name'),
         'FEE-101',
       )
@@ -424,6 +429,15 @@ export default async function FeesPage({
   // the RSC payload of someone shown none of them.
   const finances = showNetPosition ? await getSeasonFinances(supabase, season) : null;
 
+  // THE SEASON'S GOOGLE FORM (00290), beside the receipts it files. Linked and
+  // read by whoever may settle those receipts. A non-member's typed email is
+  // roster data, so it is kept only for a holder of the club-fee read.
+  const seasonForm =
+    tab === 'submitted' && may('fees.clubfees.markpaid.write')
+      ? await loadRegistrationImports(supabase, 'season', season.id, { guestWaiversOn: false })
+      : null;
+  const seasonFormResponses = (seasonForm?.responses ?? []).map((r) => (showClubFees ? r : { ...r, email: null }));
+
   return (
     <div className="space-y-6">
       {/* The eyebrow carries the scope. This page can be pointed at any term the
@@ -526,6 +540,29 @@ export default async function FeesPage({
       )}
 
       {tab === 'submitted' && may('fees.clubfees.markpaid.write') && <SubmittedCard />}
+
+      {seasonForm && (
+        <Card padding={false}>
+          <CardHeading
+            title="Google Form"
+            sub={`A form whose e-transfer screenshots pay ${season.name} dues, member or not. Each one waits above for review.`}
+          />
+          <div className="p-4">
+            <FormImportCard
+              targetKind="season"
+              targetId={season.id}
+              bindings={seasonForm.bindings}
+              consumers={seasonForm.consumers}
+              entries={[]}
+              responses={seasonFormResponses}
+              canBind
+              canUndo={false}
+              migrationMissing="Linking a form to a season needs migration 00290."
+              reader={readerStatus()}
+            />
+          </div>
+        </Card>
+      )}
 
       {tab === 'outstanding' && showClubFees && (
         <OutstandingCard season={season} canRemind={may('fees.clubfees.markpaid.write')} />
@@ -759,7 +796,16 @@ export default async function FeesPage({
               ),
             };
           }),
-          ...manualFees.map((fee) => ({
+          ...manualFees.map((fee) => {
+            // A named row is not paid by being named: a Google Form files an
+            // unpaid one for a non-member's screenshot (00290), settled when an
+            // exec confirms it under Submitted. Same test as a member's row.
+            const waived = isWaived(fee);
+            const paid = Boolean(fee.paid_at) && !waived;
+            const markNamed = !paid && !waived && may('fees.clubfees.markpaid.write') ? (
+              <MarkNamedFeePaid id={fee.id} name={fee.manual_name ?? ''} seasonName={season.name} amountCents={fee.amount_cents} />
+            ) : null;
+            return {
             id: fee.id,
             name: fee.manual_name ?? '',
             selectable: false,
@@ -767,14 +813,18 @@ export default async function FeesPage({
               <TableCard
                 key={fee.id}
                 title={personTitle(fee.manual_name, 'Manual entry')}
-                value={<Atomic>{fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
-                badges={<Badge variant="success">Paid</Badge>}
+                value={<Atomic>{paid && fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
+                badges={
+                  <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                    {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                  </Badge>
+                }
                 fields={[
                   { label: 'Email', value: fee.manual_email ?? '-' },
-                  { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },
-                  { label: 'Reference', value: fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
+                  { label: 'Method', value: paid && fee.method ? formatPaymentMethod(fee.method) : '-' },
+                  { label: 'Reference', value: paid && fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
                 ]}
-                actions={<RemoveManualFee id={fee.id} name={fee.manual_name} />}
+                actions={<>{markNamed}<RemoveManualFee id={fee.id} name={fee.manual_name} /></>}
               />
             ),
             row: (
@@ -794,25 +844,31 @@ export default async function FeesPage({
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant="success">Paid</Badge>
+                    <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                      {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                    </Badge>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Atomic className="font-mono text-[var(--text-primary)]">
-                      {fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                      {paid && fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
                     </Atomic>
                   </td>
                   <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
-                    {fee.method ? formatPaymentMethod(fee.method) : '-'}
-                    {fee.reference && (
+                    {paid && fee.method ? formatPaymentMethod(fee.method) : '-'}
+                    {paid && fee.reference && (
                       <span className="block font-mono text-xs text-[var(--text-muted)]">{fee.reference}</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <RemoveManualFee id={fee.id} name={fee.manual_name} />
+                    <div className="flex justify-end gap-2">
+                      {markNamed}
+                      <RemoveManualFee id={fee.id} name={fee.manual_name} />
+                    </div>
                   </td>
                 </tr>
             ),
-          })),
+            };
+          }),
         ]}
         after={
           <>

@@ -473,4 +473,24 @@ describe('attachNamedPayment', () => {
     expect(fee(NAMED)).toBeDefined();
     expect(store.sentry).toEqual([]);
   });
+  it('refuses to merge an unpaid named row a Google Form filed (00290), and writes nothing', async () => {
+    store.db.club_fees = [namedRow({ paid_at: null, marked_by: null, method: null, reference: null })];
+    store.db.club_fees.push(ownRow());
+
+    const res = await attachNamedPayment(NAMED, MEMBER);
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/not paid yet/);
+    expect(store.writes).toEqual([]);
+    expect(fee(NAMED)).toBeDefined();
+  });
+
+  it('still attaches an unpaid named row when the member has no dues row, so its receipt follows', async () => {
+    store.db.club_fees = [namedRow({ paid_at: null, marked_by: null, method: null, reference: null })];
+
+    const res = await attachNamedPayment(NAMED, MEMBER);
+
+    expect(res).toEqual({ ok: true, data: { playerName: 'Jane Doe', moved: 'attached' } });
+    expect(fee(NAMED)).toMatchObject({ player_id: MEMBER, paid_at: null });
+  });
 });

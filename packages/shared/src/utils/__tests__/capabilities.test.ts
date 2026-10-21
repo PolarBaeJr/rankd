@@ -120,9 +120,12 @@ describe('the capability vocabulary', () => {
   //
   // 145 BECAME 147 with Club changes (00286): `changelog.page` and
   // `changelog.post.write`, a new area, both admin-only and in no baseline.
-  it('is exactly 147 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(147);
-    expect(new Set(CAPABILITIES).size).toBe(147);
+  //
+  // 147 BECAME 148 with club event check-in (00293):
+  // `events.signups.checkin.write`, admin-only like the rest of events.
+  it('is exactly 148 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(148);
+    expect(new Set(CAPABILITIES).size).toBe(148);
   });
 
   // 16 BECAME 17 with `page`, the keys to switched-off features, and 17
@@ -381,16 +384,32 @@ describe('CAPABILITY_GATES', () => {
   // 196 BECAME 202 with Club changes (00286): the page, postClubChanges, and
   // the four actions merged into `changelog.post.write` (add, reword and
   // delete a pending line, and announce a posted entry).
-  it('names 202 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 202 BECAME 207 with console commands on Discord: five reads on the
+  // console's /api/discord/reads route, each merged into the capability of the
+  // console page that shows the same rows. `sessions.page` takes three
+  // (sessions, session-attendance, locations), `events.page` one (events) and
+  // `events.signups.read` one (event-signups). The writes add no site: they
+  // call the console's own actions, which were already counted.
+  //
+  // 207 BECAME 211 with tournaments on Discord (/tourney): four more reads on
+  // the same route. `tournaments.page` takes three (tournaments,
+  // tournament-entries, tournament-matches), the rows the tournament page
+  // shows, and `tournaments.fees.read` one (tournament-fees), the fees page's
+  // entrants and what they have paid. The /tourney writes add no site, for the
+  // same reason the /session ones did not.
+  //
+  // 211 BECAME 212 with club event check-in (00293): setClubEventCheckIn.
+  it('names 212 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(202);
-    expect(new Set(sites).size).toBe(202);
-    expect(ENFORCEMENT_POINTS).toBe(202);
+    expect(sites.length).toBe(212);
+    expect(new Set(sites).size).toBe(212);
+    expect(ENFORCEMENT_POINTS).toBe(212);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -1114,17 +1133,18 @@ describe('permits', () => {
   // club events, and 139 BECAME 141 with the membership and socials switches,
   // and 141 BECAME 142 with the guest waivers switch, and 142 BECAME 144 with
   // the audit export's two, and 144 BECAME 145 with the predictions switch,
-  // and 145 BECAME 147 with Club changes.
+  // and 145 BECAME 147 with Club changes, and 147 BECAME 148 with club event
+  // check-in.
   // This number
   // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
   // so every capability added is automatically theirs), and it is written as a
   // literal anyway, because a count derived from the list it is checking would
   // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 147', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 148', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(147);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(148);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

@@ -24,7 +24,10 @@ async function rejectImportedEntryImpl(entryId: string): Promise<void> {
   const player = await requirePlayer();
   const service = createServiceRoleClient();
   const entry = await loadOwnImportEntry(service, entryId, player.id);
-  if (entry.status !== 'awaiting_member') throw new ExpectedError('This entry is no longer waiting for you.');
+  // 00291: a club event form signs a member up at once, so "Not me" also
+  // takes back an entered club event sign-up.
+  const undoable = entry.status === 'awaiting_member' || (entry.status === 'entered' && !!entry.club_event_id);
+  if (!undoable) throw new ExpectedError('This entry is no longer waiting for you.');
 
   const { data, error } = await service.rpc('reject_registration_import_entry', {
     p_entry_id: entryId,

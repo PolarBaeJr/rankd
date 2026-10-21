@@ -64,6 +64,8 @@ const makeClient = vi.hoisted(() => () => {
     // guards under test depend on it: it is what makes "only while this row is
     // still unpaid" true in the database rather than only in the read above it.
     const isFilters: Array<[string, unknown]> = [];
+    // `.not(col, 'is', null)`: the column holds a value.
+    const notNull: string[] = [];
     let op: Op = 'select';
     let payload: Row = {};
 
@@ -71,7 +73,8 @@ const makeClient = vi.hoisted(() => () => {
       (store.db[table] ?? []).filter(
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
-          isFilters.every(([c, v]) => (v === null ? r[c] == null : r[c] === v)),
+          isFilters.every(([c, v]) => (v === null ? r[c] == null : r[c] === v)) &&
+          notNull.every((c) => r[c] != null),
       );
 
     const run = (): { data: Row[] | null; error: { message: string } | null } => {
@@ -100,6 +103,7 @@ const makeClient = vi.hoisted(() => () => {
       update(p: Row) { op = 'update'; payload = p; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
+      not(c: string) { notNull.push(c); return api; },
       async single() {
         const res = run();
         return { data: res.data?.[0] ?? null, error: res.error };
@@ -130,7 +134,7 @@ vi.mock('../audit', () => ({
 }));
 
 import { ExpectedError } from '@badminton/shared';
-import { markFeePaid, waiveFee, markFeeUnpaid } from '../actions/fees';
+import { markFeePaid, waiveFee, markFeeUnpaid, markNamedFeePaid } from '../actions/fees';
 import { markTournamentFeePaid } from '../actions/tournament-fees';
 
 const TOURNAMENT = '11111111-1111-4111-8111-111111111111';
@@ -580,5 +584,71 @@ describe('markFeeUnpaid refuses when there is nothing to reverse', () => {
     expect(duesRow()!.method).toBeNull();
     expect(duesRow()!.marked_by).toBeNull();
     expect((auditRows('fee_marked_unpaid')[0]!.old_value as Row).method).toBe('waived');
+  });
+});
+
+// A NAMED ROW A GOOGLE FORM FILED UNPAID (00290) is settled here when the money
+// came some other way. The same three guards as markFeePaid: no second payment,
+// no payment over a waiver, and the write lands only while the row is unpaid.
+describe('markNamedFeePaid settles a named dues row without overwriting', () => {
+  const NAMED = '66666666-6666-4666-8666-666666666666';
+  const namedRow = () => (store.db.club_fees ?? []).find((r) => r.id === NAMED);
+  function unpaidNamed(extra: Row = {}) {
+    store.db.club_fees!.push({
+      id: NAMED, fee_type: 'dues', player_id: null, manual_name: 'Season Guest',
+      manual_email: 'guest@example.invalid', season_id: SEASON, amount_cents: 2500,
+      paid_at: null, method: null, reference: null, ...extra,
+    });
+  }
+
+  it('records the payment at the row\'s own amount when none is given', async () => {
+    unpaidNamed();
+
+    await markNamedFeePaid({ fee_id: NAMED, method: 'cash' });
+
+    expect(namedRow()!.paid_at).toBeTruthy();
+    expect(namedRow()!.amount_cents).toBe(2500);
+    expect(namedRow()!.method).toBe('cash');
+    const [entry] = auditRows('fee_marked_paid');
+    expect((entry!.old_value as Row).paid_at).toBeNull();
+  });
+
+  it('asks for an amount when the row has none', async () => {
+    unpaidNamed({ amount_cents: null });
+
+    await expect(markNamedFeePaid({ fee_id: NAMED })).rejects.toThrow(ExpectedError);
+    expect(namedRow()!.paid_at).toBeNull();
+  });
+
+  it('refuses a row that is already paid and leaves it untouched', async () => {
+    unpaidNamed({ paid_at: '2026-08-01T00:00:00.000Z', method: 'e_transfer' });
+
+    await expect(markNamedFeePaid({ fee_id: NAMED, amount_cents: 1000 })).rejects.toThrow(/already recorded as paid/i);
+    expect(namedRow()!.amount_cents).toBe(2500);
+    expect(auditRows('fee_marked_paid')).toHaveLength(0);
+  });
+
+  it('will not touch a member\'s dues row through a crafted id', async () => {
+    unpaidDues();
+
+    await expect(markNamedFeePaid({ fee_id: '00000000-0000-4000-8000-0000000000aa' })).rejects.toThrow(ExpectedError);
+    store.db.club_fees![0]!.id = NAMED;
+    await expect(markNamedFeePaid({ fee_id: NAMED })).rejects.toThrow(/no longer on this season/i);
+    expect(duesRow()!.paid_at).toBeNull();
+  });
+
+  it('loses the race to a confirmed receipt without overwriting it', async () => {
+    unpaidNamed();
+    store.beforeUpdate = ({ table }) => {
+      if (table !== 'club_fees') return;
+      store.beforeUpdate = null;
+      const row = namedRow()!;
+      row.paid_at = '2026-08-02T00:00:00.000Z';
+      row.method = 'e_transfer';
+    };
+
+    await expect(markNamedFeePaid({ fee_id: NAMED, method: 'cash' })).rejects.toThrow(/confirming its receipt/i);
+    expect(namedRow()!.method).toBe('e_transfer');
+    expect(auditRows('fee_marked_paid')).toHaveLength(0);
   });
 });

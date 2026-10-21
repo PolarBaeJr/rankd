@@ -94,7 +94,9 @@ async function get<T>(path: string, callerId?: string | null, timeoutMs = TIMEOU
   if (!response.ok) {
     // The body may carry an error code, but it may also be an HTML error page
     // from something in front of the app. Never interpolate it into a Discord
-    // reply; log the status and keep the user-facing message generic.
+    // reply; log the status and keep the user-facing message generic. (The one
+    // exception anywhere in the bot is a console action's CODED error text; see
+    // CONSOLE COMMANDS at the end of this file.)
     throw new AppApiError(`GET ${path} -> ${response.status}`);
   }
 
@@ -316,6 +318,15 @@ export interface TournamentSummary {
   registrationOpen: boolean;
   /** null for an unlinked caller: "we do not know", not "no". */
   eligible: boolean | null;
+  /** Started, or an event already playing. Absent from an older app. */
+  inProgress?: boolean;
+}
+
+export interface FinishedTournament {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string | null;
 }
 
 export interface TournamentsPage {
@@ -326,6 +337,8 @@ export interface TournamentsPage {
   total: number;
   /** WHAT THE ROUTE APPLIED, not what was asked for. See fetchSessions. */
   query: string | null;
+  /** Finished in the last week, newest first. Empty on a search or an older app. */
+  recentlyFinished: FinishedTournament[];
 }
 
 /**
@@ -351,6 +364,7 @@ export async function fetchTournaments(
     totalPages?: number;
     total?: number;
     query?: string | null;
+    recentlyFinished?: FinishedTournament[];
   }>(`/api/discord/tournaments?${params}`, discordUserId);
 
   return {
@@ -359,7 +373,124 @@ export async function fetchTournaments(
     totalPages: body.totalPages ?? 1,
     total: body.total ?? body.tournaments.length,
     query: body.query ?? null,
+    recentlyFinished: body.recentlyFinished ?? [],
   };
+}
+
+// ---- TOURNAMENTS FOR MEMBERS -------------------------------------------------
+//
+// /tournaments enter, draw, next and results. The reads are public on the
+// website except `next`, which is the caller's own; the one write is `enter`,
+// as the caller, through the same play gate a challenge goes through.
+
+/** Each runs after a deferred acknowledgement. */
+const TOURNAMENT_TIMEOUT_MS = 10_000;
+
+/** Inside the autocomplete branch's race, like the challenge picker. */
+const TOURNAMENT_PICKER_TIMEOUT_MS = 900;
+
+/**
+ * The /tournaments pickers. No tournament id: active tournaments by name. A
+ * tournament id: its events, and with `open` only those taking entries.
+ */
+export async function fetchTournamentChoices(input: {
+  q: string;
+  tournamentId?: string;
+  open?: boolean;
+}): Promise<{ id: string; label: string }[]> {
+  const params = new URLSearchParams({ q: input.q });
+  if (input.tournamentId) params.set('tournamentId', input.tournamentId);
+  if (input.open) params.set('open', '1');
+  const result = await get<{ choices?: { id: string; label: string }[] }>(
+    `/api/discord/tournament-picker?${params}`,
+    null,
+    TOURNAMENT_PICKER_TIMEOUT_MS
+  );
+  return result.choices ?? [];
+}
+
+export interface TournamentSuspension {
+  reason: string | null;
+}
+
+export type TournamentDraw =
+  | { found: false }
+  | {
+      found: true;
+      tournament: { id: string; name: string };
+      event: { id: string; label: string; status: string };
+      suspended: TournamentSuspension | null;
+      url: string | null;
+      sections: { title: string; lines: string[] }[];
+      /** The app's own line cap was reached; the website has the rest. */
+      truncated: boolean;
+    };
+
+export function fetchTournamentDraw(eventId: string): Promise<TournamentDraw> {
+  const params = new URLSearchParams({ eventId });
+  return get<TournamentDraw>(`/api/discord/tournament-draw?${params}`, null, TOURNAMENT_TIMEOUT_MS);
+}
+
+export interface NextTournamentMatch {
+  tournament: string;
+  event: string;
+  round: string;
+  opponents: string;
+  status: string;
+  court: string | null;
+  scheduledTime: string | null;
+  suspended: TournamentSuspension | null;
+  url: string | null;
+}
+
+export type NextTournamentMatchReply =
+  | { linked: false }
+  | { linked: true; match: NextTournamentMatch | null };
+
+export function fetchNextTournamentMatch(callerId: string): Promise<NextTournamentMatchReply> {
+  return get<NextTournamentMatchReply>('/api/discord/tournament-next', callerId, TOURNAMENT_TIMEOUT_MS);
+}
+
+export type TournamentResults =
+  | { found: false }
+  | {
+      found: true;
+      tournament: { id: string; name: string };
+      suspended: TournamentSuspension | null;
+      live: string[];
+      recent: string[];
+      url: string | null;
+    };
+
+export function fetchTournamentResults(tournamentId: string): Promise<TournamentResults> {
+  const params = new URLSearchParams({ tournamentId });
+  return get<TournamentResults>(`/api/discord/tournament-results?${params}`, null, TOURNAMENT_TIMEOUT_MS);
+}
+
+/**
+ * Why the app declined an entry. 'website' carries the link (an event waiver
+ * or a doubles event); 'rule' carries the app's own sentence.
+ */
+export type TournamentEntryRefusal =
+  | 'not_linked'
+  | 'lapsed'
+  | 'standing'
+  | 'feature_off'
+  | 'waiver'
+  | 'not_found'
+  | 'website'
+  | 'rule';
+
+export type TournamentEntryReply =
+  | { ok: true; event: string }
+  | { ok: false; refusal: TournamentEntryRefusal; message?: string; url?: string | null };
+
+/** Enter one singles event as the caller. */
+export function enterTournamentEvent(input: {
+  discordUserId: string;
+  eventId: string;
+}): Promise<TournamentEntryReply> {
+  return send('POST', '/api/discord/tournament-entry', input, TOURNAMENT_TIMEOUT_MS);
 }
 
 export function fetchLeaderboard(
@@ -1683,4 +1814,120 @@ export async function fetchCard(cardUrl: string, budgetMs: number): Promise<Card
   } catch {
     return null;
   }
+}
+
+// ---- SCHEDULE --------------------------------------------------------------
+
+export interface ScheduleDay {
+  /** "Tue, 14 Oct" or "Today, 14 Oct", already in club time. */
+  label: string;
+  /** One preformatted line per session, club event or tournament. */
+  items: string[];
+}
+
+export type SchedulePayload =
+  | { linked: false }
+  | {
+      linked: true;
+      days: ScheduleDay[];
+      /** Null when the member's standing does not allow a feed link. */
+      feed: { https: string; webcal: string } | null;
+      /** Null when the app has no public URL configured. */
+      calendarUrl: string | null;
+    };
+
+const SCHEDULE_TIMEOUT_MS = 10_000;
+
+/** The caller's next two weeks, read by the app; /schedule is deferred. */
+export function fetchSchedule(callerId: string): Promise<SchedulePayload> {
+  return get<SchedulePayload>('/api/discord/schedule', callerId, SCHEDULE_TIMEOUT_MS);
+}
+
+// ---- CONSOLE COMMANDS ------------------------------------------------------
+//
+// /session and /event run the CONSOLE's own server actions as the linked exec,
+// through the console's /api/discord/actions and /api/discord/reads routes. The
+// console is a different service from the member app and lives under a path
+// prefix, so it has its own base URL, ADMIN_API_URL, which includes that
+// prefix. It is NOT derived from APP_API_URL, and it has no default: unset
+// means the commands say they are not configured.
+//
+// THE URL IS BUILT BY CONCATENATION, not `new URL(path, base)`, because an
+// absolute path resolved against a base drops the base's own path: the console
+// prefix would vanish and every call would land on the member app.
+//
+// REDIRECTS ARE NOT FOLLOWED. A console that predates these routes answers a
+// sessionless request with a redirect to its login page, and fetch would follow
+// it and read the login page as a 200. A 3xx, a 404 or a body that is not JSON
+// all mean "this console does not have the command yet".
+//
+// THE ONE PLACE A RESPONSE BODY REACHES A DISCORD MESSAGE. A console action's
+// `error` is shown to the exec only when it carries a `code`: that is an
+// expected refusal the console already shows people in a toast (no permission,
+// account suspended). Uncoded errors can be raw database text and are replaced
+// with a generic line. The caller caps the length and sends no mentions.
+
+export class ConsoleNotConfiguredError extends Error {}
+export class ConsoleNotAvailableError extends Error {}
+
+export type ConsoleRefusal = 'not_linked' | 'passkey_required';
+
+export type ConsoleReply<T> =
+  | { ok: true; data: T }
+  | { ok: false; refusal: ConsoleRefusal }
+  | { ok: false; refusal?: undefined; error: string; code?: string; ref?: string };
+
+const ADMIN_ACTION_TIMEOUT_MS = 10_000;
+
+function adminUrl(path: string): string {
+  const base = process.env.ADMIN_API_URL;
+  if (!base) throw new ConsoleNotConfiguredError('ADMIN_API_URL is not set');
+  return base.replace(/\/+$/, '') + path;
+}
+
+async function consoleReply<T>(response: Response, label: string): Promise<ConsoleReply<T>> {
+  if (response.status === 404 || (response.status >= 300 && response.status < 400)) {
+    throw new ConsoleNotAvailableError(`${label} -> ${response.status}`);
+  }
+  if (!response.ok) throw new AppApiError(`${label} -> ${response.status}`);
+  if (!(response.headers.get('content-type') ?? '').includes('application/json')) {
+    throw new ConsoleNotAvailableError(`${label} -> not JSON`);
+  }
+  return (await response.json()) as ConsoleReply<T>;
+}
+
+/** Run one console action as the linked exec. */
+export async function adminSend<T>(
+  path: string,
+  body: { discordUserId: string; args: unknown[] },
+  timeoutMs = ADMIN_ACTION_TIMEOUT_MS
+): Promise<ConsoleReply<T>> {
+  const url = adminUrl(path);
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    redirect: 'manual',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return consoleReply<T>(response, `POST ${path}`);
+}
+
+/** One console read as the linked exec. The caller travels as a header. */
+export async function adminGet<T>(
+  path: string,
+  callerId: string,
+  timeoutMs = ADMIN_ACTION_TIMEOUT_MS
+): Promise<ConsoleReply<T>> {
+  const url = adminUrl(path);
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${secret}`, 'x-discord-user-id': callerId },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return consoleReply<T>(response, `GET ${path.split('?')[0]}`);
 }

@@ -87,6 +87,15 @@ export function isPublicPath(pathname: string): boolean {
     // it is opened by whoever holds it. By whole segment, so /guest-waiverX
     // stays gated.
     pathname === '/guest-waiver' ||
-    pathname.startsWith('/guest-waiver/')
+    pathname.startsWith('/guest-waiver/') ||
+    PUBLIC_EVENT_PAGE.test(pathname)
   );
 }
+
+// The club's events and tournaments, so a visitor can see what is on and sign
+// up through the event's Google Form. The list and one event's page only, as
+// exact patterns: everything under an event (a tournament event's draw and
+// entries, check-in) stays behind sign-in. The pages read with the service
+// role and show only published events.
+const PUBLIC_EVENT_PAGE =
+  /^\/(events|tournaments)(\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\/?$/i;

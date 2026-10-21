@@ -96,7 +96,12 @@ export class DiscordApi {
    *
    * Everything else is JSON, as before.
    */
-  private async request(method: string, path: string, body?: unknown): Promise<Response> {
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    extraHeaders: Record<string, string> = {}
+  ): Promise<Response> {
     const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
     let attempt = 0;
     for (;;) {
@@ -105,6 +110,7 @@ export class DiscordApi {
         headers: {
           authorization: `Bot ${this.token}`,
           ...(isForm ? {} : { 'content-type': 'application/json' }),
+          ...extraHeaders,
         },
         ...(body === undefined
           ? {}
@@ -194,6 +200,63 @@ export class DiscordApi {
     return all
       .filter((r) => mine.has(r.id))
       .reduce((highest, r) => Math.max(highest, r.position), 0);
+  }
+
+  /** The bot's own user id, for callers that must refuse to act on it. */
+  async getBotUserId(): Promise<string> {
+    return this.getOwnUserId();
+  }
+
+  /** The guild owner's user id. The owner outranks every role, so /softban refuses them. */
+  async getGuildOwnerId(guildId: string): Promise<string> {
+    const response = await this.request('GET', `/guilds/${guildId}`);
+    if (!response.ok) throw new Error(`GET guild -> ${response.status}`);
+    const { owner_id: ownerId } = (await response.json()) as { owner_id?: string };
+    if (!ownerId) throw new Error('GET guild returned no owner_id');
+    return ownerId;
+  }
+
+  /**
+   * Ban, deleting the member's messages from the last `deleteMessageSeconds`
+   * (Discord caps it at 604800, seven days). The reason goes in the
+   * X-Audit-Log-Reason header, which is how it reaches the server's own audit
+   * log; it must be URL-encoded because a header cannot carry raw UTF-8.
+   */
+  async banMember(
+    guildId: string,
+    userId: string,
+    deleteMessageSeconds: number,
+    reason: string
+  ): Promise<RoleCallResult> {
+    return this.moderationCall('PUT', `/guilds/${guildId}/bans/${userId}`, reason, {
+      delete_message_seconds: deleteMessageSeconds,
+    });
+  }
+
+  async unbanMember(guildId: string, userId: string, reason: string): Promise<RoleCallResult> {
+    return this.moderationCall('DELETE', `/guilds/${guildId}/bans/${userId}`, reason);
+  }
+
+  private async moderationCall(
+    method: string,
+    path: string,
+    reason: string,
+    body?: unknown
+  ): Promise<RoleCallResult> {
+    try {
+      const response = await this.request(method, path, body, {
+        'x-audit-log-reason': encodeURIComponent(reason.slice(0, 400)),
+      });
+      if (response.ok) return 'ok';
+      const detail = await response.text().catch(() => '');
+      console.error(`[bot] ${method} ${path} -> ${response.status} ${detail.slice(0, 200)}`);
+      if (response.status === 403) return 'forbidden';
+      if (response.status === 404) return 'not_found';
+      return 'failed';
+    } catch (error) {
+      console.error(`[bot] ${method} ${path} threw:`, error);
+      return 'failed';
+    }
   }
 
   /**

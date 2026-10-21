@@ -2,6 +2,7 @@
 // utilities imported by the admin server actions, not actions themselves.
 import * as Sentry from '@sentry/nextjs';
 import type { createAdminClient } from './supabase-server';
+import { discordActorStore } from './discord-actor-store';
 import {
   AUDIT_PAYLOAD_DROPPED_KEY,
   auditPayloadDroppedSuffix,
@@ -99,6 +100,18 @@ export async function logAdminAudit(
   },
   sentryExtra: Record<string, unknown> = {}
 ) {
+  // A console command run from Discord says so on its audit row. A new object,
+  // never the caller's: the same entry is reused for the degraded retry below.
+  if (discordActorStore.getStore()) {
+    const stamped =
+      entry.new_value && typeof entry.new_value === 'object' && !Array.isArray(entry.new_value)
+        ? { ...(entry.new_value as Record<string, unknown>), source: 'discord' }
+        : entry.new_value === undefined || entry.new_value === null
+          ? { source: 'discord' }
+          : { value: entry.new_value, source: 'discord' };
+    entry = { ...entry, new_value: stamped };
+  }
+
   const { error } = await adminClient.from('audit_logs').insert(entry);
   if (!error) return;
 

@@ -17,6 +17,7 @@ const E2 = "00000000-0000-4000-8000-000000000002";
 let mapped: Record<string, unknown>[] = [];
 let clubEvents: Record<string, unknown>[] = [];
 let auditLogs: Record<string, unknown>[] = [];
+let forms: Record<string, unknown>[] = [];
 let readError: Record<string, { code: string; message: string } | null> = {};
 let featuresRow: Record<string, unknown> | null = null;
 const upserted = vi.fn();
@@ -30,9 +31,13 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
   const filters: ((r: Record<string, unknown>) => boolean)[] = [];
   const builder: Record<string, unknown> = {};
   let cap: number | null = null;
-  for (const method of ["select", "order"]) {
-    builder[method] = () => builder;
-  }
+  let sort: ((a: Record<string, unknown>, b: Record<string, unknown>) => number) | null = null;
+  builder.select = () => builder;
+  builder.order = (column: string, options?: { ascending?: boolean }) => {
+    const sign = options?.ascending === false ? -1 : 1;
+    sort = (a, b) => sign * String(a[column] ?? "").localeCompare(String(b[column] ?? ""));
+    return builder;
+  };
   builder.eq = (column: string, value: unknown) => {
     // The mapping rows carry no guild_id; every mapping is g1's.
     if (column !== "guild_id") filters.push((r) => r[column] === value);
@@ -52,6 +57,7 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
   };
   builder.then = (resolve: (v: unknown) => unknown) => {
     const matched = rows.filter((r) => filters.every((f) => f(r)));
+    if (sort) matched.sort(sort);
     const data = error ? null : cap === null ? matched : matched.slice(0, cap);
     return Promise.resolve({ data, error }).then(resolve);
   };
@@ -72,6 +78,7 @@ vi.mock("@/lib/supabase-server", () => ({
       }
       if (table === "club_events") return thenable(clubEvents, readError.clubEvents ?? null);
       if (table === "audit_logs") return thenable(auditLogs, readError.audit ?? null);
+      if (table === "registration_import_forms") return thenable(forms, readError.forms ?? null);
       if (table === "discord_club_events") {
         return {
           ...thenable(mapped, readError.mapped ?? null),
@@ -200,6 +207,7 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_APP_URL = "https://example.test/";
   readError = {};
   featuresRow = null;
+  forms = [];
   mapped = [];
   auditLogs = [];
   upserted.mockReset();
@@ -334,6 +342,37 @@ describe("GET /api/discord/club-events", () => {
     const action = only((await run()).actions);
     expect(action.description.length).toBeLessThanOrEqual(1000);
     expect(action.description.endsWith(`https://example.test/events/${E1}`)).toBe(true);
+  });
+
+  it("adds the event's Google Form, newest active form first, and never calls the page a sign-up", async () => {
+    forms = [
+      { form_id: "OLD", club_event_id: E1, active: true, created_at: "2026-10-01T00:00:00Z" },
+      { form_id: "OFF", club_event_id: E1, active: false, created_at: "2026-10-20T00:00:00Z" },
+      { form_id: "NEW", club_event_id: E1, active: true, created_at: "2026-10-10T00:00:00Z" },
+    ];
+    const action = only((await run()).actions);
+    expect(action.description).toContain(`Event details: https://example.test/events/${E1}`);
+    expect(action.description).toContain(
+      "Sign up with the Google Form: https://docs.google.com/forms/d/NEW/viewform",
+    );
+    expect(action.description).not.toContain("OLD");
+    expect(action.description).not.toMatch(/sign-up/i);
+  });
+
+  it("keeps both links when the description is at its limit", async () => {
+    clubEvents = [clubEvent({ description: "x".repeat(4000) })];
+    forms = [{ form_id: "F1", club_event_id: E1, active: true, created_at: "2026-10-01T00:00:00Z" }];
+    const action = only((await run()).actions);
+    expect(action.description.length).toBeLessThanOrEqual(1000);
+    expect(action.description).toContain(`https://example.test/events/${E1}`);
+    expect(action.description.endsWith("https://docs.google.com/forms/d/F1/viewform")).toBe(true);
+  });
+
+  it("refuses the tick when the forms cannot be read, rather than dropping the link", async () => {
+    readError = { forms: { code: "42501", message: "permission denied" } };
+    const { GET } = await import("../route");
+    const res = await GET(req());
+    expect(res.status).toBe(503);
   });
 
   it("cancels an event deleted outright while other events exist", async () => {

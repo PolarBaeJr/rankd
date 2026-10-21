@@ -79,7 +79,7 @@ const ALLOWED = new Map<string, string>([
   ['lib/actions/_shared.ts', 'getPlayerProps, built from the acting member'],
   ['lib/posthog.ts', 'the analytics property type for that same self-identify'],
   ['components/posthog-identify.tsx', 'identifies the signed-in member to themselves'],
-  ['lib/tournament-actions.ts', "elo_before for the entrant, .eq('player_id', player.id)"],
+  ['lib/tournament-entry-core.ts', "elo_before for the entrant, .eq('player_id', player.id) (moved from lib/tournament-actions.ts)"],
   // A Google Form's mutual doubles pair (00283): both members' doubles_elo is
   // read on the server to write the pair's combined rating, the figure every
   // pair carries. Neither member's own number is returned to the caller.

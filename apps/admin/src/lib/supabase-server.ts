@@ -6,6 +6,8 @@ import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
 import { isPasswordOnlySession } from './password-session';
 import { consolePasskeyGrace } from './passkey/grace';
+import { discordActorStore } from './discord-actor-store';
+import { DISCORD_PASSKEY_REQUIRED, discordPasskeyPolicy } from './discord-actor';
 import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import {
@@ -131,38 +133,12 @@ async function assertPasskeyVerified(
   }
 }
 
-// The one authenticated gate. `authorize` receives the level the caller's row
-// resolves to AND the permissions it stores, and returns a user-facing denial,
-// or null to admit them — so there is exactly one place that authenticates,
-// checks standing and enforces the passkey, and the two public gates below
-// differ only in the question they ask about the caller.
-//
-// The denial is spelled by the caller because the message is user-facing, and a
-// trainer told "admin or exec access required" has been told the truth.
-async function getAuthenticatedConsolePlayer(
+// Standing, then level: the checks every console caller passes, whether the
+// row came from a cookie or from a linked Discord account. Throws the refusal.
+function admitConsolePlayer(
+  player: Record<string, any>,
   authorize: (level: AccessLevel | null, permissions: Permissions) => string | null,
-  options: { skipPasskey?: boolean } = {}
 ) {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    // Clear any Sentry user context left over from a previous request handler
-    // sharing this Node process — avoids misattributing the next error.
-    Sentry.setUser(null);
-    throw new ExpectedError('Not authenticated', 'AUTH-101');
-  }
-
-  const adminClient = createAdminClient();
-  const { data: player } = await adminClient
-    .from('players')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
-  if (!player) {
-    Sentry.setUser(null);
-    throw new ExpectedError('No player record found', 'ACC-105');
-  }
   // STANDING first, then level. Banning an exec used to leave their console
   // access completely intact: banPlayer writes only players.is_banned, and
   // removePlayer sets status/active_flag — none of which this gate read. So a
@@ -206,6 +182,68 @@ async function getAuthenticatedConsolePlayer(
     Sentry.setUser(null);
     throw new ExpectedError(denial, 'AUTH-104');
   }
+}
+
+// The one authenticated gate. `authorize` receives the level the caller's row
+// resolves to AND the permissions it stores, and returns a user-facing denial,
+// or null to admit them, so there is exactly one place that authenticates,
+// checks standing and enforces the passkey, and the two public gates below
+// differ only in the question they ask about the caller.
+//
+// The denial is spelled by the caller because the message is user-facing, and a
+// trainer told "admin or exec access required" has been told the truth.
+async function getAuthenticatedConsolePlayer(
+  authorize: (level: AccessLevel | null, permissions: Permissions) => string | null,
+  options: { skipPasskey?: boolean } = {}
+) {
+  // A CONSOLE COMMAND FROM DISCORD. The /api/discord routes set this store
+  // after checking the service secret and resolving the linked exec, so there
+  // is no cookie to read. Same row, same standing and capability checks; the
+  // Discord passkey policy stands in for the cookie step-up, and it runs even
+  // when the caller passed skipPasskey, because that opt-out exists for the
+  // passkey routes, which Discord never reaches.
+  const discordActor = discordActorStore.getStore();
+  if (discordActor) {
+    const adminClient = createAdminClient();
+    const { data: player } = await adminClient
+      .from('players')
+      .select('*')
+      .eq('id', discordActor.playerId)
+      .maybeSingle();
+    if (!player) {
+      Sentry.setUser(null);
+      throw new ExpectedError('No player record found', 'ACC-105');
+    }
+    admitConsolePlayer(player, authorize);
+    if ((await discordPasskeyPolicy(player, adminClient)) !== 'allowed') {
+      Sentry.setUser(null);
+      throw new ExpectedError(DISCORD_PASSKEY_REQUIRED, 'AUTH-105');
+    }
+    Sentry.setUser({ id: player.id });
+    return player;
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    // Clear any Sentry user context left over from a previous request handler
+    // sharing this Node process; that avoids misattributing the next error.
+    Sentry.setUser(null);
+    throw new ExpectedError('Not authenticated', 'AUTH-101');
+  }
+
+  const adminClient = createAdminClient();
+  const { data: player } = await adminClient
+    .from('players')
+    .select('*')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (!player) {
+    Sentry.setUser(null);
+    throw new ExpectedError('No player record found', 'ACC-105');
+  }
+  admitConsolePlayer(player, authorize);
 
   if (!options.skipPasskey) {
     await assertPasskeyVerified(user.id, player.id, adminClient);

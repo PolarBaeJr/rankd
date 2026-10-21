@@ -298,7 +298,8 @@ export interface PasteMatchResult {
   waived: Array<{ entry: PastedPayer; player: PasteRosterPlayer }>;
   notBillable: Array<{ entry: PastedPayer; player: PasteRosterPlayer; reason: string }>;
   ambiguous: Array<{ entry: PastedPayer; candidates: PasteRosterPlayer[]; reason: string }>;
-  alreadyNamed: Array<{ entry: PastedPayer; manualName: string }>;
+  /** `paid` false: a Google Form's named row (00290), waiting on its receipt under Submitted. */
+  alreadyNamed: Array<{ entry: PastedPayer; manualName: string; paid: boolean }>;
   notFound: Array<{ entry: PastedPayer; possibleMembers: PasteRosterPlayer[] }>;
   invalid: PastedInvalid[];
   /** Unclaimed named payments this season that look like a member on the roster. */
@@ -501,7 +502,7 @@ export function matchPastedPayers(
           (normName != null && normalisePersonName(d.manual_name!) === normName),
       );
       if (named) {
-        result.alreadyNamed.push({ entry, manualName: named.manual_name! });
+        result.alreadyNamed.push({ entry, manualName: named.manual_name!, paid: Boolean(named.paid_at) });
       } else {
         result.notFound.push({ entry, possibleMembers: entry.name ? possibleMembersFor(entry.name, pool) : [] });
       }
@@ -544,6 +545,8 @@ export interface FeePasteRow {
   raw: string;
   name: string;
   reason: string;
+  /** Set on a named row that is not paid yet. */
+  unpaid?: boolean;
 }
 
 export interface FeePasteWillMark {
@@ -642,10 +645,13 @@ export function toFeePastePreview(
     })),
     alreadyPaid: m.alreadyPaid.map(({ entry, player }) => row(entry, player, 'Already paid')),
     waived: m.waived.map(({ entry, player }) => row(entry, player, 'Fee waived')),
-    alreadyNamed: m.alreadyNamed.map(({ entry, manualName }) => ({
+    alreadyNamed: m.alreadyNamed.map(({ entry, manualName, paid }) => ({
       raw: entry.raw,
       name: manualName,
-      reason: 'Already recorded as a named payment this season',
+      reason: paid
+        ? 'Already recorded as a named payment this season'
+        : 'Already named this season, not paid yet: confirm its receipt under Submitted',
+      ...(paid ? {} : { unpaid: true }),
     })),
     notBillable: m.notBillable.map(({ entry, player, reason }) => row(entry, player, reason)),
     ambiguous: m.ambiguous.map(({ entry, candidates, reason }) => ({

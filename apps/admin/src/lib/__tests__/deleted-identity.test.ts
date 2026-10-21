@@ -248,7 +248,7 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     digest_deliveries: 'the delivery key that stops a digest sending twice; activity, not identity',
     event_feedback: 'written about a club event, and part of the record of that event',
     event_waiver_acceptances: 'legal evidence, per tournament',
-    fee_submissions: 'the club\'s record of a payment it confirmed or refused; the screenshot is erased by _shared/fee-proofs.ts and its path nulled',
+    fee_submissions: 'the club\'s record of a payment it confirmed or refused; the screenshot is erased by _shared/fee-proofs.ts and its path nulled, a form upload (00288) found by the member\'s email too',
     legacy_tournament_participants: 'shared competitive history',
     match_participants: 'a match has two to four players',
     ratings: 'derived from matches other members played, and their Elo depends on it',
@@ -260,6 +260,7 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     session_rsvp: 'the club\'s operational record of a session',
     tournament_fees: 'a financial record of an entry the member paid for',
     tournament_event_waitlist: 'the queue order of an event, which decided who else got a place',
+    club_event_waitlist: 'the queue order of a club event, which decided who else got a place',
     tournament_participants: 'shared competitive history, draws and results',
     // NOT SETTLED, and deliberately recorded as unsettled rather than quietly
     // kept. `varsity_notes.note` is free text an exec wrote ABOUT this member,
@@ -347,6 +348,20 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
         src.indexOf('supabase.auth.admin.deleteUser'),
       );
     }
+  });
+
+  it('erases a form upload (00288) by the member or their email, before the email is scrubbed', () => {
+    // A screenshot a Google Form collected sits under forms/, outside the
+    // member's folder, and may name them only by the email they typed. That
+    // email is gone once the purge anonymises the row, which is why the
+    // erasure runs first (pinned above) and reads it itself.
+    const src = readFileSync(join(REPO, 'supabase/functions/_shared/fee-proofs.ts'), 'utf8');
+    expect(src).toContain(".from('players')");
+    expect(src).toContain("['submitter_player_id', playerId]");
+    expect(src).toContain("['submitter_email', email]");
+    expect(src).toContain('.eq(`registration_imports.${column}`, value)');
+    expect(src).toContain(".eq('manual_email', email)");
+    expect(src).toMatch(/from\('registration_import_receipts'\)\s*\.update\(\{ storage_path: null \}\)/);
   });
 
   it('scrubs the audit trails once after the loop, never inside it', () => {

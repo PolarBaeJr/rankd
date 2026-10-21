@@ -85,15 +85,24 @@ export function inviteEmail(row: {
   };
 }
 
-/** True when the address must not be mailed. Throws when the list cannot be read. */
+/**
+ * True when the address must not be mailed: it is suppressed, or it belongs to
+ * a guest record (00292), which is sent nothing. Throws when either cannot be
+ * read.
+ */
 async function isSuppressed(admin: Admin, email: string): Promise<boolean> {
-  const { data, error } = await admin
-    .from('email_suppressions')
-    .select('email')
-    .eq('email', email.trim().toLowerCase())
-    .maybeSingle();
+  const address = email.trim().toLowerCase();
+  const { data, error } = await admin.from('email_suppressions').select('email').eq('email', address).maybeSingle();
   if (error) throw new Error(`Suppression check failed, refusing to send: ${error.message}`);
-  return !!data;
+  if (data) return true;
+  const { data: guests, error: guestError } = await admin
+    .from('players')
+    .select('id')
+    .eq('email', address)
+    .eq('is_guest', true)
+    .limit(1);
+  if (guestError) throw new Error(`Guest check failed, refusing to send: ${guestError.message}`);
+  return (guests ?? []).length > 0;
 }
 
 /** A short reason for the receipt. Never an address. */

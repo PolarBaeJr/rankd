@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { KeyVerifier } from '../auth.js';
 import { get, grant, newKey, playerRow, startHarness, type Harness } from './helpers.js';
 // Literals, not the constants from auth.ts: the contract says 30 seconds, and a
 // test that imported the constant would follow it wherever it was changed to.
@@ -410,8 +411,12 @@ describe('verification single flight', () => {
     grant(h, key, ['players:read']);
     h.failFn = { fn: 'data_api_verify_key', status: 500 };
     const held = h.hold('data_api_verify_key');
+    // Release only once all five have joined: a request still on its way when
+    // the failure lands would start a second check of its own.
+    const joined = vi.spyOn(KeyVerifier.prototype, 'verify');
     const pending = Array.from({ length: 5 }, () => get(h, '/v1/players', key).then((r) => r.status));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => expect(joined).toHaveBeenCalledTimes(5));
+    joined.mockRestore();
     held.release();
     expect(await Promise.all(pending)).toEqual(Array(5).fill(503));
     expect(verifies()).toHaveLength(1);

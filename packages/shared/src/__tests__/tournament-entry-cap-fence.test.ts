@@ -121,6 +121,23 @@ const ENTRANT_WRITERS: Record<string, { countsCap: boolean; openGap?: true; why:
       'the pair. They are counted before and after. The outgoing player leaves, ' +
       'which only ever lowers a count.',
   },
+  link_club_event_tournament: {
+    countsCap: false,
+    why:
+      'CAP-NEUTRAL BY CONSTRUCTION: 00292. It makes a NEW tournament holding ONE ' +
+      'event, with max_events_per_player left NULL (no cap), and enters the club ' +
+      'event\'s sign-ups into that one event. Nobody can hold an entry in a ' +
+      'tournament that did not exist a statement earlier.',
+  },
+  club_event_link_signup_added: {
+    countsCap: false,
+    why:
+      'THE CLUB EVENT\'S SIGN-UP DECIDES: 00292. A club sign-up is mirrored as an ' +
+      'entry in the linked event, one per member, and the sign-up itself already ' +
+      'passed the club event\'s rules. The linked tournament is made with one event ' +
+      'and no cap; an exec who later adds events AND sets a cap there can see a ' +
+      'member over it by one, which is theirs to settle on the draw page.',
+  },
   add_external_tournament_pair: {
     countsCap: false,
     why:

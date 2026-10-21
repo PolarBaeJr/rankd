@@ -7,7 +7,7 @@ import { cn, NavMenu, nestItems, visibleEntries, isRouteActive, isGroupActive } 
 import { signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { withBase } from '@/lib/base-path';
 import { memberAppUrl } from '@/lib/player-url';
-import { LogOut, ArrowLeftRight } from 'lucide-react';
+import { LogOut, ArrowLeftRight, Menu, X } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import {
@@ -55,6 +55,11 @@ export function Sidebar({
     permissions: PermissionsInput | null;
   }>({ level: initialAccessLevel, permissions: initialPermissions });
   const [accessLoaded, setAccessLoaded] = useState(initialAccessLevel !== null);
+  // The phone menu. Below lg the bar holds only the brand and this toggle: the
+  // grouped row needs about 1000px, and squeezed beside the account links it
+  // became a sideways-scrolling strip a hundred pixels wide.
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { setMenuOpen(false); }, [pathname]);
 
   // Don't render header on public routes
   const isPublicRoute = isChromelessRoute(pathname);
@@ -193,6 +198,25 @@ export function Sidebar({
     );
   };
 
+  const mobileRow = (isActive: boolean, indented = false) =>
+    cn(
+      'flex items-center gap-2.5 min-h-[44px] px-4 text-[12px] font-semibold uppercase tracking-[0.08em] transition-colors',
+      indented && 'pl-8',
+      isActive
+        ? 'text-[var(--text-primary)] shadow-[inset_2px_0_0_var(--color-accent)] bg-[var(--border-hover)]'
+        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+    );
+
+  // exact: a parent with folded rows is current only on its own page, as in the bar.
+  const mobileLink = (href: string, label: string, exact = false, indented = false) => {
+    const isActive = exact ? pathname === href : isRouteActive(pathname, href);
+    return (
+      <Link key={href} href={href} onClick={() => setMenuOpen(false)} aria-current={isActive ? 'page' : undefined} className={mobileRow(isActive, indented)}>
+        {label}
+      </Link>
+    );
+  };
+
   return (
     <header className="sticky top-0 z-40 bg-[var(--bg-primary)] border-b border-[var(--border)]">
       {/* Brand + grouped nav + user */}
@@ -205,7 +229,7 @@ export function Sidebar({
             Club Ladder <span className="text-[var(--text-muted)]">· Admin</span>
           </span>
         </Link>
-        <nav className="flex items-center overflow-x-auto min-w-0">
+        <nav className="hidden lg:flex items-center overflow-x-auto min-w-0">
           {entries.map((entry) => {
             if (entry.kind === 'link') return navLink(entry.item);
             const { group } = entry;
@@ -256,7 +280,7 @@ export function Sidebar({
             );
           })}
         </nav>
-        <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+        <div className="ml-auto hidden lg:flex items-center gap-3 flex-shrink-0">
           <a
             href={memberAppUrl()}
             className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap"
@@ -281,7 +305,54 @@ export function Sidebar({
             <span>Sign out</span>
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-expanded={menuOpen}
+          aria-controls="admin-mobile-menu"
+          className="lg:hidden ml-auto -mr-2 grid w-11 h-11 place-items-center text-[var(--text-primary)]"
+        >
+          {menuOpen ? <X className="w-5 h-5" aria-hidden /> : <Menu className="w-5 h-5" aria-hidden />}
+          <span className="sr-only">{menuOpen ? 'Close menu' : 'Open menu'}</span>
+        </button>
       </div>
+      {menuOpen && (
+        <nav
+          id="admin-mobile-menu"
+          className="lg:hidden border-t border-[var(--border)] max-h-[calc(100dvh-53px)] overflow-y-auto overscroll-contain pb-2"
+        >
+          {entries.map((entry) => {
+            if (entry.kind === 'link') return mobileLink(entry.item.href, entry.item.label);
+            const { group } = entry;
+            return (
+              <div key={group.id} className="pt-2">
+                <div className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                  {group.label}
+                </div>
+                {nestItems(group.items, group.nest).map(({ item, selfLabel, children }) => (
+                  <div key={item.href}>
+                    {mobileLink(item.href, children.length > 0 ? (selfLabel ?? item.label) : item.label, children.length > 0)}
+                    {children.map((child) => mobileLink(child.href, child.label, false, true))}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          <div className="mt-2 border-t border-[var(--border)] pt-2">
+            {userEmail && (
+              <div className="px-4 py-2 text-xs text-[var(--text-muted)] truncate">{userEmail}</div>
+            )}
+            <a href={memberAppUrl()} className={mobileRow(false)}>
+              <ArrowLeftRight className="w-4 h-4" aria-hidden />
+              Member app
+            </a>
+            <button type="button" onClick={handleSignOut} className={cn(mobileRow(false), 'w-full')}>
+              <LogOut className="w-4 h-4" aria-hidden />
+              Sign out
+            </button>
+          </div>
+        </nav>
+      )}
     </header>
   );
 }

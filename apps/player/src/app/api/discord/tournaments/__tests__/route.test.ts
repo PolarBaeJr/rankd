@@ -74,6 +74,7 @@ function req(caller?: string, params?: Record<string, string>) {
 interface Summary {
   id: string;
   name: string;
+  inProgress?: boolean;
   eligible: boolean | null;
   registrationOpen: boolean;
   events: string[];
@@ -86,6 +87,7 @@ async function list(caller?: string, params?: Record<string, string>) {
     status: res.status,
     body: (await res.json()) as {
       tournaments?: Summary[];
+      recentlyFinished?: { id: string; name: string }[];
       linked?: boolean;
       page?: number;
       totalPages?: number;
@@ -355,5 +357,58 @@ describe("GET /api/discord/tournaments: paging", () => {
     const { body } = await list(undefined, { q: "  " });
     expect(body.query).toBeNull();
     expect(body.total).toBe(25);
+  });
+});
+
+// Tournaments happening now are the ones a member most wants, so they lead the
+// list and say so; last week's are offered beside it, outside the pager.
+describe("GET /api/discord/tournaments: in progress and recently finished", () => {
+  const base = () => tournaments[0] as Record<string, unknown>;
+
+  it("puts one that has started ahead of one still to come, and marks it", async () => {
+    tournaments = [
+      { ...base(), id: "later", start_date: clubDay(5), end_date: null },
+      { ...base(), id: "now", start_date: clubDay(-1), end_date: clubDay(1) },
+    ];
+    const rows = (await list()).body.tournaments as Summary[];
+    expect(rows.map((r) => [r.id, r.inProgress])).toEqual([
+      ["now", true],
+      ["later", false],
+    ]);
+  });
+
+  it("counts a tournament with an event being played as in progress", async () => {
+    tournaments = [
+      { ...base(), id: "later", start_date: clubDay(5), end_date: null },
+      {
+        ...base(),
+        id: "pools",
+        start_date: clubDay(9),
+        end_date: null,
+        tournament_events: [{ id: "e9", event_type: "mens_singles", status: "pool_live" }],
+      },
+    ];
+    const rows = (await list()).body.tournaments as Summary[];
+    expect(rows.map((r) => r.id)).toEqual(["pools", "later"]);
+    expect(rows[0]?.inProgress).toBe(true);
+  });
+
+  it("offers up to three that finished in the last week, newest first", async () => {
+    tournaments = [
+      { ...base(), id: "old", start_date: clubDay(-12), end_date: clubDay(-10) },
+      { ...base(), id: "d2", start_date: clubDay(-2), end_date: null },
+      { ...base(), id: "d1", start_date: clubDay(-1), end_date: null },
+      { ...base(), id: "d3", start_date: clubDay(-4), end_date: clubDay(-3) },
+      { ...base(), id: "d6", start_date: clubDay(-6), end_date: null },
+      { ...base(), id: "today", start_date: clubDay(0), end_date: null },
+    ];
+    const { body } = await list();
+    expect((body.recentlyFinished ?? []).map((t) => t.id)).toEqual(["d1", "d2", "d3"]);
+    expect((body.tournaments as Summary[]).map((t) => t.id)).toEqual(["today"]);
+  });
+
+  it("offers none on a search", async () => {
+    tournaments = [{ ...base(), id: "d1", start_date: clubDay(-1), end_date: null }];
+    expect((await list(undefined, { q: "open" })).body.recentlyFinished).toEqual([]);
   });
 });

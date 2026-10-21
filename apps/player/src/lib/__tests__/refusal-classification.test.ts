@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 // to assert one word in each buys nothing.
 
 const LIB = fileURLToPath(new URL('../', import.meta.url));
-const ALL = ['tournament-actions.ts', 'actions/sessions.ts', 'actions/profile.ts']
+const ALL = ['tournament-actions.ts', 'tournament-entry-core.ts', 'actions/sessions.ts', 'actions/profile.ts']
   .map((f) => readFileSync(`${LIB}${f}`, 'utf8'))
   .join('\n');
 

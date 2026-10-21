@@ -3,6 +3,7 @@ import {
   CLUB_TIMEZONE,
   clubToday,
   entryMembership,
+  eventIsPlaying,
   isFeeExempt,
   loadPaidDues,
   readFeatureFlags,
@@ -18,7 +19,7 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-// Upcoming tournaments, for /tournaments in Discord.
+// Upcoming and in-progress tournaments, for /tournaments list in Discord.
 //
 // WHY THIS IS NOT THE SAME PROBLEM AS /sessions, even though both are lists.
 //
@@ -60,6 +61,12 @@ const LOOKBACK_DAYS = 60;
 
 // Rows fetched before the still-running filter narrows them to a page.
 const FETCH_CAP = 40;
+
+// "Recently finished": tournaments whose last day was in the past week, shown
+// beside the list rather than in it, so a member can find last weekend's
+// results. A few at most, and outside the pager.
+const RECENT_DAYS = 7;
+const RECENT_MAX = 3;
 
 interface Row {
   id: string;
@@ -178,9 +185,14 @@ export async function GET(request: Request) {
   // Tournaments switched off for members answer as an empty list, in the same
   // shape, so the bot says there is nothing scheduled.
   const tournamentsOn = (await readFeatureFlags(supabase)).tournaments;
-  const upcoming = ((tournamentsOn ? data ?? [] : []) as Row[]).filter(
+  // IN PROGRESS FIRST: started already, or with an event being played. Sorted
+  // before the pager so a tournament happening today is never on page two.
+  const inProgress = (t: Row) =>
+    t.start_date <= today || (t.tournament_events ?? []).some((e) => eventIsPlaying(e.status));
+  const stillOn = ((tournamentsOn ? data ?? [] : []) as Row[]).filter(
     (t) => (t.end_date ?? t.start_date) >= today
   );
+  const upcoming = [...stillOn.filter(inProgress), ...stillOn.filter((t) => !inProgress(t))];
 
   // Name only, and a plain includes rather than a pattern match: nothing to
   // escape and nothing for a crafted string to backtrack on. No location filter
@@ -245,6 +257,7 @@ export async function GET(request: Request) {
       name: t.name,
       startDate: t.start_date,
       endDate: t.end_date,
+      inProgress: inProgress(t),
       events: (t.tournament_events ?? []).map((e) => e.event_type),
       // Registration is open somewhere in this tournament. Reported rather than
       // used to filter: a member wants to know the thing exists even once the
@@ -262,10 +275,48 @@ export async function GET(request: Request) {
     };
   });
 
+  // Recently finished, on its own read because the list above is active rows
+  // only and a finished tournament is usually marked completed. The window is
+  // applied here in TypeScript for the reason the list's own date filter is.
+  // Not on a search, and never a 503: it is a courtesy beside the list.
+  let recentlyFinished: { id: string; name: string; startDate: string; endDate: string | null }[] = [];
+  if (tournamentsOn && !q) {
+    const weekAgo = new Date(Date.now() - RECENT_DAYS * 86400000).toLocaleDateString('en-CA', {
+      timeZone: CLUB_TIMEZONE,
+    });
+    const { data: recent, error: recentError } = await supabase
+      .from('tournaments')
+      .select('id, name, start_date, end_date')
+      .in('status', ['active', 'completed'])
+      .gte('start_date', floor)
+      .order('start_date', { ascending: false })
+      .limit(FETCH_CAP);
+    if (recentError) {
+      console.error('[discord] recently finished tournaments read failed:', recentError.message);
+    } else {
+      recentlyFinished = ((recent ?? []) as Pick<Row, 'id' | 'name' | 'start_date' | 'end_date'>[])
+        .filter((t) => {
+          const last = t.end_date ?? t.start_date;
+          return last >= weekAgo && last < today;
+        })
+        .sort((a, b) => (b.end_date ?? b.start_date).localeCompare(a.end_date ?? a.start_date))
+        .slice(0, RECENT_MAX)
+        .map((t) => ({ id: t.id, name: t.name, startDate: t.start_date, endDate: t.end_date }));
+    }
+  }
+
   // The totals travel with the rows because the bot has one app call per
   // interaction and cannot discover totalPages any other way, and `query` is an
   // echo the bot checks: the two images deploy independently, so a bot asking a
   // player build that predates the search would otherwise frame an unfiltered
   // page as a search result.
-  return NextResponse.json({ tournaments, linked, page, totalPages, total, query: q || null });
+  return NextResponse.json({
+    tournaments,
+    recentlyFinished,
+    linked,
+    page,
+    totalPages,
+    total,
+    query: q || null,
+  });
 }

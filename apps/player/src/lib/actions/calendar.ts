@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '../supabase-server';
 import { requirePlayer, runAction, type ActionResult } from './_shared';
+import { getOrCreateCalendarFeedToken } from '../calendar-feed-token';
 
 // 24 random bytes -> 48 hex chars; the feed route validates this exact shape.
 function newFeedToken(): string {
@@ -19,32 +20,7 @@ export async function getCalendarFeedToken(): Promise<ActionResult<string>> {
 
 async function getCalendarFeedTokenImpl(): Promise<string> {
   const player = await requirePlayer();
-  const serviceClient = createServiceRoleClient();
-
-  const { data: existing } = await serviceClient
-    .from('calendar_feed_tokens')
-    .select('token')
-    .eq('player_id', player.id)
-    .maybeSingle();
-  if (existing) return existing.token;
-
-  const token = newFeedToken();
-  const { error } = await serviceClient
-    .from('calendar_feed_tokens')
-    .insert({ player_id: player.id, token });
-  if (error) {
-    // Unique-violation race: a concurrent request created the row first —
-    // return its token instead of failing.
-    const { data: raced } = await serviceClient
-      .from('calendar_feed_tokens')
-      .select('token')
-      .eq('player_id', player.id)
-      .maybeSingle();
-    if (raced) return raced.token;
-    Sentry.captureException(error, { extra: { action: 'getCalendarFeedToken', playerId: player.id } });
-    throw new Error('Could not create calendar feed link');
-  }
-  return token;
+  return getOrCreateCalendarFeedToken(createServiceRoleClient(), player.id);
 }
 
 // Replaces the token with a fresh one (creating the row if it doesn't exist

@@ -57,10 +57,7 @@ import { attendeeCountsBySession } from '@/lib/session-attendee-counts';
 import {
   CALENDAR_WEEKDAYS,
   addDaysISO,
-  buildCalendarMonth,
-  calendarMonthKeys,
   describeMyState,
-  initialMonthIndex,
   isStillUpcoming,
   tallyBySession,
   wasPresent,
@@ -68,15 +65,8 @@ import {
 import {
   buildAgenda,
   buildWeekStrip,
-  clubEventCalendarItem,
-  compareCalendarItems,
-  sessionCalendarItem,
-  tournamentCalendarItems,
   type AgendaSession,
   type CalendarClubEventRow,
-  type CalendarItem,
-  type CalendarSessionRow,
-  type CalendarTone,
   type CalendarTournamentRow,
 } from '@/lib/calendar-items';
 import {
@@ -86,6 +76,7 @@ import {
   mySignupsQuery,
   openSessionsQuery,
 } from '@/lib/home-schedule-queries';
+import { buildCalendarPageData, type CalendarSessionWithSeason } from '@/lib/calendar-page-data';
 
 type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
 type MatchParticipantRow = {
@@ -106,7 +97,6 @@ type MatchRow = {
   match_participants: MatchParticipantRow[] | null;
 };
 type OpenSessionRow = SessionCardSession & AgendaSession;
-type CalendarSessionWithSeason = CalendarSessionRow & { season_id: string | null };
 type AnnouncementRow = {
   id: string;
   title: string;
@@ -693,37 +683,27 @@ export default async function FeedPage() {
   // The accent goes on the soonest night dated today or later, as on /sessions.
   const nextSessionId = (upcoming.find((s) => s.date >= todayKey) ?? upcoming[0])?.id;
 
-  const calendarItems: CalendarItem[] = [
-    ...calendarSessions.map((s) => sessionCalendarItem(s, { mine: isMineState(s.id), hasCard: hasCard.has(s.id) })),
-    ...clubEvents.map((e) => clubEventCalendarItem(e, { mine: mySignedUp.has(e.id) })),
-    ...calendarTournaments.flatMap((t) => tournamentCalendarItems(t)),
-  ].sort(compareCalendarItems);
-
-  // The month nav is bounded to what was loaded: the active term end to end,
-  // plus a month of its own for anything outside it (calendarMonthKeys).
-  const seasonSessionDates = activeSeason
-    ? calendarSessions.filter((s) => s.season_id === activeSeason.id).map((s) => s.date)
-    : [];
-  const looseDates = [
-    ...calendarSessions.filter((s) => !activeSeason || s.season_id !== activeSeason.id).map((s) => s.date),
-    ...calendarItems.filter((i) => i.kind !== 'session').map((i) => i.date),
-  ];
-  const monthKeys = calendarMonthKeys(
-    activeSeason?.start_date
-      ? { startISO: activeSeason.start_date as string, endISO: (activeSeason.end_date as string | null) ?? null }
+  const { calendarItems, months, initialIndex: initialMonth, legend } = buildCalendarPageData({
+    sessions: calendarSessions,
+    clubEvents,
+    tournaments: calendarTournaments,
+    activeSeason: activeSeason
+      ? {
+          id: activeSeason.id as string,
+          start_date: (activeSeason.start_date as string | null) ?? null,
+          end_date: (activeSeason.end_date as string | null) ?? null,
+        }
       : null,
-    seasonSessionDates,
-    looseDates,
-    todayKey,
-  );
-  const months = monthKeys.map((key) => buildCalendarMonth(key, calendarItems, todayKey));
+    todayISO: todayKey,
+    isMineSession: isMineState,
+    signedUpEvents: mySignedUp,
+    sessionHref: (id) => (hasCard.has(id) ? `#session-${id}` : null),
+    sessionsOn,
+    eventsOn,
+    tournamentsOn,
+  });
   const week = buildWeekStrip(calendarItems, todayKey);
   const agendaDates = new Set(agenda.map((day) => day.dateISO));
-  const legend: CalendarTone[] = [
-    ...(sessionsOn ? (['open', 'closed'] as const) : []),
-    ...(eventsOn ? (['club'] as const) : []),
-    ...(tournamentsOn ? (['tournament'] as const) : []),
-  ];
 
   const upNextSub = [
     upcomingCount > 0
@@ -970,7 +950,7 @@ export default async function FeedPage() {
             <section className="home-month" aria-label="Month calendar" data-tour="month-calendar">
               <MonthCalendar
                 months={months}
-                initialIndex={initialMonthIndex(monthKeys, todayKey)}
+                initialIndex={initialMonth}
                 weekdays={CALENDAR_WEEKDAYS}
                 legend={legend}
               />
@@ -982,11 +962,14 @@ export default async function FeedPage() {
                   <h2 className="card-title">Up next</h2>
                   <div className="card-sub">{upNextSub ? `${upNextSub}.` : 'Nothing on the calendar.'}</div>
                 </div>
-                {(sessionsOn || eventsOn) && (
-                  <div>
-                    <SubscribeAllButton />
-                  </div>
-                )}
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {/* The month grid is desktop only here; /calendar is the
+                      same grid on a page of its own, phones included. */}
+                  <Link href="/calendar" className="btn btn-ghost press" style={{ fontSize: 13 }}>
+                    Full calendar
+                  </Link>
+                  {(sessionsOn || eventsOn) && <SubscribeAllButton />}
+                </div>
               </div>
 
               {scheduleError ? (

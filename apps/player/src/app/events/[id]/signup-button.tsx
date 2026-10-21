@@ -4,44 +4,128 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@badminton/ui';
 import type { ClubEventSignupState } from '@badminton/shared';
-import { signUpForClubEvent, withdrawFromClubEvent } from '@/lib/club-event-actions';
+import {
+  joinClubEventWaitlist,
+  leaveClubEventWaitlist,
+  signUpForClubEvent,
+  withdrawFromClubEvent,
+} from '@/lib/club-event-actions';
 import { useToast } from '@/components/toast-provider';
 
-// Offers only what the server would accept in this state; the server decides
-// again either way.
-export function SignupButton({ eventId, state }: { eventId: string; state: ClubEventSignupState }) {
-  const [loading, setLoading] = useState(false);
+type Act = 'sign_up' | 'withdraw' | 'join' | 'leave';
+
+const DONE: Record<Act, string> = {
+  sign_up: 'You are signed up',
+  withdraw: 'You are no longer signed up',
+  join: 'You are on the waitlist. We will tell you here if a place opens.',
+  leave: 'You left the waitlist',
+};
+
+// The "your spot" card beside the event's details: one line saying where the
+// member stands, and only the buttons the server would accept in that state
+// (it decides again either way). `position` is the member's place on the
+// waitlist (00294), and `canWait` says the event takes a waitlist.
+export function SignupButton({
+  eventId,
+  state,
+  position = null,
+  canWait = false,
+  opensAt = null,
+  closesAt = null,
+}: {
+  eventId: string;
+  state: ClubEventSignupState;
+  position?: number | null;
+  canWait?: boolean;
+  opensAt?: string | null;
+  closesAt?: string | null;
+}) {
+  const [loading, setLoading] = useState<Act | null>(null);
   const { toast } = useToast();
   const router = useRouter();
 
-  async function act(going: boolean) {
-    setLoading(true);
+  async function act(what: Act) {
+    setLoading(what);
     try {
-      const res = going ? await signUpForClubEvent(eventId) : await withdrawFromClubEvent(eventId);
+      const res =
+        what === 'sign_up'
+          ? await signUpForClubEvent(eventId)
+          : what === 'withdraw'
+            ? await withdrawFromClubEvent(eventId)
+            : what === 'join'
+              ? await joinClubEventWaitlist(eventId)
+              : await leaveClubEventWaitlist(eventId);
       if (!res.ok) {
         toast(res.error, 'error');
         return;
       }
-      toast(going ? 'You are signed up' : 'You are no longer signed up', 'success');
+      toast(DONE[what], 'success');
       router.refresh();
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   }
 
-  if (state === 'open') {
-    return (
-      <Button onClick={() => act(true)} loading={loading}>
-        Sign up
-      </Button>
-    );
-  }
+  const button = (what: Act, label: string, variant: 'primary' | 'secondary' = 'primary') => (
+    <Button
+      key={what}
+      variant={variant}
+      onClick={() => act(what)}
+      loading={loading === what}
+      disabled={loading !== null && loading !== what}
+    >
+      {label}
+    </Button>
+  );
+
+  let title: string;
+  let detail: string | null = null;
+  const buttons: React.ReactNode[] = [];
+
   if (state === 'going') {
-    return (
-      <Button variant="secondary" onClick={() => act(false)} loading={loading}>
-        Withdraw
-      </Button>
-    );
+    title = 'You are going';
+    detail = 'See you there. Withdraw if you cannot make it, so someone else gets the place.';
+    buttons.push(button('withdraw', 'Withdraw', 'secondary'));
+  } else if (position !== null) {
+    title = `You are number ${position} on the waitlist`;
+    detail =
+      state === 'open'
+        ? 'A place is free. Take it before someone else does.'
+        : 'We will tell you here if a place opens.';
+    if (state === 'open') buttons.push(button('sign_up', 'Take the place'));
+    buttons.push(button('leave', 'Leave the waitlist', 'secondary'));
+  } else if (state === 'open') {
+    title = 'Places are open';
+    detail = closesAt ? `Sign-ups close ${closesAt}.` : null;
+    buttons.push(button('sign_up', 'Sign up'));
+    if (canWait) {
+      detail = 'Members on the waitlist are ahead of you for the free place.';
+      buttons.push(button('join', 'Join the waitlist', 'secondary'));
+    }
+  } else if (canWait) {
+    title = 'This event is full';
+    detail = 'Join the waitlist and we will tell you here if a place opens.';
+    buttons.push(button('join', 'Join the waitlist'));
+  } else {
+    title =
+      state === 'full'
+        ? 'This event is full'
+        : state === 'not_open_yet'
+          ? 'Sign-ups are not open yet'
+          : state === 'started'
+            ? 'This event has started'
+            : state === 'cancelled'
+              ? 'This event is cancelled'
+              : 'Sign-ups are closed';
+    if (state === 'not_open_yet' && opensAt) detail = `They open ${opensAt}.`;
   }
-  return null;
+
+  return (
+    <div>
+      <div className="ev-label">Your spot</div>
+      <div className="ev-spot-title">{title}</div>
+      {detail && <p className="ev-spot-detail">{detail}</p>}
+      {buttons.length > 0 && <div className="ev-spot-actions">{buttons}</div>}
+    </div>
+  );
 }

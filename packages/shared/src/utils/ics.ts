@@ -39,6 +39,15 @@ export interface ICSClubEventFields {
   updated_at: string;
 }
 
+export interface ICSTournamentFields {
+  id: string;
+  name: string;
+  start_date: string; // YYYY-MM-DD
+  end_date: string | null; // YYYY-MM-DD
+  status: string;
+  updated_at: string;
+}
+
 // Escape TEXT property values (RFC 5545 §3.3.11). Backslash first so the
 // escapes added for the other characters aren't themselves escaped.
 export function escapeICSText(text: string): string {
@@ -192,10 +201,47 @@ export function clubEventToVEvent(ev: ICSClubEventFields, baseUrl?: string): str
   return lines;
 }
 
+// YYYY-MM-DD plus n days, as the YYYYMMDD a VALUE=DATE property takes. UTC
+// date maths on the date alone, so no timezone can move the day.
+function icsDatePlusDays(dateISO: string, days: number): string {
+  const [y, m, d] = dateISO.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+// One tournament -> unfolded VEVENT content lines. A tournament is ALL DAY on
+// every day it runs: DTSTART is its start date and DTEND the day after its end
+// date, because an all-day DTEND is exclusive (RFC 5545). A missing end, or an
+// end before the start, is read as a one-day event. The UID has its own
+// `tournament-` namespace beside `club-event-`, and no LOCATION: a tournament
+// row names no venue.
+export function tournamentToVEvent(t: ICSTournamentFields, baseUrl?: string): string[] {
+  const updated = new Date(t.updated_at);
+  const stamp = formatUtcStamp(updated);
+  const last = t.end_date && t.end_date > t.start_date ? t.end_date : t.start_date;
+  const lines = [
+    'BEGIN:VEVENT',
+    `UID:tournament-${t.id}@club-ladder`,
+    `DTSTAMP:${stamp}`,
+    `LAST-MODIFIED:${stamp}`,
+    `SEQUENCE:${Math.floor(updated.getTime() / 1000)}`,
+    `DTSTART;VALUE=DATE:${icsDatePlusDays(t.start_date, 0)}`,
+    `DTEND;VALUE=DATE:${icsDatePlusDays(last, 1)}`,
+    `SUMMARY:${escapeICSText(t.name)}`,
+  ];
+  if (baseUrl) lines.push(`URL:${baseUrl}/tournaments/${t.id}`);
+  lines.push('END:VEVENT');
+  return lines;
+}
+
 // Full VCALENDAR document, CRLF line endings, lines folded to 75 octets.
 export function buildICSCalendar(
   sessions: ICSSessionFields[],
-  opts?: { baseUrl?: string; settings?: CheckinSettings; clubEvents?: ICSClubEventFields[] }
+  opts?: {
+    baseUrl?: string;
+    settings?: CheckinSettings;
+    clubEvents?: ICSClubEventFields[];
+    tournaments?: ICSTournamentFields[];
+  }
 ): string {
   const lines = [
     'BEGIN:VCALENDAR',
@@ -211,6 +257,7 @@ export function buildICSCalendar(
     'X-PUBLISHED-TTL:PT1H',
     ...sessions.flatMap((s) => sessionToVEvent(s, opts?.baseUrl, opts?.settings)),
     ...(opts?.clubEvents ?? []).flatMap((e) => clubEventToVEvent(e, opts?.baseUrl)),
+    ...(opts?.tournaments ?? []).flatMap((t) => tournamentToVEvent(t, opts?.baseUrl)),
     'END:VCALENDAR',
   ];
   return lines.map(foldICSLine).join('\r\n') + '\r\n';

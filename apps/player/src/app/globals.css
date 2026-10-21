@@ -726,6 +726,157 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   CLUB EVENTS: the list's cards and the event page's poster header.
+   ═══════════════════════════════════════════════════════════ */
+.ev-label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--mute);
+}
+.ev-label.red { color: var(--red); }
+
+/* A calendar-page date: red month band, big day, weekday under it. */
+.ev-date {
+  flex-shrink: 0; width: 84px; text-align: center;
+  border-radius: var(--r-xl); overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.ev-date .month {
+  background: var(--red); color: #fff;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .18em; padding: 5px 0;
+}
+.ev-date .day {
+  font-family: var(--display); font-weight: 700; font-size: 42px; line-height: 1;
+  padding: 6px 0 0; letter-spacing: -.02em;
+}
+.ev-date .weekday {
+  font-family: var(--mono); font-size: 11px; color: var(--mute);
+  letter-spacing: .16em; padding: 2px 0 8px;
+}
+.ev-date.sm { width: 64px; border-radius: var(--r-md); }
+.ev-date.sm .month { font-size: 10px; padding: 4px 0; letter-spacing: .14em; }
+.ev-date.sm .day { font-size: 32px; padding: 6px 0 0; }
+.ev-date.sm .weekday { font-size: 9px; padding: 2px 0 6px; letter-spacing: .14em; }
+
+.ev-hero {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--r-xl);
+  background:
+    radial-gradient(1100px 420px at 90% -20%, color-mix(in oklab, var(--red) 20%, transparent), transparent 60%),
+    var(--surface);
+  padding: 18px 24px 22px;
+  margin-bottom: 20px;
+}
+.ev-hero-watermark {
+  position: absolute; right: -12px; bottom: -36px; pointer-events: none;
+  font-family: var(--display); font-weight: 700; font-size: 150px; line-height: 1;
+  letter-spacing: -.04em; white-space: nowrap;
+  color: color-mix(in oklab, var(--ink) 4%, transparent);
+}
+.ev-hero-body {
+  position: relative; display: flex; gap: 20px; align-items: center; margin-top: 16px;
+}
+.ev-title {
+  margin: 0; font-family: var(--display); font-weight: 700;
+  font-size: 40px; line-height: 1; letter-spacing: -.01em; text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.ev-meta {
+  display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px;
+  color: var(--ink-2); font-size: 14px;
+}
+.ev-meta span { display: inline-flex; gap: 8px; align-items: center; }
+.ev-meta svg { color: var(--red); }
+
+.ev-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start; }
+.ev-panel {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-xl); padding: 22px;
+}
+.ev-about { margin: 12px 0 0; font-size: 15px; line-height: 1.7; color: var(--ink-2); white-space: pre-wrap; }
+.ev-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.ev-fact { background: var(--surface-2); border-radius: var(--r-lg); padding: 16px; }
+.ev-fact .k { font-size: 13px; color: var(--mute); }
+.ev-fact .v { font-weight: 600; margin-top: 4px; }
+
+.ev-spot { padding: 0; overflow: hidden; }
+.ev-spot > section { padding: 22px 24px; }
+.ev-spot > section + section { border-top: 1px dashed var(--line-2); }
+.ev-spot-title {
+  font-family: var(--display); font-weight: 700; font-size: 24px; line-height: 1;
+  margin-top: 10px;
+}
+.ev-spot-detail { margin: 10px 0 0; color: var(--mute); font-size: 14px; line-height: 1.5; }
+.ev-spot-actions { display: grid; gap: 10px; margin-top: 18px; }
+.ev-spot-actions > * { width: 100%; justify-content: center; min-height: 46px; }
+.ev-places { display: flex; justify-content: space-between; align-items: baseline; }
+.ev-places b { font-family: var(--display); font-size: 24px; }
+.ev-spot .capacity-bar { height: 8px; margin: 10px 0 8px; }
+
+/* The list. */
+.ev-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 28px; }
+.ev-tabs {
+  display: flex; gap: 4px; padding: 4px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line);
+}
+.ev-tabs a {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  padding: 10px 14px; border-radius: 6px; color: var(--mute);
+}
+.ev-tabs a[aria-current="page"] { background: var(--red); color: #fff; }
+.ev-feature {
+  display: flex; gap: 20px; align-items: stretch; flex-wrap: wrap;
+  padding: 16px 20px; border-radius: var(--r-xl); border: 1px solid var(--line);
+  background:
+    radial-gradient(900px 300px at 100% 0%, color-mix(in oklab, var(--red) 18%, transparent), transparent 60%),
+    var(--surface);
+  transition: border-color .15s;
+}
+.ev-feature:hover, .ev-card:hover { border-color: var(--line-2); }
+.ev-feature .ev-date { width: 64px; border-radius: var(--r-md); }
+.ev-feature .ev-date .month { font-size: 10px; padding: 4px 0; letter-spacing: .14em; }
+.ev-feature .ev-date .day { font-size: 30px; padding: 5px 0 0; }
+.ev-feature .ev-date .weekday { font-size: 9px; padding: 2px 0 6px; }
+.ev-feature-title {
+  font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1;
+  text-transform: uppercase; overflow-wrap: anywhere;
+}
+.ev-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.ev-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px;
+  border-radius: var(--r-xl); border: 1px solid var(--line); background: var(--surface);
+  transition: border-color .15s;
+}
+.ev-card.past { opacity: .6; }
+.ev-card-title {
+  font-family: var(--display); font-weight: 700; font-size: 22px; line-height: 1;
+  text-transform: uppercase; overflow-wrap: anywhere;
+}
+.ev-card .capacity-bar { margin-top: auto; }
+
+@media (max-width: 1100px) {
+  .ev-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ev-layout { grid-template-columns: minmax(0, 1fr) 320px; }
+}
+@media (max-width: 860px) {
+  .ev-layout { grid-template-columns: 1fr; }
+  /* On a phone the place and the button come straight after the header. */
+  .ev-layout > aside { order: -1; }
+  .ev-facts { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .ev-hero { padding: 16px; }
+  .ev-hero-body { gap: 14px; align-items: flex-start; }
+  .ev-hero .ev-date { width: 64px; }
+  .ev-hero .ev-date .day { font-size: 32px; }
+  .ev-hero-watermark { display: none; }
+  .ev-title { font-size: 30px; }
+  .ev-panel { padding: 18px; }
+  .ev-grid { grid-template-columns: 1fr; }
+  .ev-feature { padding: 14px 16px; gap: 14px; }
+  .ev-feature-title { font-size: 22px; }
+}
+
+/* ═══════════════════════════════════════════════════════════
    CAPACITY BAR + EMPTY STATE
    ═══════════════════════════════════════════════════════════ */
 

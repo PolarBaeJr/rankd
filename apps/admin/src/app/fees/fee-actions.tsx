@@ -6,7 +6,7 @@ import { UserPlus } from 'lucide-react';
 import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
 import { errorToastText, resolvePaymentMethod } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
-import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee, recordReinstatementPayment } from '@/lib/actions';
+import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee, markNamedFeePaid, recordReinstatementPayment } from '@/lib/actions';
 import {
   PaymentMethodFields,
   paymentMethodInvalid,
@@ -258,6 +258,60 @@ export function RecordReinstatementPayment({ feeId, playerName }: { feeId: strin
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={handleRecord} loading={isPending} disabled={amountInvalid || paymentMethodInvalid(payment)} className="flex-1">
               Record
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    </>
+  );
+}
+
+// An unpaid named row (a Google Form files one for a non-member, 00290) paid
+// some other way than its screenshot: cash at a session, or no receipt sent.
+export function MarkNamedFeePaid({ id, name, seasonName, amountCents }: { id: string; name: string; seasonName: string; amountCents: number | null }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(amountCents != null ? (amountCents / 100).toFixed(2) : '');
+  const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
+  const router = useRouter();
+
+  const dollars = parseFloat(amount);
+  const amountInvalid = amount.trim() === '' || Number.isNaN(dollars) || dollars <= 0;
+
+  function handleMarkPaid() {
+    startTransition(async () => {
+      try {
+        await markNamedFeePaid({
+          fee_id: id,
+          amount_cents: Math.round(dollars * 100),
+          method: resolvePaymentMethod(payment.method, payment.customMethod),
+          reference: payment.reference.trim() || undefined,
+        });
+        toast(`${name} marked as paid`, 'success');
+        setOpen(false);
+        setPayment(EMPTY_PAYMENT_METHOD);
+        router.refresh();
+      } catch (err) {
+        toast(errorToastText(err, 'FEE', 'Failed to mark fee paid'), 'error');
+      }
+    });
+  }
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Mark Paid</Button>
+      <Dialog open={open} onClose={() => setOpen(false)} title={`Mark Fee Paid: ${name}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Season: <strong className="text-[var(--text-primary)]">{seasonName}</strong>
+          </p>
+          <Input label="Amount $" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 25.00" />
+          <PaymentMethodFields value={payment} onChange={setPayment} disabled={isPending} />
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={handleMarkPaid} loading={isPending} disabled={amountInvalid || paymentMethodInvalid(payment)} className="flex-1">
+              Mark Paid
             </Button>
           </div>
         </div>

@@ -88,6 +88,8 @@ export function PlayerEditForm({
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
+  // 00292: a guest's standing is an admin's; updatePlayer refuses it otherwise.
+  const guestLocked = !isAdmin && !!(player as { is_guest?: boolean }).is_guest;
   const approvalBlocked = isPending && !canApprove;
   // Read off the STORED row rather than off a control, because the control that
   // used to decide it is gone. The exec bio fields below are only meaningful on
@@ -202,6 +204,7 @@ export function PlayerEditForm({
         options={statusOptions}
         value={status}
         onChange={(e) => setStatus(e.target.value as Player['status'])}
+        disabled={guestLocked}
       />
       {/* Membership is NOT console access, and it never was — an exec is still
           an internal member, so promoting someone must not change which events
@@ -212,7 +215,13 @@ export function PlayerEditForm({
         options={MEMBERSHIP_TYPES.map((m) => ({ value: m.value, label: m.label }))}
         value={membershipType}
         onChange={(e) => setMembershipType(e.target.value)}
+        disabled={guestLocked}
       />
+      {guestLocked && (
+        <p className="text-xs text-[var(--text-muted)] -mt-2">
+          A guest: only an admin changes their status or membership. Ask one from the Guest panel.
+        </p>
+      )}
       <p className="text-xs text-[var(--text-muted)] -mt-2">
         {MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.description}
       </p>

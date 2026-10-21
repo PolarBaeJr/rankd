@@ -7,6 +7,7 @@ import {
   wallClockToUtc,
   type FeatureId,
   type ICSClubEventFields,
+  type ICSTournamentFields,
 } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
@@ -87,8 +88,11 @@ export async function GET(
   const on = (id: FeatureId) => featureGate(flags[id], access.includes(id)) !== 'redirect';
   const empty = Promise.resolve({ data: [] as never[], error: null });
 
-  const [{ data: sessions, error: sessionsError }, { data: clubEvents, error: clubEventsError }] =
-    await Promise.all([
+  const [
+    { data: sessions, error: sessionsError },
+    { data: clubEvents, error: clubEventsError },
+    { data: tournaments, error: tournamentsError },
+  ] = await Promise.all([
       on('sessions')
         ? onVisibleTracks(
             supabase
@@ -112,6 +116,21 @@ export async function GET(
             .in('status', ['published', 'cancelled'])
             .gte('starts_at', wallClockToUtc(y, m, d - 60, 0, 0).toISOString())
             .order('starts_at')
+            .limit(200)
+        : empty,
+      // Published tournaments only: tournaments_select is USING (TRUE), and
+      // this is the service role besides, so the status list is what keeps a
+      // draft out. Suspended ones are left out as they are on the website. The
+      // same 60-day look-back, on EITHER date, so a long tournament that began
+      // before the cutoff and is still running stays in the calendar.
+      on('tournaments')
+        ? supabase
+            .from('tournaments')
+            .select('id, name, start_date, end_date, status, updated_at')
+            .in('status', ['active', 'completed'])
+            .is('suspended_at', null)
+            .or(`start_date.gte.${cutoff},end_date.gte.${cutoff}`)
+            .order('start_date')
             .limit(200)
         : empty,
     ]);
@@ -150,6 +169,17 @@ export async function GET(
     });
   }
 
+  // And again for tournaments: a 200 without them would delete them.
+  if (tournamentsError) {
+    Sentry.captureException(new Error(tournamentsError.message), {
+      extra: { action: 'calendar:tournaments', details: tournamentsError.details },
+    });
+    return new NextResponse('Calendar temporarily unavailable', {
+      status: 503,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+
   // Same service-role client the feed already uses: this route has no user
   // session, so the settings read has to go through it.
   const checkinSettings = await getCheckinSettings(supabase);
@@ -159,6 +189,7 @@ export async function GET(
       baseUrl: process.env.NEXT_PUBLIC_PLAYER_URL,
       settings: checkinSettings,
       clubEvents: (clubEvents ?? []) as ICSClubEventFields[],
+      tournaments: (tournaments ?? []) as ICSTournamentFields[],
     }),
     {
       headers: {

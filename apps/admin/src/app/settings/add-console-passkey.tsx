@@ -6,6 +6,7 @@ import { Button, Input } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { friendlyPasskeyError } from '@/lib/passkey/errors';
 import { withBase } from '@/lib/base-path';
+import { BLOCKED_CEREMONY_ERROR, isBlockedCeremony } from '@/lib/passkey-client';
 
 // The name field and Add button that enrol a console passkey. Used by
 // Settings and by /passkey-required, which differ only in what happens after.
@@ -26,7 +27,10 @@ export function AddConsolePasskey({ onAdded }: { onAdded: () => void }) {
       }
       const optionsJSON = await optRes.json();
 
-      const attestation = await startRegistration({ optionsJSON });
+      const startedAt = Date.now();
+      const attestation = await startRegistration({ optionsJSON }).catch((err: unknown) => {
+        throw isBlockedCeremony(err, Date.now() - startedAt) ? new Error(BLOCKED_CEREMONY_ERROR) : err;
+      });
 
       const verifyRes = await fetch(withBase('/api/passkey/register/verify'), {
         method: 'POST',

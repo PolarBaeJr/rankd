@@ -26,6 +26,14 @@ const REFUSALS: Record<string, string> = {
   already_registered: 'You are already signed up for that event.',
   not_eligible: 'Your account cannot sign up for club events right now.',
   not_registered: 'You are not signed up for that event.',
+  // The waitlist (00294).
+  waitlist_queue: 'Members on the waitlist are ahead of you. Join the waitlist to be next.',
+  linked: 'That event runs as a tournament, so it has no waitlist.',
+  ended: 'That event is over.',
+  no_capacity: 'That event has no limit on places, so there is no waitlist.',
+  already_waiting: 'You are already on the waitlist.',
+  not_waiting: 'You are not on the waitlist.',
+  not_full: 'A place is free. Sign up instead.',
 };
 
 export async function signUpForClubEvent(eventId: string): Promise<ActionResult> {
@@ -90,7 +98,42 @@ async function withdrawImpl(eventId: string): Promise<void> {
   revalidateClubEventPaths(eventId);
 }
 
+/**
+ * The waitlist for a full club event (00294). Nobody is moved off it
+ * automatically: a freed place is offered in the app, and the member signs
+ * up, or an exec gives them the place at the door.
+ */
+export async function joinClubEventWaitlist(eventId: string): Promise<ActionResult> {
+  return runAction(() => waitlistImpl(eventId, true));
+}
+
+export async function leaveClubEventWaitlist(eventId: string): Promise<ActionResult> {
+  return runAction(() => waitlistImpl(eventId, false));
+}
+
+async function waitlistImpl(eventId: string, join: boolean): Promise<void> {
+  if (!isUuid(eventId)) throw new ExpectedError('That event could not be found.');
+  const player = await requirePlayer();
+  await assertFeatureOn('events', player);
+  const service = createServiceRoleClient();
+  if (join) await assertCurrentWaiver(service, player);
+
+  const { data, error } = await service.rpc(
+    (join ? 'club_event_join_waitlist' : 'club_event_leave_waitlist') as never,
+    { p_event_id: eventId, p_player_id: player.id } as never,
+  );
+  settle(join ? 'joinClubEventWaitlist' : 'leaveClubEventWaitlist', data, error);
+  revalidateClubEventPaths(eventId);
+}
+
 function settle(action: string, data: unknown, error: unknown): void {
+  // 23514 from 00292: the event runs as a tournament whose draw is already
+  // made, so nobody joins or leaves from the event page any more.
+  if ((error as { code?: string } | null)?.code === '23514') {
+    throw new ExpectedError(
+      'This event\'s tournament draw is already made, so sign-ups can no longer change here. Ask an exec.',
+    );
+  }
   if (error) {
     Sentry.captureException(error, { tags: { action } });
     throw new ExpectedError('That did not go through. Please try again shortly.');

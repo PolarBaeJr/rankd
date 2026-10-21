@@ -39,6 +39,11 @@ export const formMappingSchema = z
           .strict(),
       )
       .refine((partners) => Object.keys(partners).length <= 40, { message: 'At most 40 partner entries' }),
+    // The file upload question whose screenshot is the payment receipt (00288).
+    // Not the script's: the console reads it, and it never enters the payload,
+    // so the hash both roads agree on is untouched. Empty: no receipt is read.
+    // Defaulted so a mapping saved before it existed still parses.
+    RECEIPT_QUESTION: title.default(''),
   })
   .strict();
 
@@ -260,6 +265,27 @@ export function buildRegistrationPayload(
   return normalized.ok ? normalized : { ok: false, reason: 'bad_payload', field: normalized.field };
 }
 
+/**
+ * The first file a response uploaded to the receipt question, found by title
+ * as every other question is. Two questions with one title: the later one
+ * wins, as in answersByTitle. Null when the mapping names no receipt question
+ * or the response uploaded nothing to it.
+ */
+export function receiptFileFor(
+  mapping: FormMapping,
+  questions: { questionId: string; title: string }[],
+  fileAnswers: Record<string, { fileId: string; mimeType: string | null }[]>,
+): { fileId: string; mimeType: string | null } | null {
+  if (!mapping.RECEIPT_QUESTION) return null;
+  let found: { fileId: string; mimeType: string | null } | null = null;
+  for (const question of questions) {
+    if (question.title !== mapping.RECEIPT_QUESTION) continue;
+    const files = fileAnswers[question.questionId];
+    if (files && files.length > 0) found = files[0]!;
+  }
+  return found;
+}
+
 /** The questions a mapping needs to find on the form for any response to import. */
 export function requiredQuestions(mapping: FormMapping): string[] {
   return [mapping.EMAIL_QUESTION, mapping.NAME_QUESTION];
@@ -271,6 +297,8 @@ export function requiredQuestions(mapping: FormMapping): string[] {
 export const DEFAULT_EMAIL_QUESTION = 'Email address';
 export const DEFAULT_NAME_QUESTION = 'Full name';
 export const DEFAULT_EVENT_QUESTION = 'Which events are you entering?';
+/** The Chaos Cards form's upload question. Offered for a NEW mapping only; a saved one keeps what it has. */
+export const DEFAULT_RECEIPT_QUESTION = 'E-transfer screenshot';
 
 export function defaultPartnerQuestions(choice: string) {
   return {

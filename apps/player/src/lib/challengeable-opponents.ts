@@ -79,6 +79,8 @@ export async function listChallengeableOpponents(
     .select('id, full_name, handle, hide_from_leaderboard, ratings(singles_elo, doubles_elo)')
     .eq('active_flag', true)
     .eq('is_banned', false)
+    // Guests (00292) have no login to answer a challenge with.
+    .eq('is_guest', false)
     .not('status', 'in', '("pending_approval","suspended")');
 
   if (excludePlayerId) query = query.neq('id', excludePlayerId);

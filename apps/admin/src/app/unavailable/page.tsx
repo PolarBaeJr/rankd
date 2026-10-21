@@ -10,6 +10,7 @@ import { Button } from '@badminton/ui';
 import { KeyRound, LogOut } from 'lucide-react';
 import { friendlyPasskeyError } from '@/lib/passkey/errors';
 import { withBase } from '@/lib/base-path';
+import { BLOCKED_CEREMONY_ERROR, isBlockedCeremony } from '@/lib/passkey-client';
 import { sanitizeNext } from '@/lib/safe-next';
 
 
@@ -55,7 +56,10 @@ function UnavailableContent() {
       if (!optRes.ok) throw new Error('Could not start passkey login');
       const optionsJSON = await optRes.json();
 
-      const assertion = await startAuthentication({ optionsJSON });
+      const startedAt = Date.now();
+      const assertion = await startAuthentication({ optionsJSON }).catch((err: unknown) => {
+        throw isBlockedCeremony(err, Date.now() - startedAt) ? new Error(BLOCKED_CEREMONY_ERROR) : err;
+      });
 
       const verifyRes = await fetch(withBase('/api/passkey/auth/verify'), {
         method: 'POST',

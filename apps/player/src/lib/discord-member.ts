@@ -86,7 +86,8 @@ export async function resolveLinkedPlayerIds(
  *   lapsed       deactivated by the inactivity sweep. The web reactivates on
  *                sign-in; Discord does not write that, so it sends them there.
  *   standing     pending approval, suspended, banned, or asked to be deleted.
- *   feature_off  the club has switched the feature off (challenges, or fees).
+ *   feature_off  the club has switched the feature off (challenges, fees or
+ *                tournaments).
  *   waiver       a current legal document is not accepted.
  */
 export type PlayRefusal = 'not_linked' | 'lapsed' | 'standing' | 'feature_off' | 'waiver';
@@ -103,7 +104,7 @@ export type PlayRefusal = 'not_linked' | 'lapsed' | 'standing' | 'feature_off' |
 export async function resolveDiscordPlayer(
   supabase: ServiceClient,
   discordUserId: string,
-  checks: { feature?: 'challenges' | 'fees'; waiver?: boolean } = {}
+  checks: { feature?: 'challenges' | 'fees' | 'tournaments'; waiver?: boolean } = {}
 ): Promise<
   | { ok: true; player: DiscordMember }
   | { ok: false; refusal: PlayRefusal }

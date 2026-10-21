@@ -104,6 +104,19 @@ export type AuditEvent =
       messageId: string | null;
       body: string;
       pinged: boolean;
+    }
+  // /softban (moderation.ts). Discord's own audit log also records the ban and
+  // the unban, but under the BOT's name; this entry is the one that says which
+  // moderator asked.
+  | {
+      kind: 'softban';
+      moderatorId: string;
+      targetId: string;
+      deleteSeconds: number;
+      windowLabel: string;
+      reason: string;
+      /** False means the unban failed and they are still banned. */
+      unbanned: boolean;
     };
 
 function mention(discordUserId: string): string {
@@ -242,6 +255,22 @@ export function buildAuditEmbed(event: AuditEvent, now: Date): Embed {
         event.kind === 'console_message'
           ? { text: 'Sent from the admin console' }
           : { text: 'Sent with /say' },
+      timestamp,
+    };
+  }
+
+  if (event.kind === 'softban') {
+    return {
+      title: event.unbanned ? 'Member soft-banned' : 'Soft ban: STILL BANNED',
+      description:
+        `${mention(event.moderatorId)} soft-banned ${mention(event.targetId)}, ` +
+        `deleting their messages from the ${event.windowLabel}.` +
+        (event.unbanned
+          ? ' They can rejoin with the invite.'
+          : '\n\n**The unban failed, so they are banned.** Lift it in Server Settings > Bans.') +
+        `\n\n${quoted(event.reason)}`,
+      color: event.unbanned ? COLOR_CLUB_RED : COLOR_FAILED,
+      footer: { text: `User ${event.targetId}` },
       timestamp,
     };
   }

@@ -65,6 +65,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Console commands from the Discord bot, for the same two reasons. The bot
+  // has no session cookie, and the catch at the bottom redirects to /login
+  // without consulting isPublicRoute. Each handler under /api/discord checks
+  // the service secret itself and resolves the linked exec; nothing here may
+  // import those handlers' actor store, which is Node-only.
+  if (request.nextUrl.pathname.startsWith('/api/discord/')) {
+    return NextResponse.next();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   // See the identical block in the player middleware: expires host-only auth
@@ -339,9 +348,13 @@ export const config = {
   // exactly 200, so a 307 to /admin/login would report a working console as
   // unhealthy rather than being silently swallowed as it was under status<500.
   //
+  // tesseract/ is the self-hosted OCR (app/fees/receipt-ocr.ts): a worker and
+  // its wasm fetched by the browser, public files with nothing to gate, and a
+  // redirect to the login page in their place would only break the read.
+  //
   // Paths here are basePath-RELATIVE: Next strips /admin before matching.
   // No sw.js entry: the console registers no service worker (see app/layout.tsx).
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/|tesseract/).*)',
   ],
 };

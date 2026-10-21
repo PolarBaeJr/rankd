@@ -65,6 +65,18 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       })
     : null;
 
+  // A club event run as this tournament (00292) takes its sign-ups through its
+  // own Google Form, which already enters them here. A second link on the
+  // tournament would import each response twice, so the card points there.
+  const { data: linkedClubEvents } =
+    events && events.length > 0
+      ? await supabase
+          .from('club_events')
+          .select('id, title')
+          .in('tournament_event_id', events.map((ev) => ev.id))
+      : { data: null };
+  const linkedClubEvent = (linkedClubEvents ?? [])[0] as { id: string; title: string } | undefined;
+
   // Get participant counts per event (batch queries instead of N+1)
   const eventCounts: Record<string, number> = {};
   if (events && events.length > 0) {
@@ -177,6 +189,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             {/* One code for the whole tournament — a scan checks the player
                 into every event they are entered in. */}
             <TournamentCheckinQr tournamentId={tournament.id} tournamentName={tournament.name} />
+            <Link
+              href={`/tournaments/${tournament.id}/checkin`}
+              className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--bg-elevated)]"
+            >
+              Check-in list
+            </Link>
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>
@@ -308,6 +326,16 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             )}
           </h2>
         </div>
+        {linkedClubEvent && (formImports.bindings ?? []).length === 0 ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 text-sm text-[var(--text-muted)]">
+            This tournament runs the club event{' '}
+            <Link href={`/events/${linkedClubEvent.id}`} className="text-[var(--text-primary)] underline">
+              {linkedClubEvent.title}
+            </Link>
+            . Its Google Form signs people up there, and every sign-up is entered here on its own, so there is
+            nothing to link on the tournament.
+          </div>
+        ) : (
         <FormImportCard
           targetKind="tournament"
           targetId={id}
@@ -324,6 +352,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             doubles: isDoublesEvent(ev.event_type as TournamentEventType),
           }))}
         />
+        )}
       </div>
       )}
 

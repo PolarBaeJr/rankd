@@ -11,7 +11,7 @@ import {
 } from '@/lib/actions/registration-imports';
 import { FormReaderPanel, type MappableEvent } from './FormReaderPanel';
 import type { ActionResult } from '@/lib/action-result';
-import type { FormBinding, ImportedEntry, ImportTargetKind } from '@/lib/registration-imports';
+import type { FormBinding, ImportedEntry, ImportedResponse, ImportTargetKind } from '@/lib/registration-imports';
 
 // ---------------------------------------------------------------------------
 // GOOGLE FORM REGISTRATIONS on a tournament or club event (00283, 00284).
@@ -24,6 +24,10 @@ import type { FormBinding, ImportedEntry, ImportTargetKind } from '@/lib/registr
 // by a form: they confirm in the app. Non-members are entered at once in the
 // events open to them, owe a named fee, and are sent the guest waiver once
 // that feature is on.
+//
+// On /fees a form is linked to a SEASON (00290): it enters nobody, and each
+// response's e-transfer screenshot is filed against that person's dues for the
+// season, member or not, for review under Submitted.
 // ---------------------------------------------------------------------------
 
 const STATUS_LABEL: Record<string, string> = {
@@ -84,6 +88,21 @@ const REASON_LABEL: Record<string, string> = {
   not_published: 'Event not published',
 };
 
+/** Where a season form's screenshot went (registration_import_receipts.status, 00288). */
+const RECEIPT_LABEL: Record<string, string> = {
+  pending_download: 'Downloading',
+  pending_fee: 'Waiting to be filed',
+  filed: 'In the review',
+  fee_settled: 'Dues already paid',
+  duplicate: 'Another receipt was already waiting',
+  no_fee: 'Not charged dues',
+  too_large: 'Over 10 MB',
+  bad_type: 'Not an image or PDF',
+  drive_forbidden: 'Drive would not hand it over',
+  download_failed: 'Never downloaded',
+  superseded: 'Replaced',
+};
+
 const INVITE_LABEL: Record<NonNullable<ImportedEntry['invite']>, string> = {
   sent: 'Waiver email sent',
   queued: 'Waiver email queued',
@@ -105,6 +124,7 @@ export function FormImportCard({
   bindings,
   consumers,
   entries,
+  responses = [],
   canBind,
   canUndo,
   migrationMissing,
@@ -117,6 +137,8 @@ export function FormImportCard({
   bindings: FormBinding[] | null;
   consumers: { id: string; name: string }[];
   entries: ImportedEntry[];
+  /** A season form's responses (00290). */
+  responses?: ImportedResponse[];
   /** The capability that edits this target. */
   canBind: boolean;
   /** Any remove capability for this target's entries; the server asks per entry. */
@@ -159,8 +181,9 @@ export function FormImportCard({
         <p className="text-xs text-[var(--text-muted)]">
           {reader.state === 'ready' ? (
             <>
-              The console can read a form itself when the form is in the club&apos;s forms folder, shared with{' '}
-              <code className="break-all">{reader.clientEmail}</code>.
+              The console can read a form itself when the form is shared with{' '}
+              <code className="break-all">{reader.clientEmail}</code> as an Editor. Google shows a form&apos;s
+              responses only to its editors, so a Viewer share, or the forms folder alone, is not enough.
             </>
           ) : reader.state === 'invalid' ? (
             "Reading forms with Google is not working: the console's service account key could not be read."
@@ -173,6 +196,8 @@ export function FormImportCard({
         <p className="text-sm text-[var(--text-muted)]">
           No Google Form is linked yet. Paste the form&apos;s id and pick the Data API key its script sends with.
           Its responses then show up below.
+          {targetKind === 'season' &&
+            ' Each e-transfer screenshot is filed against that person\'s dues for this season and waits under Submitted.'}
         </p>
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
@@ -291,6 +316,37 @@ export function FormImportCard({
         <p role="alert" className="text-sm text-[var(--color-danger)]">
           {error}
         </p>
+      )}
+
+      {responses.length > 0 && (
+        <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-[var(--text-muted)]">
+              <tr>
+                <th className="p-2">Person</th>
+                <th className="p-2">Screenshot</th>
+                <th className="p-2">Dues</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {responses.map((r) => (
+                <tr key={r.id}>
+                  <td className="p-2 align-top">
+                    <div>{r.person}</div>
+                    {r.email && <div className="text-xs text-[var(--text-muted)] break-all">{r.email}</div>}
+                    {!r.isMember && <Badge variant="neutral">Non-member</Badge>}
+                  </td>
+                  <td className="p-2 align-top text-xs">
+                    {r.replaced ? 'Replaced by a later response' : r.receipt ? (RECEIPT_LABEL[r.receipt] ?? r.receipt) : 'None uploaded'}
+                  </td>
+                  <td className="p-2 align-top text-xs">
+                    {r.fee ? `${money(r.fee.amountCents)}${r.fee.paid ? ', paid' : ', unpaid'}` : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {live.length > 0 && (

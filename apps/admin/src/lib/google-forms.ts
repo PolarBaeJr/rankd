@@ -7,8 +7,13 @@ import { createSign } from 'node:crypto';
 // Its key JSON sits in GOOGLE_FORMS_SERVICE_ACCOUNT_JSON, read here and only
 // here, server side. Unset, nothing in this file calls Google.
 //
+// It also reads, through the Drive API, the files a form's upload question
+// collected (00288): every upload lands in a folder inside the one shared with
+// the account, so drive.readonly reaches them and nothing the club did not
+// share. Only metadata and the bytes of a file a response names are read.
+//
 // Auth is the service account flow by hand rather than the googleapis package
-// (tens of megabytes for two GET calls): an RS256 JWT signed with node:crypto,
+// (tens of megabytes for a handful of GET calls): an RS256 JWT signed with node:crypto,
 // exchanged at Google's token endpoint for a one-hour access token, cached
 // until a minute before it expires.
 //
@@ -19,9 +24,11 @@ import { createSign } from 'node:crypto';
 export const GOOGLE_FORMS_SECRET_ENV = 'GOOGLE_FORMS_SERVICE_ACCOUNT_JSON';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_FORMS_API = 'https://forms.googleapis.com/v1';
+export const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 export const GOOGLE_FORMS_SCOPES = [
   'https://www.googleapis.com/auth/forms.body.readonly',
   'https://www.googleapis.com/auth/forms.responses.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
 ] as const;
 
 export interface ServiceAccount {
@@ -228,17 +235,12 @@ const MAX_429_RETRIES = 2;
 const MAX_RETRY_WAIT_MS = 10_000;
 
 /**
- * One GET against the Forms API. A 429 is retried twice, after Retry-After
- * (capped) or a doubling wait, each retry counted against the budget; after
- * that it is a rate_limited error and the caller stops the round. A 401
- * drops the cached token so the next round signs a new one.
+ * One GET against Google. A 429 is retried twice, after Retry-After (capped)
+ * or a doubling wait, each retry counted against the budget; after that the
+ * 429 is returned and the caller turns it into rate_limited, which stops the
+ * round. Any other answer is returned as it is, for the caller to read.
  */
-async function getJson(
-  url: string,
-  account: ServiceAccount,
-  deps: GoogleDeps,
-  budget: ReadBudget,
-): Promise<unknown> {
+async function send(url: string, account: ServiceAccount, deps: GoogleDeps, budget: ReadBudget): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     if (!budget.take()) throw new BudgetExhausted();
     const token = await accessToken(account, deps);
@@ -254,15 +256,29 @@ async function getJson(
       await deps.sleep(Math.min(wait, MAX_RETRY_WAIT_MS));
       continue;
     }
-    if (!response.ok) {
-      if (response.status === 401) resetGoogleTokenCache();
-      throw new GoogleFormsError(codeFor(response.status), response.status);
-    }
-    try {
-      return await response.json();
-    } catch {
-      throw new GoogleFormsError('google_unavailable', response.status);
-    }
+    return response;
+  }
+}
+
+/**
+ * One GET against the Forms API, as JSON. A 401 drops the cached token so the
+ * next round signs a new one.
+ */
+async function getJson(
+  url: string,
+  account: ServiceAccount,
+  deps: GoogleDeps,
+  budget: ReadBudget,
+): Promise<unknown> {
+  const response = await send(url, account, deps, budget);
+  if (!response.ok) {
+    if (response.status === 401) resetGoogleTokenCache();
+    throw new GoogleFormsError(codeFor(response.status), response.status);
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new GoogleFormsError('google_unavailable', response.status);
   }
 }
 
@@ -294,11 +310,18 @@ export async function getFormQuestions(
   return questions;
 }
 
-/** One response, reduced to its id, its time and its text answers by question id. */
+/** A file a response uploaded: its Drive id and the type the form recorded. */
+export interface FileAnswer {
+  fileId: string;
+  mimeType: string | null;
+}
+
+/** One response, reduced to its id, its time, its text answers and its uploads by question id. */
 export interface FormResponse {
   responseId: string;
   lastSubmittedTime: string;
   answers: Record<string, string[]>;
+  fileAnswers: Record<string, FileAnswer[]>;
 }
 
 const RESPONSES_PAGE_SIZE = 500;
@@ -335,7 +358,14 @@ export async function listResponsesSince(
         responseId?: string;
         lastSubmittedTime?: string;
         createTime?: string;
-        answers?: Record<string, { questionId?: string; textAnswers?: { answers?: Array<{ value?: string }> } }>;
+        answers?: Record<
+          string,
+          {
+            questionId?: string;
+            textAnswers?: { answers?: Array<{ value?: string }> };
+            fileUploadAnswers?: { answers?: Array<{ fileId?: string; mimeType?: string }> };
+          }
+        >;
       }>;
       nextPageToken?: string;
     };
@@ -343,15 +373,149 @@ export async function listResponsesSince(
       const submitted = response.lastSubmittedTime ?? response.createTime;
       if (typeof response.responseId !== 'string' || typeof submitted !== 'string') continue;
       const answers: Record<string, string[]> = {};
+      const fileAnswers: Record<string, FileAnswer[]> = {};
       for (const [questionId, answer] of Object.entries(response.answers ?? {})) {
         const values = (answer.textAnswers?.answers ?? [])
           .map((a) => a.value)
           .filter((v): v is string => typeof v === 'string');
         if (values.length > 0) answers[answer.questionId ?? questionId] = values;
+        // The file's name is left behind: it is whatever the person called it.
+        const files = (answer.fileUploadAnswers?.answers ?? [])
+          .filter((a): a is { fileId: string; mimeType?: string } => typeof a.fileId === 'string' && a.fileId !== '')
+          .map((a) => ({ fileId: a.fileId, mimeType: typeof a.mimeType === 'string' ? a.mimeType : null }));
+        if (files.length > 0) fileAnswers[answer.questionId ?? questionId] = files;
       }
-      out.push({ responseId: response.responseId, lastSubmittedTime: submitted, answers });
+      out.push({ responseId: response.responseId, lastSubmittedTime: submitted, answers, fileAnswers });
     }
     pageToken = typeof page.nextPageToken === 'string' && page.nextPageToken !== '' ? page.nextPageToken : undefined;
   } while (pageToken);
   return out;
+}
+
+// ---- Drive: the files an upload question collected (00288) ------------------
+
+/**
+ * A refusal about ONE file, which the receipt records and the round carries
+ * on past: the file is gone or not shared with the account (403 or 404), or
+ * it is bigger than the bucket takes. A refusal that would hit every file
+ * (the Drive API is not enabled, the scope is missing, a rate limit) is a
+ * GoogleFormsError instead, and stops the downloads for the round.
+ */
+export type DriveFileCode = 'drive_forbidden' | 'too_large';
+
+export class DriveFileError extends Error {
+  constructor(
+    readonly code: DriveFileCode,
+    readonly httpStatus: number | null,
+  ) {
+    super(`Google Drive: ${code}${httpStatus ? ` (HTTP ${httpStatus})` : ''}`);
+    this.name = 'DriveFileError';
+  }
+}
+
+// The 403 reasons Drive gives for something wrong with the project or the
+// whole account rather than with the file.
+const ROUND_REASONS = new Set(['accessNotConfigured', 'insufficientPermissions', 'SERVICE_DISABLED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT']);
+const RATE_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'RATE_LIMIT_EXCEEDED']);
+
+/** The reason codes in a Google error body; never its message, which can echo the request. */
+async function errorReasons(response: Response): Promise<string[]> {
+  try {
+    const body = (await response.json()) as {
+      error?: { status?: unknown; errors?: Array<{ reason?: unknown }>; details?: Array<{ reason?: unknown }> };
+    };
+    const reasons = [
+      body.error?.status,
+      ...(body.error?.errors ?? []).map((e) => e.reason),
+      ...(body.error?.details ?? []).map((d) => d.reason),
+    ];
+    return reasons.filter((r): r is string => typeof r === 'string');
+  } catch {
+    return [];
+  }
+}
+
+async function driveFailure(response: Response): Promise<Error> {
+  if (response.status === 401) {
+    resetGoogleTokenCache();
+    return new GoogleFormsError('auth', 401);
+  }
+  if (response.status === 404) return new DriveFileError('drive_forbidden', 404);
+  if (response.status === 403) {
+    const reasons = await errorReasons(response);
+    if (reasons.some((r) => RATE_REASONS.has(r))) return new GoogleFormsError('rate_limited', 403);
+    if (reasons.some((r) => ROUND_REASONS.has(r))) return new GoogleFormsError('forbidden', 403);
+    return new DriveFileError('drive_forbidden', 403);
+  }
+  return new GoogleFormsError(codeFor(response.status), response.status);
+}
+
+const driveFileUrl = (fileId: string) => `${GOOGLE_DRIVE_API}/files/${encodeURIComponent(fileId)}`;
+
+/** A file's size and type, from Drive's metadata, before anything is downloaded. */
+export async function getDriveFileMeta(
+  fileId: string,
+  account: ServiceAccount,
+  deps: GoogleDeps,
+  budget: ReadBudget,
+): Promise<{ size: number | null; mimeType: string | null }> {
+  const params = new URLSearchParams({ fields: 'size,mimeType', supportsAllDrives: 'true' });
+  const response = await send(`${driveFileUrl(fileId)}?${params.toString()}`, account, deps, budget);
+  if (!response.ok) throw await driveFailure(response);
+  let body: { size?: unknown; mimeType?: unknown };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    throw new GoogleFormsError('google_unavailable', response.status);
+  }
+  // Drive sends the size as a decimal string.
+  const size = typeof body.size === 'string' && /^\d+$/.test(body.size) ? Number(body.size) : null;
+  return { size, mimeType: typeof body.mimeType === 'string' ? body.mimeType : null };
+}
+
+/**
+ * A file's bytes, read as a stream and abandoned the moment they pass
+ * maxBytes, so a file bigger than its metadata said never fills memory.
+ */
+export async function downloadDriveFile(
+  fileId: string,
+  maxBytes: number,
+  account: ServiceAccount,
+  deps: GoogleDeps,
+  budget: ReadBudget,
+): Promise<Uint8Array> {
+  const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
+  const response = await send(`${driveFileUrl(fileId)}?${params.toString()}`, account, deps, budget);
+  if (!response.ok) throw await driveFailure(response);
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new DriveFileError('too_large', response.status);
+  }
+  if (!response.body) return new Uint8Array(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new DriveFileError('too_large', response.status);
+      }
+      chunks.push(value);
+    }
+  } catch (err) {
+    if (err instanceof DriveFileError) throw err;
+    throw new GoogleFormsError('google_unavailable', response.status);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }

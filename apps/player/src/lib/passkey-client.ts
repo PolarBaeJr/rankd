@@ -33,16 +33,31 @@ export function supportsPasskeys(): boolean {
  * result was a button that did nothing at all. Safari, SFSafariViewController
  * and Chrome on iOS all carry "Safari/" in the user agent; the bare webviews
  * do not, and Android marks its WebView with "; wv)".
+ *
+ * Instagram's iOS browser now claims "Safari/" as well (two members hit the
+ * dead prompt in it after this check shipped), so the apps known to embed
+ * their own browser are also named outright. Neither list can be complete:
+ * isBlockedCeremony() below catches whichever app comes next.
  */
 export function isEmbeddedWebView(
   ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent
 ): boolean {
+  if (IN_APP_BROWSER_MARKERS.test(ua)) return true;
   if (/\b(iPhone|iPad|iPod)\b/.test(ua)) return !/Safari\//.test(ua);
   return /Android/.test(ua) && /; wv\)/.test(ua);
 }
 
+// Instagram, Facebook and Messenger, Threads ("Barcelona"), TikTok, Snapchat,
+// LinkedIn, Pinterest, LINE, WeChat and KakaoTalk.
+const IN_APP_BROWSER_MARKERS =
+  /\b(Instagram|FBAN|FBAV|FB_IAB|FBIOS|Messenger|Barcelona|Threads|musical_ly|BytedanceWebview|TikTok|Snapchat|LinkedInApp|Pinterest|Line\/|MicroMessenger|KAKAOTALK)/i;
+
 export const EMBEDDED_WEBVIEW_ERROR =
-  "Passkeys don't work in this app's built-in browser. Open this page in Safari, or use an email code.";
+  "Passkeys don't work in this app's built-in browser. Open this page in Safari or Chrome, or use an email code.";
+
+/** Shown when the prompt was refused before anyone could have seen it. */
+export const BLOCKED_CEREMONY_ERROR =
+  "This browser blocked the passkey prompt. If you opened this link from another app, open it in Safari or Chrome instead, or use an email code.";
 
 /**
  * The `autocomplete` value the sign-in email field MUST carry for conditional
@@ -83,6 +98,23 @@ export function cancelPasskeyCeremony(): void {
 function isUserCancellation(err: unknown): boolean {
   const name = (err as { name?: string } | null)?.name;
   return name === 'NotAllowedError' || name === 'AbortError';
+}
+
+/**
+ * Faster than any person could see a passkey sheet and dismiss it.
+ *
+ * A browser that will not show the sheet at all (an in-app browser the user
+ * agent checks above failed to name) rejects with the same NotAllowedError a
+ * member's cancel produces, but within a few hundred milliseconds: the
+ * Instagram failures in Sentry came back in 158ms. The sheet's own animation
+ * takes longer than this, so a real cancel never lands under it.
+ */
+export const BLOCKED_CEREMONY_MS = 600;
+
+/** A NotAllowedError that arrived too fast to be the member saying no. */
+export function isBlockedCeremony(err: unknown, elapsedMs: number): boolean {
+  const name = (err as { name?: string } | null)?.name;
+  return name === 'NotAllowedError' && elapsedMs < BLOCKED_CEREMONY_MS;
 }
 
 async function errorFrom(response: Response, fallback: string): Promise<string> {
@@ -289,6 +321,7 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
       elapsedMs: Date.now() - startedAt,
       extra: { prefetched: cached !== null },
     });
+    if (isBlockedCeremony(err, Date.now() - startedAt)) return { ok: false, error: BLOCKED_CEREMONY_ERROR };
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'Your device did not complete passkey setup.' };
   }
@@ -349,6 +382,7 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
       elapsedMs: Date.now() - startedAt,
       extra: { prefetched: cached !== null },
     });
+    if (isBlockedCeremony(err, Date.now() - startedAt)) return { ok: false, error: BLOCKED_CEREMONY_ERROR };
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'No passkey was used.' };
   }
