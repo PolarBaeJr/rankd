@@ -2,12 +2,12 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Card, Checkbox, Input, Select, Textarea, useConfirm } from '@badminton/ui';
+import { Button, Card, Checkbox, DateTimePicker, Dialog, Input, Select, Textarea, useConfirm } from '@badminton/ui';
 import { CLUB_EVENT_KINDS, CLUB_EVENT_KIND_LABELS } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { cancelClubEvent, createClubEvent, deleteClubEvent, updateClubEvent } from '@/lib/actions/club-events';
 
-// Times are club wall-clock strings from `datetime-local` inputs. The action
+// Times are club wall-clock strings, "YYYY-MM-DDTHH:MM", from DateTimePicker. The action
 // converts them, so nothing here builds a Date from one.
 export interface ClubEventFormValues {
   title: string;
@@ -125,30 +125,26 @@ export function ClubEventForm({
           onChange={(e) => set('location', e.target.value)}
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <DateTimePicker
             label="Starts"
-            type="datetime-local"
             required
             value={values.starts_at}
-            onChange={(e) => set('starts_at', e.target.value)}
+            onChange={(next) => set('starts_at', next)}
           />
-          <Input
+          <DateTimePicker
             label="Ends"
-            type="datetime-local"
             value={values.ends_at}
-            onChange={(e) => set('ends_at', e.target.value)}
+            onChange={(next) => set('ends_at', next)}
           />
-          <Input
+          <DateTimePicker
             label="Sign-ups open"
-            type="datetime-local"
             value={values.signup_opens_at}
-            onChange={(e) => set('signup_opens_at', e.target.value)}
+            onChange={(next) => set('signup_opens_at', next)}
           />
-          <Input
+          <DateTimePicker
             label="Sign-ups close"
-            type="datetime-local"
             value={values.signup_closes_at}
-            onChange={(e) => set('signup_closes_at', e.target.value)}
+            onChange={(next) => set('signup_closes_at', next)}
           />
           <Input
             label="Capacity"
@@ -206,17 +202,12 @@ export function ClubEventControls({
   const { toast } = useToast();
   const confirm = useConfirm();
   const [reason, setReason] = useState('');
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // The reason is asked for in the dialog itself, so the page carries one
+  // button rather than a reason box that is always open.
   async function handleCancel() {
-    const ok = await confirm({
-      title: 'Cancel this event?',
-      message: 'Everyone signed up is sent a notification. A cancelled event cannot be reopened.',
-      confirmLabel: 'Cancel event',
-      cancelLabel: 'Keep event',
-      danger: true,
-    });
-    if (!ok) return;
     setBusy(true);
     try {
       const result = await cancelClubEvent(eventId, reason);
@@ -224,6 +215,7 @@ export function ClubEventControls({
         toast(result.error, 'error');
         return;
       }
+      setCancelOpen(false);
       toast('Event cancelled', 'success');
       router.refresh();
     } finally {
@@ -255,31 +247,47 @@ export function ClubEventControls({
 
   if (!canCancel && !canDelete) return null;
   return (
-    <Card>
-      <div className="flex flex-col gap-4">
+    <>
+      <div className="flex flex-wrap gap-2">
         {canCancel && (
-          <>
-            <Input
-              label="Reason for cancelling (sent to members)"
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-            <div>
-              <Button variant="danger" onClick={handleCancel} loading={busy}>
-                Cancel event
-              </Button>
-            </div>
-          </>
+          <Button variant="danger" onClick={() => setCancelOpen(true)} disabled={busy}>
+            Cancel event
+          </Button>
         )}
         {canDelete && (
-          <div>
-            <Button variant="secondary" onClick={handleDelete} loading={busy}>
-              Delete event
-            </Button>
-          </div>
+          <Button variant="secondary" onClick={handleDelete} loading={busy}>
+            Delete event
+          </Button>
         )}
       </div>
-    </Card>
+      <Dialog
+        open={cancelOpen}
+        onClose={() => !busy && setCancelOpen(false)}
+        title="Cancel this event?"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCancelOpen(false)} disabled={busy}>
+              Keep event
+            </Button>
+            <Button variant="danger" onClick={handleCancel} loading={busy}>
+              Cancel event
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-[var(--ink-2)]">
+            Everyone signed up is sent a notification. A cancelled event cannot be reopened.
+          </p>
+          <Textarea
+            label="Reason (sent to members)"
+            maxLength={500}
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+      </Dialog>
+    </>
   );
 }

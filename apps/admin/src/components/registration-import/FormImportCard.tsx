@@ -130,6 +130,7 @@ export function FormImportCard({
   migrationMissing,
   reader,
   events = [],
+  enteredListedElsewhere = false,
 }: {
   targetKind: ImportTargetKind;
   targetId: string;
@@ -148,6 +149,8 @@ export function FormImportCard({
   reader: { state: 'not_configured' } | { state: 'invalid' } | { state: 'ready'; clientEmail: string };
   /** A tournament's events, for the question mapping. */
   events?: MappableEvent[];
+  /** The page lists entered people itself (a club event's Signed up), so only the rest are listed here. */
+  enteredListedElsewhere?: boolean;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -172,7 +175,9 @@ export function FormImportCard({
     return <p className="text-sm text-[var(--text-muted)]">{migrationMissing}</p>;
   }
 
-  const live = entries.filter((e) => e.status !== 'superseded');
+  const live = entries.filter(
+    (e) => e.status !== 'superseded' && !(enteredListedElsewhere && e.status === 'entered'),
+  );
   const readerShown = bindings.some((b) => b.reader !== null);
 
   return (
