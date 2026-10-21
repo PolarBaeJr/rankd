@@ -1,14 +1,19 @@
-import type { ClubEventSignupState } from '@badminton/shared';
+import {
+  CLUB_WALL_CLOCK_PATTERN,
+  utcToClubWallClock,
+  type ClubEventSignupState,
+} from "@badminton/shared";
 
 // What the members' club event pages read and say, shared by the list and the
 // detail page. Explicit columns, never `*`: created_by is not a member's
 // business, and the player app never selects it.
 export const CLUB_EVENT_COLUMNS =
-  'id, title, kind, description, location, starts_at, ends_at, capacity, cost_cents, signup_opens_at, signup_closes_at, status, cancelled_reason';
+  "id, title, kind, description, location, starts_at, ends_at, capacity, cost_cents, signup_opens_at, signup_closes_at, status, cancelled_reason";
 
 // What the schedule on /feed needs to place an event on a day and link to it.
 // Narrower again: no description, and never created_by.
-export const CLUB_EVENT_CALENDAR_COLUMNS = 'id, title, kind, location, starts_at, ends_at, status';
+export const CLUB_EVENT_CALENDAR_COLUMNS =
+  "id, title, kind, location, starts_at, ends_at, status";
 
 export type ClubEventRow = {
   id: string;
@@ -27,11 +32,41 @@ export type ClubEventRow = {
 };
 
 export const SIGNUP_STATE_LABEL: Record<ClubEventSignupState, string> = {
-  going: 'You are going',
-  open: 'Sign-ups open',
-  full: 'Full',
-  not_open_yet: 'Sign-ups not open yet',
-  closed: 'Sign-ups closed',
-  started: 'Started',
-  cancelled: 'Cancelled',
+  going: "You are going",
+  open: "Sign-ups open",
+  full: "Full",
+  not_open_yet: "Sign-ups not open yet",
+  closed: "Sign-ups closed",
+  started: "Started",
+  cancelled: "Cancelled",
 };
+
+/**
+ * An instant as the club's wall clock, in the pieces a date block shows:
+ * `{ weekday: 'TUE', month: 'NOV', day: 3, date: 'Tue, Nov 3', time: '7:30 PM' }`.
+ * Through the club wall clock, never the server's zone (see
+ * clubWallClockToUtc).
+ */
+export function clubDateParts(iso: string) {
+  const m = CLUB_WALL_CLOCK_PATTERN.exec(utcToClubWallClock(iso));
+  const at = m
+    ? new Date(
+        Date.UTC(
+          Number(m[1]),
+          Number(m[2]) - 1,
+          Number(m[3]),
+          Number(m[4]),
+          Number(m[5]),
+        ),
+      )
+    : new Date(iso);
+  const part = (options: Intl.DateTimeFormatOptions) =>
+    at.toLocaleString("en-US", { ...options, timeZone: "UTC" });
+  return {
+    weekday: part({ weekday: "short" }).toUpperCase(),
+    month: part({ month: "short" }).toUpperCase(),
+    day: Number(part({ day: "numeric" })),
+    date: part({ weekday: "short", month: "short", day: "numeric" }),
+    time: part({ hour: "numeric", minute: "2-digit" }),
+  };
+}

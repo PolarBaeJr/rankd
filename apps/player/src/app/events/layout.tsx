@@ -1,5 +1,9 @@
-import { FeatureGate } from '@/lib/feature-gate';
+import { FeatureGate } from "@/lib/feature-gate";
 
-export default function ClubEventsLayout({ children }: { children: React.ReactNode }) {
+export default function ClubEventsLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return <FeatureGate feature="events">{children}</FeatureGate>;
 }
