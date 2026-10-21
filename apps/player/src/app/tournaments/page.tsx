@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import * as Sentry from '@sentry/nextjs';
-import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import {
   CLUB_TIMEZONE,
   isDoublesEvent,
@@ -90,19 +90,21 @@ export default async function TournamentsPage({
   const seasonParam = (typeof rawSeason === 'string' ? rawSeason : '').trim();
   if (seasonParam && !UUID.test(seasonParam)) redirect('/tournaments');
 
-  const supabase = await createServerSupabaseClient();
   const { player } = await getViewer();
+  // A signed-out visitor sees the club's tournaments too, and has no grant on
+  // any of these tables, so they read through the service role. Every read
+  // below is already the member's view (drafts left out by
+  // tournamentCalendarQuery, entries only for a player), so nothing widens.
+  const supabase = player ? await createServerSupabaseClient() : createServiceRoleClient();
   const todayKey = clubDayKey(new Date().toISOString(), CLUB_TIMEZONE);
 
   // Members see the season they are playing in. Same rule as the sessions list.
   //
   // The whole list rather than the active row alone, because the picker needs
   // the club's terms and the active season is simply the one in it with the
-  // flag set: one round trip, not two. Read as the MEMBER and not through the
-  // service role, unlike the leaderboard's copy of this read: that page is
-  // public and 00128 left the anon key no grant on `seasons`, where
-  // /tournaments is behind the middleware's auth gate and `seasons_select`
-  // grants `authenticated` the row.
+  // flag set: one round trip, not two. Read as the member where there is one;
+  // 00128 left the anon key no grant on `seasons`, so a visitor's read is the
+  // service role's, as on the leaderboard.
   const { data: seasonRows } = await supabase
     .from('seasons')
     .select('id, name, start_date, end_date, active_flag, hidden_flag')

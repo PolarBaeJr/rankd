@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { PageHeader, Badge } from '@badminton/ui';
 import {
   CLUB_EVENT_KIND_LABELS,
@@ -14,14 +13,16 @@ import { CLUB_EVENT_COLUMNS, SIGNUP_STATE_LABEL, type ClubEventRow } from '@/lib
 
 export default async function ClubEventsPage() {
   const { player } = await getViewer();
-  if (!player) redirect('/login');
 
-  // RLS hands back published and cancelled events only; a draft never reaches
-  // this page. created_by is never selected.
-  const supabase = await createServerSupabaseClient();
-  const { data: eventData } = await supabase
+  // Published and cancelled events only; a draft never reaches this page, and
+  // created_by is never selected. A member reads through RLS, which already
+  // filters; a signed-out visitor has no grant, so the service role reads with
+  // the filter written out.
+  const supabase = player ? await createServerSupabaseClient() : null;
+  const { data: eventData } = await (supabase ?? createServiceRoleClient())
     .from('club_events')
     .select(CLUB_EVENT_COLUMNS)
+    .in('status', ['published', 'cancelled'])
     .order('starts_at', { ascending: true });
   const events = (eventData ?? []) as ClubEventRow[];
   const now = new Date();
@@ -35,7 +36,9 @@ export default async function ClubEventsPage() {
   const [{ data: takenRows }, { data: mineRows }] = ids.length
     ? await Promise.all([
         createServiceRoleClient().from('club_event_signups').select('event_id').in('event_id', ids),
-        supabase.from('club_event_signups').select('event_id').eq('player_id', player.id),
+        supabase && player
+          ? supabase.from('club_event_signups').select('event_id').eq('player_id', player.id)
+          : { data: [] },
       ])
     : [{ data: [] }, { data: [] }];
   const taken = new Map<string, number>();

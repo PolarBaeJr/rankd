@@ -101,6 +101,23 @@ describe('isPublicPath', () => {
 
     // Exact match, not a prefix — /leaderboard/<something> is not a thing the
     // gate should open up wholesale.
+    it('opens the event and tournament lists and one event page, nothing under them', () => {
+      const id = '0b7a8f6e-3c1d-4e2f-9a8b-7c6d5e4f3a2b';
+      for (const path of ['/events', '/tournaments', `/events/${id}`, `/tournaments/${id}`]) {
+        expect(isPublicPath(path)).toBe(true);
+      }
+      for (const path of [
+        `/tournaments/${id}/events/${id}`,
+        `/tournaments/${id}/events`,
+        '/events/not-a-uuid',
+        '/eventsx',
+        '/tournamentsx',
+        `/events/${id}/anything`,
+      ]) {
+        expect(isPublicPath(path)).toBe(false);
+      }
+    });
+
     it('matches /leaderboard exactly', () => {
       expect(isPublicPath('/leaderboard/season-2')).toBe(false);
     });
