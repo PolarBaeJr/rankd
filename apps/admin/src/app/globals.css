@@ -641,3 +641,17 @@ html, body { overflow-x: clip; }
   display: grid;
   justify-content: safe center;
 }
+
+/* The event print sheet (tournaments/[id]/events/[eventId]/print): only the
+   sheet reaches the printer, without the sidebar, page chrome or its frame. */
+@media print {
+  body:has(.print-sheet) * { visibility: hidden; }
+  body:has(.print-sheet) .print-sheet,
+  body:has(.print-sheet) .print-sheet * { visibility: visible; }
+  body:has(.print-sheet) .print-sheet {
+    position: absolute; left: 0; top: 0; width: 100%;
+    border: 0; border-radius: 0; padding: 0;
+  }
+  body:has(.print-sheet) { background: #fff; }
+  @page { margin: 12mm; }
+}
