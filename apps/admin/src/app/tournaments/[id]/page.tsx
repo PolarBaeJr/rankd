@@ -177,6 +177,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             {/* One code for the whole tournament — a scan checks the player
                 into every event they are entered in. */}
             <TournamentCheckinQr tournamentId={tournament.id} tournamentName={tournament.name} />
+            <Link
+              href={`/tournaments/${tournament.id}/checkin`}
+              className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--bg-elevated)]"
+            >
+              Check-in list
+            </Link>
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>
