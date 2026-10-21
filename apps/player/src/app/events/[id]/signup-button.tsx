@@ -21,7 +21,7 @@ const DONE: Record<Act, string> = {
   leave: "You left the waitlist",
 };
 
-// The "your spot" panel under the event's details: one line saying where the
+// The "your spot" card beside the event's details: one line saying where the
 // member stands, and only the buttons the server would accept in that state
 // (it decides again either way). `position` is the member's place on the
 // waitlist (00294), and `canWait` says the event takes a waitlist.
@@ -127,23 +127,10 @@ export function SignupButton({
 
   return (
     <div>
-      <div className="stat-label" style={{ marginBottom: 6 }}>
-        Your spot
-      </div>
-      <div className="event-spot-title">{title}</div>
-      {detail && (
-        <div className="hero-meta-dim" style={{ fontSize: 13, marginTop: 4 }}>
-          {detail}
-        </div>
-      )}
-      {buttons.length > 0 && (
-        <div
-          className="row"
-          style={{ gap: 8, flexWrap: "wrap", marginTop: 16 }}
-        >
-          {buttons}
-        </div>
-      )}
+      <div className="ev-label">Your spot</div>
+      <div className="ev-spot-title">{title}</div>
+      {detail && <p className="ev-spot-detail">{detail}</p>}
+      {buttons.length > 0 && <div className="ev-spot-actions">{buttons}</div>}
     </div>
   );
 }

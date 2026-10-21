@@ -1,6 +1,6 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { ArrowLeft, CalendarDays, MapPin } from "lucide-react";
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { ArrowLeft, CalendarPlus, Clock, MapPin, Wallet } from 'lucide-react';
 import {
   CLUB_EVENT_KIND_LABELS,
   clubEventSignupState,
@@ -8,21 +8,18 @@ import {
   formatClubEventTime,
   isUuid,
   type ClubEventKind,
-} from "@badminton/shared";
-import {
-  createServerSupabaseClient,
-  createServiceRoleClient,
-  getViewer,
-} from "@/lib/supabase-server";
+} from '@badminton/shared';
+import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import {
   CLUB_EVENT_COLUMNS,
   SIGNUP_STATE_LABEL,
   clubDateParts,
+  googleCalendarLink,
   type ClubEventRow,
-} from "@/lib/club-event-view";
-import { clubEventFormLink } from "@/lib/event-form-link";
-import { VisitorSignup } from "@/components/visitor-signup";
-import { SignupButton } from "./signup-button";
+} from '@/lib/club-event-view';
+import { clubEventFormLink } from '@/lib/event-form-link';
+import { VisitorSignup } from '@/components/visitor-signup';
+import { SignupButton } from './signup-button';
 
 export default async function ClubEventPage({
   params,
@@ -128,37 +125,17 @@ export default async function ClubEventPage({
   const timeRange = ends
     ? `${starts.time} to ${ends.date === starts.date ? ends.time : `${ends.date}, ${ends.time}`}`
     : starts.time;
-  const fill = event.capacity
-    ? Math.min(100, Math.round((taken / event.capacity) * 100))
-    : 0;
-  const left =
-    event.capacity === null ? null : Math.max(0, event.capacity - taken);
+  const fill = event.capacity ? Math.min(100, Math.round((taken / event.capacity) * 100)) : 0;
+  const left = event.capacity === null ? null : Math.max(0, event.capacity - taken);
   const stateTag =
-    state === "going"
-      ? "tag tag-win"
-      : state === "cancelled" || state === "full"
-        ? "tag tag-red"
-        : "tag";
-  const kindLabel =
-    CLUB_EVENT_KIND_LABELS[event.kind as ClubEventKind] ?? event.kind;
+    state === 'going' ? 'tag tag-win' : state === 'cancelled' || state === 'full' ? 'tag tag-red' : 'tag';
+  const kindLabel = CLUB_EVENT_KIND_LABELS[event.kind as ClubEventKind] ?? event.kind;
+  const opensLater = !!event.signup_opens_at && state === 'not_open_yet';
 
   return (
     <div>
-      <Link
-        href="/events"
-        className="row press"
-        style={{ gap: 8, fontSize: 13, color: "var(--mute)", marginBottom: 18 }}
-      >
-        <ArrowLeft size={16} />
-        All club events
-      </Link>
-
-      {event.status === "cancelled" && (
-        <div
-          className="card-base"
-          role="status"
-          style={{ marginBottom: 20, borderColor: "var(--red)" }}
-        >
+      {event.status === 'cancelled' && (
+        <div className="card-base" role="status" style={{ marginBottom: 20, borderColor: 'var(--red)' }}>
           <h3 className="card-title">This event is cancelled</h3>
           {event.cancelled_reason && (
             <p className="card-sub" style={{ margin: 0 }}>
@@ -168,168 +145,136 @@ export default async function ClubEventPage({
         </div>
       )}
 
-      <section className="hero-banner" style={{ marginBottom: 20 }}>
-        <div style={{ position: "relative", zIndex: 2, minWidth: 0 }}>
-          <div
-            className="row"
-            style={{ gap: 10, flexWrap: "wrap", marginBottom: 12 }}
-          >
-            <div className="eyebrow" style={{ margin: 0 }}>
-              Club event · {kindLabel}
-            </div>
-            <span className={stateTag}>{SIGNUP_STATE_LABEL[state]}</span>
-          </div>
-          <h2>{event.title}</h2>
-          <div
-            className="hero-meta row"
-            style={{
-              gap: 16,
-              flexWrap: "wrap",
-              fontSize: 14,
-              marginBottom: 24,
-            }}
-          >
-            <span className="row" style={{ gap: 6 }}>
-              <CalendarDays size={15} /> {starts.date}, {timeRange}
-            </span>
-            {event.location && (
-              <span className="row" style={{ gap: 6 }}>
-                <MapPin size={15} /> {event.location}
-              </span>
-            )}
-          </div>
-          {player ? (
-            <SignupButton
-              eventId={event.id}
-              state={state}
-              position={waitlist.position}
-              canWait={canWait}
-              closesAt={
-                event.signup_closes_at
-                  ? formatClubEventTime(event.signup_closes_at)
-                  : null
-              }
-              opensAt={
-                event.signup_opens_at
-                  ? formatClubEventTime(event.signup_opens_at)
-                  : null
-              }
-            />
-          ) : (
-            <VisitorSignup
-              formUrl={formUrl}
-              open={state === "open" || state === "full"}
-            />
-          )}
-          {drawHref && (
-            <Link
-              href={drawHref}
-              className="btn btn-ghost"
-              style={{ marginTop: 12 }}
-            >
-              See the draw
-            </Link>
-          )}
+      <header className="ev-hero">
+        <div className="ev-hero-watermark" aria-hidden="true">
+          {starts.month} {String(starts.day).padStart(2, '0')}
         </div>
-
-        <div className="hero-stats">
-          <div className="stat">
-            <div className="stat-label">{starts.weekday}</div>
-            <div className="stat-value">
-              {starts.month} {starts.day}
-            </div>
-            <div className="hero-meta-dim mono" style={{ fontSize: 12 }}>
-              {starts.time}
-            </div>
+        <Link
+          href="/events"
+          className="row press"
+          style={{ gap: 8, fontSize: 13, color: 'var(--mute)', position: 'relative' }}
+        >
+          <ArrowLeft size={16} />
+          All club events
+        </Link>
+        <div className="ev-hero-body">
+          <div className="ev-date">
+            <div className="month">{starts.month}</div>
+            <div className="day">{starts.day}</div>
+            <div className="weekday">{starts.weekday}</div>
           </div>
-          <div className="stat">
-            <div className="stat-label">Places</div>
-            <div className="stat-value">
-              {taken}
-              {event.capacity !== null && (
-                <span className="hero-meta-dim">/{event.capacity}</span>
-              )}
+          <div style={{ minWidth: 0 }}>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+              <span className="ev-label red">Club event · {kindLabel}</span>
+              <span className={stateTag}>{SIGNUP_STATE_LABEL[state]}</span>
             </div>
-            {event.capacity !== null && (
-              <>
-                <div className="capacity-bar" style={{ marginTop: 6 }}>
-                  <div
-                    className={`fill${fill >= 100 ? " full" : fill >= 80 ? " warn" : ""}`}
-                    style={{ width: `${fill}%` }}
-                  />
-                </div>
-                <div className="hero-meta-dim mono" style={{ fontSize: 12 }}>
-                  {left === 0 ? "Full" : `${left} left`}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="stat">
-            <div className="stat-label">Cost</div>
-            <div className="stat-value">{cost ?? "Free"}</div>
-          </div>
-          <div className="stat">
-            <div className="stat-label">Type</div>
-            <div className="stat-value" style={{ fontSize: 22 }}>
-              {kindLabel}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="event-detail-grid">
-        <div className="card-base">
-          <h3 className="card-title">About this event</h3>
-          {event.description ? (
-            <p
-              style={{
-                whiteSpace: "pre-wrap",
-                margin: "8px 0 0",
-                lineHeight: 1.65,
-                color: "var(--ink-2)",
-              }}
-            >
-              {event.description}
-            </p>
-          ) : (
-            <p className="card-sub" style={{ margin: "8px 0 0" }}>
-              No details yet.
-            </p>
-          )}
-        </div>
-        <div className="card-base">
-          <h3 className="card-title">Good to know</h3>
-          <ul className="event-facts">
-            {event.signup_opens_at && (
-              <li>
-                <span className="muted">Sign-ups open</span>
-                <span>{formatClubEventTime(event.signup_opens_at)}</span>
-              </li>
-            )}
-            <li>
-              <span className="muted">Sign-ups close</span>
+            <h1 className="ev-title">{event.title}</h1>
+            <div className="ev-meta">
               <span>
-                {event.signup_closes_at
-                  ? formatClubEventTime(event.signup_closes_at)
-                  : "When it starts"}
+                <Clock size={17} /> {timeRange}
               </span>
-            </li>
-            {event.capacity !== null && (
-              <li>
-                <span className="muted">When it is full</span>
-                <span>
-                  Join the waitlist; a freed place is offered in the app
-                </span>
-              </li>
-            )}
-            {cost && cost !== "Free" && (
-              <li>
-                <span className="muted">Fee</span>
-                <span>{cost}, kept if you do not show up</span>
-              </li>
-            )}
-          </ul>
+              <span>
+                <MapPin size={17} /> {event.location ?? 'Place to be announced'}
+              </span>
+              <span>
+                <Wallet size={17} /> {cost ?? 'Free'}
+              </span>
+            </div>
+          </div>
         </div>
+      </header>
+
+      <div className="ev-layout">
+        <div style={{ display: 'grid', gap: 20, minWidth: 0 }}>
+          <section className="ev-panel">
+            <div className="ev-label">About</div>
+            <p className="ev-about">{event.description || 'No details yet.'}</p>
+          </section>
+          <section className="ev-panel">
+            <div className="ev-label">Good to know</div>
+            <div className="ev-facts">
+              <div className="ev-fact">
+                <div className="k">{opensLater ? 'Sign-ups open' : 'Sign-ups close'}</div>
+                <div className="v">
+                  {opensLater
+                    ? formatClubEventTime(event.signup_opens_at as string)
+                    : event.signup_closes_at
+                      ? formatClubEventTime(event.signup_closes_at)
+                      : 'When it starts'}
+                </div>
+              </div>
+              <div className="ev-fact">
+                <div className="k">When it is full</div>
+                <div className="v">{event.capacity === null ? 'No limit on places' : 'Join the waitlist'}</div>
+              </div>
+              <div className="ev-fact">
+                <div className="k">Fee</div>
+                <div className="v">{cost ? 'Kept if you do not show' : 'Nothing to pay'}</div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside className="ev-panel ev-spot">
+          <section>
+            {player ? (
+              <SignupButton
+                eventId={event.id}
+                state={state}
+                position={waitlist.position}
+                canWait={canWait}
+                closesAt={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
+                opensAt={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
+              />
+            ) : (
+              <VisitorSignup formUrl={formUrl} open={state === 'open' || state === 'full'} />
+            )}
+          </section>
+          <section>
+            <div className="ev-places">
+              <span className="ev-label">Places</span>
+              <span className="mono" style={{ fontSize: 13 }}>
+                <b>{taken}</b>
+                {event.capacity !== null && ` / ${event.capacity}`}
+              </span>
+            </div>
+            {event.capacity !== null && (
+              <div className="capacity-bar">
+                <div
+                  className={`fill${fill >= 100 ? ' full' : fill >= 80 ? ' warn' : ''}`}
+                  style={{ width: `${fill}%` }}
+                />
+              </div>
+            )}
+            <div className="muted" style={{ fontSize: 13 }}>
+              {left === null
+                ? `${taken} going`
+                : left === 0
+                  ? 'Full. New sign-ups join the waitlist.'
+                  : `${left} ${left === 1 ? 'place' : 'places'} left`}
+            </div>
+          </section>
+          {(drawHref || event.status !== 'cancelled') && (
+            <section style={{ display: 'grid', gap: 8 }}>
+              {drawHref && (
+                <Link href={drawHref} className="btn btn-ghost" style={{ justifyContent: 'center' }}>
+                  See the draw
+                </Link>
+              )}
+              {event.status !== 'cancelled' && (
+                <a
+                  href={googleCalendarLink(event)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="row press"
+                  style={{ gap: 8, justifyContent: 'center', fontSize: 14, color: 'var(--ink-2)', minHeight: 40 }}
+                >
+                  <CalendarPlus size={16} /> Add to Google Calendar
+                </a>
+              )}
+            </section>
+          )}
+        </aside>
       </div>
     </div>
   );
