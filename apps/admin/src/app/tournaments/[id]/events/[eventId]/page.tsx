@@ -14,7 +14,7 @@ import {
 // By SUBPATH — node:crypto, server only.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { formSignedWaivers } from '@badminton/shared';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Printer } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { LiveTournament } from '../../../live-tournament';
@@ -429,13 +429,22 @@ export default async function EventPage({
         eventIds={[eventId]}
         draw
       />
-      <Link
-        href={`/tournaments/${tournamentId}`}
-        className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        Back to {tournament.name}
-      </Link>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href={`/tournaments/${tournamentId}`}
+          className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to {tournament.name}
+        </Link>
+        <Link
+          href={`/tournaments/${tournamentId}/events/${eventId}/print`}
+          className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors"
+        >
+          <Printer className="w-4 h-4" />
+          Print groups and schedule
+        </Link>
+      </div>
 
       <EventControlCenter
         tournament={tournament}
