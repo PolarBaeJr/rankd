@@ -17,13 +17,36 @@ import { TournamentCheckInBoard } from './checkin-board';
 // with the event.
 
 type Name = { full_name: string | null } | { full_name: string | null }[] | null;
-const nameOf = (player: Name) => (Array.isArray(player) ? player[0] : player)?.full_name ?? 'A player';
+const embeddedName = (player: Name) => (Array.isArray(player) ? player[0] : player)?.full_name ?? null;
+const nameOf = (player: Name) => embeddedName(player) ?? 'A player';
 
-// The event page's rules (CheckInTab): check-in while registration or check-in
-// is open, undo only while check-in is open.
-function closedReason(status: string, here: boolean): string | undefined {
-  if (here) return status === 'checkin' ? undefined : 'Check-in is closed for this event';
-  return status === 'registration' || status === 'checkin' ? undefined : 'Check-in is closed for this event';
+type PairRow = {
+  id: string;
+  event_id: string;
+  status: string;
+  pair_name: string | null;
+  external1_name: string | null;
+  external2_name: string | null;
+  player1: Name;
+  player2: Name;
+};
+
+// An external team's players are not members: their names are on the pair
+// (external1_name / external2_name), the same fallback the Discord reads use.
+function pairName(pair: PairRow): string {
+  const names = [embeddedName(pair.player1) ?? pair.external1_name, embeddedName(pair.player2) ?? pair.external2_name]
+    .filter(Boolean)
+    .join(' / ');
+  return names || pair.pair_name || 'A pair';
+}
+
+// The database's rule (set_field_entry_status, 00201): check-in and its undo
+// only while the event's check-in is open. Not CheckInTab's rule, which also
+// offers Check in during registration and then gets refused.
+function closedReason(status: string): string | undefined {
+  if (status === 'checkin') return undefined;
+  if (status === 'registration') return 'Check-in has not opened yet. Open it on the event page.';
+  return 'Check-in is closed for this event';
 }
 
 export default async function TournamentCheckInPage({ params }: { params: Promise<{ id: string }> }) {
@@ -56,7 +79,7 @@ export default async function TournamentCheckInPage({ params }: { params: Promis
       ? adminClient
           .from('tournament_pairs')
           .select(
-            'id, event_id, status, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)',
+            'id, event_id, status, pair_name, external1_name, external2_name, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)',
           )
           .in('event_id', doublesIds)
           .in('status', ['registered', 'checked_in'])
@@ -80,20 +103,18 @@ export default async function TournamentCheckInPage({ params }: { params: Promis
           name: nameOf(row.player),
           detail: label(row.event_id),
           here,
-          blockedReason: closedReason(eventById.get(row.event_id)?.status ?? '', here),
+          blockedReason: closedReason(eventById.get(row.event_id)?.status ?? ''),
         };
       },
     ),
-    ...(
-      (pairsData ?? []) as unknown as { id: string; event_id: string; status: string; player1: Name; player2: Name }[]
-    ).map((row) => {
+    ...((pairsData ?? []) as unknown as PairRow[]).map((row) => {
       const here = row.status === 'checked_in';
       return {
         key: `pair:${row.id}`,
-        name: `${nameOf(row.player1)} / ${nameOf(row.player2)}`,
+        name: pairName(row),
         detail: label(row.event_id),
         here,
-        blockedReason: closedReason(eventById.get(row.event_id)?.status ?? '', here),
+        blockedReason: closedReason(eventById.get(row.event_id)?.status ?? ''),
       };
     }),
   ];
