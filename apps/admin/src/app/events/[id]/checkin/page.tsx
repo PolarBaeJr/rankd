@@ -68,7 +68,7 @@ export default async function ClubEventCheckInPage({ params }: { params: Promise
   ];
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div>
       <PageHeader
         eyebrow="CHECK-IN"
         title={event.title as string}
