@@ -29,6 +29,31 @@ async function firstActiveForm(service: Service, column: 'club_event_id' | 'tour
   return formId ? formLink(formId) : null;
 }
 
+/**
+ * The forms of several club events at once, by event id, for the Discord
+ * mirror. A read error is returned, not swallowed: there a missing link would
+ * read as a changed description and rewrite every Discord event.
+ */
+export async function clubEventFormLinks(
+  service: Service,
+  eventIds: string[],
+): Promise<{ links: Map<string, string>; error: string | null }> {
+  const links = new Map<string, string>();
+  if (eventIds.length === 0) return { links, error: null };
+  const { data, error } = await service
+    .from('registration_import_forms' as never)
+    .select('form_id, club_event_id, created_at')
+    .in('club_event_id', eventIds)
+    .eq('active', true)
+    .order('created_at', { ascending: false });
+  if (error) return { links, error: (error as { message?: string }).message ?? 'unknown' };
+  for (const row of (data ?? []) as { form_id: string; club_event_id: string }[]) {
+    // Newest first, so the first form seen for an event is the one it uses.
+    if (!links.has(row.club_event_id)) links.set(row.club_event_id, formLink(row.form_id));
+  }
+  return { links, error: null };
+}
+
 /** A club event's form. */
 export function clubEventFormLink(service: Service, eventId: string): Promise<string | null> {
   return firstActiveForm(service, 'club_event_id', [eventId]);
