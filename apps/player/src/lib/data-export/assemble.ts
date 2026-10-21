@@ -281,6 +281,9 @@ export async function assembleMemberExport(
   const ownWaitlist = await reader.all('tournament_event_waitlist', (q) =>
     q.eq('player_id', playerId),
   );
+  const ownClubEventWaitlist = await reader.all('club_event_waitlist', (q) =>
+    q.eq('player_id', playerId),
+  );
 
   const matchIds = ids(ownMatchParticipants, 'match_id');
   const participantIds = ids(ownTournamentParticipants, 'id');
@@ -516,6 +519,10 @@ export async function assembleMemberExport(
   // promoted or removed them, so it goes the way session_attendance.marked_by
   // does.
   data.tournament_event_waitlist = ownWaitlist.map((row) => ({
+    ...dropColumns(row, ['resolved_by']),
+    resolved_by_role: officerDescriptor(row.resolved_by as string | null),
+  }));
+  data.club_event_waitlist = ownClubEventWaitlist.map((row) => ({
     ...dropColumns(row, ['resolved_by']),
     resolved_by_role: officerDescriptor(row.resolved_by as string | null),
   }));

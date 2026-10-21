@@ -29,21 +29,34 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const event = eventData as ClubEventRow | null;
   if (!event) notFound();
 
-  const [{ count: takenCount }, { data: mineRow }] = await Promise.all([
-    createServiceRoleClient()
-      .from('club_event_signups')
-      .select('player_id', { count: 'exact', head: true })
-      .eq('event_id', id),
+  const service = createServiceRoleClient();
+  const [{ count: takenCount }, { data: takenByRpc, error: takenError }, { data: mineRow }, waitlist] = await Promise.all([
+    service.from('club_event_signups').select('player_id', { count: 'exact', head: true }).eq('event_id', id),
+    // The places taken as the sign-up RPC counts them: guests too, and not
+    // no-shows (00294). Before 00294 the plain count stands.
+    service.rpc('club_event_taken' as never, { p_event_id: id } as never),
     supabase
       .from('club_event_signups')
       .select('event_id')
       .eq('event_id', id)
       .eq('player_id', player.id)
       .maybeSingle(),
+    readWaitlist(service, id, player.id),
   ]);
-  const taken = takenCount ?? 0;
+  const taken = takenError || typeof takenByRpc !== 'number' ? takenCount ?? 0 : (takenByRpc as number);
   const state = clubEventSignupState(event, new Date(), taken, mineRow !== null);
   const cost = formatClubEventCost(event.cost_cents);
+  // A full event takes a waitlist until it ends, also after it starts: a
+  // no-show's place is given at the door. So does one with a freed place that
+  // members are already queued for.
+  const endsAt = new Date(event.ends_at ?? new Date(event.starts_at).getTime() + 6 * 3_600_000).getTime();
+  const canWait =
+    waitlist.available &&
+    !mineRow &&
+    event.capacity !== null &&
+    (taken >= event.capacity || waitlist.waiting > 0) &&
+    endsAt > Date.now() &&
+    (state === 'full' || state === 'started' || state === 'open');
 
   // The tournament this event runs on (00292), once the exec has activated it:
   // the draw and results live there. Read with the service role, because the
@@ -103,7 +116,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         )}
         {event.description && <p style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{event.description}</p>}
         <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
-          <SignupButton eventId={event.id} state={state} />
+          <SignupButton eventId={event.id} state={state} position={waitlist.position} canWait={canWait} />
           {drawHref && (
             <Link href={drawHref} className="btn btn-ghost">
               See the draw
@@ -113,4 +126,25 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       </div>
     </div>
   );
+}
+
+// The member's own place on the waitlist (00294), read with the service role
+// because members have no grant on the table. Any error (before 00294): no
+// waitlist, and the page is as it was.
+async function readWaitlist(
+  service: ReturnType<typeof createServiceRoleClient>,
+  eventId: string,
+  playerId: string,
+): Promise<{ available: boolean; position: number | null; waiting: number }> {
+  const { data, error } = await service
+    .from('club_event_waitlist' as never)
+    .select('id, player_id, joined_at')
+    .eq('event_id', eventId)
+    .eq('status', 'waiting')
+    .order('joined_at')
+    .order('id');
+  if (error) return { available: false, position: null, waiting: 0 };
+  const rows = (data ?? []) as { player_id: string }[];
+  const index = rows.findIndex((row) => row.player_id === playerId);
+  return { available: true, position: index === -1 ? null : index + 1, waiting: rows.length };
 }

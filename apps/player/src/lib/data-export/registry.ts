@@ -427,6 +427,14 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     withheldColumns: ['resolved_by'],
     why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
   },
+  club_event_waitlist: {
+    playerColumns: ['player_id', 'resolved_by'],
+    disposition: 'export',
+    // resolved_by is the OFFICER who gave the member the place or removed
+    // them (00294), as on tournament_event_waitlist.
+    withheldColumns: ['resolved_by'],
+    why: 'Every club event waitlist you joined, when, whether you were told a place opened, and whether you got the place, left or were removed.',
+  },
   data_api_predictions: {
     playerColumns: ['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2'],
     disposition: 'project',
