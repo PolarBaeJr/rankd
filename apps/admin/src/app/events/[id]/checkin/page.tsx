@@ -103,7 +103,9 @@ export default async function ClubEventCheckInPage({ params }: { params: Promise
   let waiting: WaitingRow[] = [];
   let members_: PlayerOption[] = [];
   let pastGuests: PastGuest[] = [];
-  if (canWrite && doorReady && event.status !== 'cancelled') {
+  // The door RPCs refuse a draft, so a draft gets check-in only.
+  const doorOpen = doorReady && event.status === 'published';
+  if (canWrite && doorOpen) {
     const signedUp = new Set(memberRows.map((row) => row.player_id));
     const [{ data: waitData, error: waitError }, { data: playerData }, { data: pastData }] = await Promise.all([
       adminClient
@@ -177,7 +179,7 @@ export default async function ClubEventCheckInPage({ params }: { params: Promise
           eventId={id}
           rows={rows}
           canWrite={canWrite}
-          doorReady={doorReady}
+          doorReady={doorOpen}
           waiting={waiting}
           members={members_}
           pastGuests={pastGuests}
