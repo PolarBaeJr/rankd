@@ -24,7 +24,8 @@ import { runAction, type ActionResult } from '../action-result';
 // draft and published are a `publish` boolean, and cancelled is its own act.
 //
 // Members sign up through the service-role RPCs in the player app. Nothing here
-// adds anybody to an event.
+// adds anybody to an event; the door's walk-ins and waitlist are in
+// club-event-door.ts (00294).
 
 type EventRow = {
   id: string;
@@ -306,17 +307,19 @@ async function setCheckInImpl(
   }
 
   const checkedInAt = checkedIn ? new Date().toISOString() : null;
+  // Somebody marked a no-show who turns up late is simply here (00294).
+  const columns = checkedIn ? { checked_in_at: checkedInAt, no_show_at: null } : { checked_in_at: checkedInAt };
   const { data, error } =
     target.kind === 'member'
       ? await adminClient
           .from('club_event_signups')
-          .update({ checked_in_at: checkedInAt })
+          .update(columns as never)
           .eq('event_id', eventId)
           .eq('player_id', target.id)
           .select('event_id')
       : await adminClient
           .from('club_event_external_signups')
-          .update({ checked_in_at: checkedInAt })
+          .update(columns as never)
           .eq('event_id', eventId)
           .eq('id', target.id)
           .select('event_id');
