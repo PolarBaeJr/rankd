@@ -111,10 +111,50 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     ({ data: signupData } = await readSignups('player_id, created_at, players(full_name)'));
   }
   const signupRows = (signupData ?? []) as unknown as SignupRow[];
-  const signups: ClubEventSignupRow[] = signupRows.map((row) => {
+  const signups = signupRows.map((row) => {
     const player = Array.isArray(row.players) ? row.players[0] : row.players;
     return { player_id: row.player_id, created_at: row.created_at, name: player?.full_name ?? 'A member' };
   });
+
+  // The Form's non-members (00284) and the door's walk-ins (00294) join the
+  // members in one list. A guest's waiver and fee come from the Form entry
+  // that put them here, which the Form card has already read.
+  const { data: guestData } =
+    canSeeSignups && externals > 0
+      ? await adminClient
+          .from('club_event_external_signups')
+          .select('id, full_name, email, import_entry_id, created_at, walk_in')
+          .eq('event_id', id)
+          .order('created_at', { ascending: true })
+      : { data: [] };
+  const entryById = new Map((formImports?.entries ?? []).map((entry) => [entry.id, entry]));
+  const guests = (
+    (guestData ?? []) as {
+      id: string;
+      full_name: string;
+      email: string | null;
+      import_entry_id: string | null;
+      created_at: string;
+      walk_in: boolean;
+    }[]
+  ).map((row): ClubEventSignupRow => {
+    const entry = row.import_entry_id ? entryById.get(row.import_entry_id) : undefined;
+    return {
+      kind: 'guest',
+      key: `guest:${row.id}`,
+      name: row.full_name,
+      created_at: row.created_at,
+      email: row.email,
+      walkIn: row.walk_in,
+      entryId: entry && entry.status === 'entered' ? entry.id : null,
+      waiverSigned: row.walk_in ? false : entry ? !!entry.waiver?.signed : null,
+      fee: entry?.fee ?? null,
+    };
+  });
+  const signedUp: ClubEventSignupRow[] = [
+    ...signups.map((row): ClubEventSignupRow => ({ kind: 'member', key: `member:${row.player_id}`, ...row })),
+    ...guests,
+  ].sort((a, b) => a.created_at.localeCompare(b.created_at));
 
   // The door list: members, then the Form's non-members (00284), who carry no
   // player id and are keyed by their own row.
@@ -276,12 +316,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             >
               Signed up
             </h2>
-            <ClubEventSignupsTable eventId={event.id} rows={signups} canRemove={canRemoveSignup} />
-            {externals > 0 && (
-              <p className="px-5 pb-4 text-sm text-[var(--text-muted)]">
-                Plus {externals} non-member{externals === 1 ? '' : 's'} from the Google Form, listed below.
-              </p>
-            )}
+            <ClubEventSignupsTable eventId={event.id} rows={signedUp} canRemove={canRemoveSignup} />
           </Card>
         )}
 
@@ -303,6 +338,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               canUndo={canRemoveSignup}
               migrationMissing="Form registrations need migration 00283."
               reader={readerStatus()}
+              enteredListedElsewhere
             />
           </Card>
         )}
