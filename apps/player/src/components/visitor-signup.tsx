@@ -1,5 +1,5 @@
-import Link from "next/link";
-import { ExternalLink, LogIn } from "lucide-react";
+import Link from 'next/link';
+import { ExternalLink, LogIn } from 'lucide-react';
 
 // What a signed-out visitor sees where a member's sign-up buttons would be:
 // the event's Google Form, which signs them up as a guest, or, when the event

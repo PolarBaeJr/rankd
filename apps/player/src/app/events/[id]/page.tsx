@@ -21,11 +21,7 @@ import { clubEventFormLink } from '@/lib/event-form-link';
 import { VisitorSignup } from '@/components/visitor-signup';
 import { SignupButton } from './signup-button';
 
-export default async function ClubEventPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function ClubEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { player } = await getViewer();
@@ -36,87 +32,53 @@ export default async function ClubEventPage({
   const supabase = player ? await createServerSupabaseClient() : null;
   const service = createServiceRoleClient();
   const { data: eventData } = await (supabase ?? service)
-    .from("club_events")
+    .from('club_events')
     .select(CLUB_EVENT_COLUMNS)
-    .eq("id", id)
-    .in("status", ["published", "cancelled"])
+    .eq('id', id)
+    .in('status', ['published', 'cancelled'])
     .maybeSingle();
   const event = eventData as ClubEventRow | null;
   if (!event) notFound();
 
-  const [
-    { count: takenCount },
-    { data: takenByRpc, error: takenError },
-    { data: mineRow },
-    waitlist,
-  ] = await Promise.all([
-    service
-      .from("club_event_signups")
-      .select("player_id", { count: "exact", head: true })
-      .eq("event_id", id),
+  const [{ count: takenCount }, { data: takenByRpc, error: takenError }, { data: mineRow }, waitlist] = await Promise.all([
+    service.from('club_event_signups').select('player_id', { count: 'exact', head: true }).eq('event_id', id),
     // The places taken as the sign-up RPC counts them: guests too, and not
     // no-shows (00294). Before 00294 the plain count stands.
-    service.rpc("club_event_taken" as never, { p_event_id: id } as never),
+    service.rpc('club_event_taken' as never, { p_event_id: id } as never),
     supabase && player
-      ? supabase
-          .from("club_event_signups")
-          .select("event_id")
-          .eq("event_id", id)
-          .eq("player_id", player.id)
-          .maybeSingle()
+      ? supabase.from('club_event_signups').select('event_id').eq('event_id', id).eq('player_id', player.id).maybeSingle()
       : { data: null },
-    player
-      ? readWaitlist(service, id, player.id)
-      : { available: false, position: null, waiting: 0 },
+    player ? readWaitlist(service, id, player.id) : { available: false, position: null, waiting: 0 },
   ]);
-  const taken =
-    takenError || typeof takenByRpc !== "number"
-      ? (takenCount ?? 0)
-      : (takenByRpc as number);
-  const state = clubEventSignupState(
-    event,
-    new Date(),
-    taken,
-    mineRow !== null,
-  );
+  const taken = takenError || typeof takenByRpc !== 'number' ? takenCount ?? 0 : (takenByRpc as number);
+  const state = clubEventSignupState(event, new Date(), taken, mineRow !== null);
   const cost = formatClubEventCost(event.cost_cents);
   // A full event takes a waitlist until it ends, also after it starts: a
   // no-show's place is given at the door. So does one with a freed place that
   // members are already queued for.
-  const endsAt = new Date(
-    event.ends_at ?? new Date(event.starts_at).getTime() + 6 * 3_600_000,
-  ).getTime();
+  const endsAt = new Date(event.ends_at ?? new Date(event.starts_at).getTime() + 6 * 3_600_000).getTime();
   const canWait =
     waitlist.available &&
     !mineRow &&
     event.capacity !== null &&
     (taken >= event.capacity || waitlist.waiting > 0) &&
     endsAt > Date.now() &&
-    (state === "full" || state === "started" || state === "open");
+    (state === 'full' || state === 'started' || state === 'open');
 
   // The tournament this event runs on (00292), once the exec has activated it:
   // the draw and results live there. Read with the service role, because the
   // link column is not one members are granted. Any error (before 00292): none.
   const formUrl = player ? null : await clubEventFormLink(service, id);
   const { data: linkData } = await service
-    .from("club_events")
-    .select(
-      "tournament_event:tournament_events(tournament_id, tournament:tournaments(status))",
-    )
-    .eq("id", id)
+    .from('club_events')
+    .select('tournament_event:tournament_events(tournament_id, tournament:tournaments(status))')
+    .eq('id', id)
     .maybeSingle();
-  const linkedEvent = (
-    linkData as {
-      tournament_event: {
-        tournament_id: string;
-        tournament: { status: string } | null;
-      } | null;
-    } | null
-  )?.tournament_event;
+  const linkedEvent = (linkData as {
+    tournament_event: { tournament_id: string; tournament: { status: string } | null } | null;
+  } | null)?.tournament_event;
   const drawHref =
-    linkedEvent &&
-    linkedEvent.tournament &&
-    linkedEvent.tournament.status !== "draft"
+    linkedEvent && linkedEvent.tournament && linkedEvent.tournament.status !== 'draft'
       ? `/tournaments/${linkedEvent.tournament_id}`
       : null;
 
@@ -137,11 +99,7 @@ export default async function ClubEventPage({
       {event.status === 'cancelled' && (
         <div className="card-base" role="status" style={{ marginBottom: 20, borderColor: 'var(--red)' }}>
           <h3 className="card-title">This event is cancelled</h3>
-          {event.cancelled_reason && (
-            <p className="card-sub" style={{ margin: 0 }}>
-              {event.cancelled_reason}
-            </p>
-          )}
+          {event.cancelled_reason && <p className="card-sub" style={{ margin: 0 }}>{event.cancelled_reason}</p>}
         </div>
       )}
 
@@ -289,18 +247,14 @@ async function readWaitlist(
   playerId: string,
 ): Promise<{ available: boolean; position: number | null; waiting: number }> {
   const { data, error } = await service
-    .from("club_event_waitlist" as never)
-    .select("id, player_id, joined_at")
-    .eq("event_id", eventId)
-    .eq("status", "waiting")
-    .order("joined_at")
-    .order("id");
+    .from('club_event_waitlist' as never)
+    .select('id, player_id, joined_at')
+    .eq('event_id', eventId)
+    .eq('status', 'waiting')
+    .order('joined_at')
+    .order('id');
   if (error) return { available: false, position: null, waiting: 0 };
   const rows = (data ?? []) as { player_id: string }[];
   const index = rows.findIndex((row) => row.player_id === playerId);
-  return {
-    available: true,
-    position: index === -1 ? null : index + 1,
-    waiting: rows.length,
-  };
+  return { available: true, position: index === -1 ? null : index + 1, waiting: rows.length };
 }

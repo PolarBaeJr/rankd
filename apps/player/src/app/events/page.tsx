@@ -26,10 +26,10 @@ export default async function ClubEventsPage({ searchParams }: { searchParams: P
   // the filter written out.
   const supabase = player ? await createServerSupabaseClient() : null;
   const { data: eventData } = await (supabase ?? createServiceRoleClient())
-    .from("club_events")
+    .from('club_events')
     .select(CLUB_EVENT_COLUMNS)
-    .in("status", ["published", "cancelled"])
-    .order("starts_at", { ascending: true });
+    .in('status', ['published', 'cancelled'])
+    .order('starts_at', { ascending: true });
   const events = (eventData ?? []) as ClubEventRow[];
   const now = new Date();
   const { upcoming, past } = partitionClubEvents(events, now);
@@ -41,15 +41,9 @@ export default async function ClubEventsPage({ searchParams }: { searchParams: P
   // so the count comes through the service role and only the number leaves.
   const [{ data: takenRows }, { data: mineRows }] = ids.length
     ? await Promise.all([
-        createServiceRoleClient()
-          .from("club_event_signups")
-          .select("event_id")
-          .in("event_id", ids),
+        createServiceRoleClient().from('club_event_signups').select('event_id').in('event_id', ids),
         supabase && player
-          ? supabase
-              .from("club_event_signups")
-              .select("event_id")
-              .eq("player_id", player.id)
+          ? supabase.from('club_event_signups').select('event_id').eq('player_id', player.id)
           : { data: [] },
       ])
     : [{ data: [] }, { data: [] }];
@@ -57,9 +51,7 @@ export default async function ClubEventsPage({ searchParams }: { searchParams: P
   for (const row of (takenRows ?? []) as { event_id: string }[]) {
     taken.set(row.event_id, (taken.get(row.event_id) ?? 0) + 1);
   }
-  const mine = new Set(
-    ((mineRows ?? []) as { event_id: string }[]).map((r) => r.event_id),
-  );
+  const mine = new Set(((mineRows ?? []) as { event_id: string }[]).map((r) => r.event_id));
 
   const card = (event: ClubEventRow, past = false) => {
     const count = taken.get(event.id) ?? 0;
@@ -211,18 +203,6 @@ export default async function ClubEventsPage({ searchParams }: { searchParams: P
               </section>
             </>
           )}
-        </>
-      )}
-      {past.length > 0 && (
-        <>
-          <div className="stat-label" style={{ margin: "32px 0 12px" }}>
-            Past
-          </div>
-          <section className="event-list">
-            {past.map((event) => (
-              <EventCard key={event.id} event={event} past />
-            ))}
-          </section>
         </>
       )}
     </div>
