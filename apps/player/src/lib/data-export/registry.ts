@@ -296,7 +296,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
   club_event_signups: {
     playerColumns: ['player_id'],
     disposition: 'export',
-    why: 'Every club event you signed up for, and when.',
+    why: 'Every club event you signed up for, and when, with the partner you named on its Google Form if you named one.',
   },
   waiver_acceptances: {
     playerColumns: ['player_id'],

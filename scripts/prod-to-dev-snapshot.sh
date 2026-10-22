@@ -1229,6 +1229,21 @@ BEGIN
     UPDATE public.guest_waiver_invites
        SET email = 'invite.' || substr(md5(id::text), 1, 10) || '@staging.invalid', last_error = NULL;
   END IF;
+  -- The preferred partner a Form answer named (00299): another person, by the
+  -- name typed, on the sign-ups of members and guests. Guarded on the column,
+  -- since a source without 00299 lacks it.
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'club_event_signups'
+                AND column_name = 'preferred_partner') THEN
+    UPDATE public.club_event_signups SET preferred_partner = 'Form Partner'
+     WHERE preferred_partner IS NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'club_event_external_signups'
+                AND column_name = 'preferred_partner') THEN
+    UPDATE public.club_event_external_signups SET preferred_partner = 'Form Partner'
+     WHERE preferred_partner IS NOT NULL;
+  END IF;
 
   -- RECEIPTS STILL QUEUED for the server's own read (00297). Staging has prod's
   -- rows but not its fee-proofs objects, so a staging check could only fail
@@ -1457,6 +1472,20 @@ SELECT 'Form respondent emails ' || (
                     ELSE (xpath('/row/n/text()', query_to_xml(format(
                       'SELECT count(*) AS n FROM public.%I WHERE %I IS NOT NULL AND %I NOT LIKE %L',
                       c.tbl, c.col, c.col, '%@staging.invalid'), false, true, '')))[1]::text::int
+                  END AS n) AS counted)
+UNION ALL
+-- The preferred partner notes from the Form (00299), the same way, guarded on the
+-- column so a source without 00299 counts zero.
+SELECT 'Form partner notes     ' || (
+         SELECT coalesce(sum(n), 0)::int FROM (VALUES
+           ('club_event_signups', 'preferred_partner'),
+           ('club_event_external_signups', 'preferred_partner')) AS c(tbl, col),
+         LATERAL (SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                                WHERE table_schema = 'public' AND table_name = c.tbl
+                                                  AND column_name = c.col) THEN 0
+                    ELSE (xpath('/row/n/text()', query_to_xml(format(
+                      'SELECT count(*) AS n FROM public.%I WHERE %I IS NOT NULL AND %I <> %L',
+                      c.tbl, c.col, c.col, 'Form Partner'), false, true, '')))[1]::text::int
                   END AS n) AS counted);
 SQL
   )

@@ -42,6 +42,8 @@ export interface FormBinding {
      * waiver fields were never chosen: the editor offers the defaults.
      */
     waiverNeverSet: boolean;
+    /** The same for the preferred partner question (00299). */
+    partnerNoteNeverSet: boolean;
     readAt: string | null;
     attemptedAt: string | null;
     importedCount: number;
@@ -113,6 +115,8 @@ function readerOf(row: Record<string, unknown>): FormBinding['reader'] {
     mappingInvalid: !!parsed && !parsed.success,
     waiverNeverSet:
       !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'WAIVER_QUESTION'),
+    partnerNoteNeverSet:
+      !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'PARTNER_NOTE_QUESTION'),
     readAt: (row.poll_read_at as string | null) ?? null,
     attemptedAt: (row.poll_attempted_at as string | null) ?? null,
     importedCount: (row.poll_imported_count as number | null) ?? 0,

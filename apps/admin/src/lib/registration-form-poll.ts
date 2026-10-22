@@ -17,6 +17,7 @@ import {
   buildRegistrationPayload,
   formMappingSchema,
   formWaiverFor,
+  partnerNoteFor,
   receiptFileFor,
   requiredQuestions,
 } from './registration-form-mapping';
@@ -244,6 +245,22 @@ async function pollForm(
         if (signed.error) {
           failed = true;
           Sentry.captureException(new Error(`Form waiver record failed: ${signed.error.message}`), {
+            extra: { job: 'registration-form-poll', binding: form.id },
+          });
+        }
+      }
+      // The preferred partner (00299), replays included, so a re-read or a
+      // mapping saved later updates it and an emptied answer clears it.
+      const partnerNote = partnerNoteFor(mapping.data, byTitle);
+      if (partnerNote !== undefined) {
+        const noted = await admin.rpc('record_form_partner_note' as never, {
+          p_binding_id: form.id,
+          p_response_id: built.payload.response_id,
+          p_note: partnerNote,
+        } as never);
+        if (noted.error) {
+          failed = true;
+          Sentry.captureException(new Error(`Form partner note record failed: ${noted.error.message}`), {
             extra: { job: 'registration-form-poll', binding: form.id },
           });
         }

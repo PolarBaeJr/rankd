@@ -55,6 +55,10 @@ export const formMappingSchema = z
     MEDIA_QUESTION: title.default(''),
     // The choice of MEDIA_QUESTION that allows photos; any other answer is a no.
     MEDIA_ALLOW_ANSWER: title.default(''),
+    // A club event's free-text "preferred partner" question (00299).
+    // Console-only like the receipt: shown on the sign-up, never matched to a
+    // member, never in the payload. Empty: no note is read.
+    PARTNER_NOTE_QUESTION: title.default(''),
   })
   .strict();
 
@@ -315,6 +319,26 @@ export function formWaiverFor(mapping: FormMapping, answers: Record<string, stri
   };
 }
 
+/** Longest preferred partner note a sign-up keeps (00299's CHECK). */
+export const PARTNER_NOTE_MAX = 120;
+
+const straightQuotes = (s: string) => s.replace(/[\u2018\u2019\u02bc]/g, "'").trim();
+
+/**
+ * The preferred partner a response named, whitespace collapsed and cut to
+ * PARTNER_NOTE_MAX, or null when it left the question empty. Undefined when
+ * the mapping reads no partner question, so nothing is written.
+ */
+export function partnerNoteFor(mapping: FormMapping, answers: Record<string, string[]>): string | null | undefined {
+  if (!mapping.PARTNER_NOTE_QUESTION) return undefined;
+  // The title is typed (or defaulted) in the console, and Google Forms often
+  // turns a typed ' into a curly one, so the apostrophe style is not compared.
+  const wanted = straightQuotes(mapping.PARTNER_NOTE_QUESTION);
+  const title = Object.keys(answers).find((key) => straightQuotes(key) === wanted);
+  const note = single(title === undefined ? undefined : answers[title]).replace(/\s+/g, ' ').slice(0, PARTNER_NOTE_MAX).trim();
+  return note === '' ? null : note;
+}
+
 /** The questions a mapping needs to find on the form for any response to import. */
 export function requiredQuestions(mapping: FormMapping): string[] {
   return [mapping.EMAIL_QUESTION, mapping.NAME_QUESTION];
@@ -349,6 +373,8 @@ export const DEFAULT_SIGNATURE_QUESTION = 'Signature: type your full name to sig
 export const DEFAULT_MEDIA_QUESTION =
   'May the club use photos or video of you from club activities on its website and social media?';
 export const DEFAULT_MEDIA_ALLOW_ANSWER = 'Allow';
+/** The Chaos Cards form's preferred partner question, offered the same way. */
+export const DEFAULT_PARTNER_NOTE_QUESTION = "Doubles: preferred partner's name (Optional)";
 
 export function defaultPartnerQuestions(choice: string) {
   return {
