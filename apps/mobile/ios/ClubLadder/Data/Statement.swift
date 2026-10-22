@@ -8,7 +8,7 @@ import Foundation
 /// The member's own fee rows, as apps/player/src/lib/member-fees.ts reads them.
 let ownFeeColumns =
     "id, fee_type, season_id, tournament_id, club_event_id, amount_cents, paid_at, method, reference, created_at, " +
-    "fee_submissions(id, status, reference, reject_reason, submitted_at)"
+    "fee_submissions!fee_submissions_club_fee_fkey(id, status, reference, reject_reason, submitted_at)"
 
 struct OwnFeeRow: Equatable, Sendable {
     var id: String
