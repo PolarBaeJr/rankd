@@ -32,6 +32,25 @@ function langPath(): string {
   return candidates.find((dir) => existsSync(path.join(dir, 'eng.traineddata.gz'))) ?? candidates[1]!;
 }
 
+// Any amount with cents, with or without a "$".
+const MONEY_SEEN = /\d\.\d{2}\b/;
+const SMALLER_SCALES = [0.5, 0.3];
+
+async function readSmaller(
+  worker: { recognize(image: Buffer): Promise<{ data: { text: string } }> },
+  bytes: Uint8Array,
+): Promise<string | null> {
+  const { default: sharp } = await import('sharp');
+  const width = (await sharp(Buffer.from(bytes)).metadata()).width;
+  if (!width) return null;
+  for (const scale of SMALLER_SCALES) {
+    const smaller = await sharp(Buffer.from(bytes)).resize(Math.max(64, Math.round(width * scale))).png().toBuffer();
+    const { data } = await worker.recognize(smaller);
+    if (MONEY_SEEN.test(data.text)) return data.text;
+  }
+  return null;
+}
+
 let busy = false;
 const waiting: (() => void)[] = [];
 
@@ -73,7 +92,12 @@ async function read(bytes: Uint8Array): Promise<OcrRead> {
       }
       worker = created;
       const { data } = await created.recognize(Buffer.from(bytes));
-      return { text: data.text };
+      if (MONEY_SEEN.test(data.text)) return { text: data.text };
+      // A banking app's big centred amount ("5.00") is skipped at full size
+      // and read once the glyphs are smaller, so a read with no money in it
+      // tries shrunken copies and adds the first that finds one.
+      const extra = await readSmaller(created, bytes);
+      return { text: extra ? `${data.text}\n${extra}` : data.text };
     })();
     // A late failure after the timeout has already answered is not an error.
     work.catch(() => undefined);
