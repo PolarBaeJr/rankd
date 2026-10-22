@@ -70,7 +70,7 @@ const NONE = <span className="text-[var(--text-muted)]">—</span>;
 export default async function PlayersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; search?: string }>;
+  searchParams: Promise<{ tab?: string; show?: string; search?: string }>;
 }) {
   const params = await searchParams;
   // THE UNFILTERED ROSTER IS THE LANDING TAB. Competitive was the default back
@@ -81,7 +81,6 @@ export default async function PlayersPage({
   // Safe to default to despite `all` being a moderation tab: the fallback below
   // resolves it to `competitive` for anybody who cannot moderate, so this
   // changes where an exec lands and leaves a trainer exactly where they were.
-  const requestedTab = params.tab || 'all';
   // Execs manage the roster; only admins grant privilege, remove, or merge.
   // Hiding those controls is cosmetic — the server actions are the real gate —
   // but showing a button that is guaranteed to fail is worse than not showing
@@ -173,69 +172,21 @@ export default async function PlayersPage({
   // queues they cannot act on, and a stale link falls back to the roster rather
   // than erroring.
   //
-  // `all` is one of them, which is the non-obvious entry. It sounds like the
-  // least privileged tab in the strip and lists the most: an unfiltered roster
-  // is Competitive and Recreational PLUS the suspended, the banned and the
-  // unfinished signups — exactly the rows the other five queues were gated to
-  // withhold. Leaving it open would be a way round every one of them.
-  const MODERATION_TABS = ['all', 'attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
-  const tab = !canModerate && MODERATION_TABS.includes(requestedTab) ? 'competitive' : requestedTab;
+  // There is no `all` view any more: the menu's All tick is every view at once,
+  // and for a viewer without moderation that is Competitive and Recreational.
+  const MODERATION_TABS = ['attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
   const supabase = createAdminClient();
 
-  let query = supabase
+  // NO FILTER in the query. The roster is the union of the ticked views (see
+  // RosterViewMenu), and a union of nine predicates, two of them nested ors, is
+  // clearer as the same JS predicates the counts below already use than as one
+  // PostgREST .or(). The cap matches the count query's, so the list cannot hold
+  // fewer people than its own counts claim.
+  const query = supabase
     .from('players')
     .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_guest, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
-    .limit(500);
-
-  if (tab === 'all') {
-    // NO FILTER, and that is the whole tab. Every other tab answers a question
-    // ("who is competitive", "who is waiting on us"); this one answers none, so
-    // an exec working through the roster end to end — changing a batch of
-    // memberships, checking who is missing a waiver — does it in one list
-    // instead of six.
-    //
-    // The 500-row cap on the query above therefore bites here first. It is not
-    // raised, because the honest thing already happens: `total` below is the
-    // tab's real count, so a roster past 500 reads "showing 500 of 620" rather
-    // than claiming completeness. Raising the cap without paging the query
-    // would only move where it lies.
-  } else if (tab === 'competitive') {
-    // Show all active players (not recreational, suspended, or pending)
-    query = query.not('status', 'in', '("recreational","suspended","pending_approval")');
-  } else if (tab === 'recreational') {
-    query = query.eq('status', 'recreational').eq('is_guest', false);
-  } else if (tab === 'guests') {
-    query = query.eq('is_guest', true);
-  } else if (tab === 'attention') {
-    // Pending approval ONLY. Suspended members used to match here too, so they
-    // appeared on this tab AND on Suspended — and this tab offers Recreational /
-    // Competitive, which writes status directly and so lifted the suspension
-    // without going through Restore. A suspension is undone on the Suspended
-    // tab, deliberately, because that is where the ban/suspension distinction
-    // is made.
-    //
-    // 00132: AND NOT AN UNFINISHED SIGNUP. A stub created at first sign-in is
-    // also 'pending_approval' — deliberately, because that status is what keeps
-    // it off the ladder, out of the pickers and invisible to other members — but
-    // it is not waiting on the club to approve it. It is waiting on the MEMBER
-    // to finish setup, which is a different queue with a different action, and
-    // putting the two in one list would bury the people an exec can actually
-    // help behind the people they cannot.
-    query = query.eq('status', 'pending_approval').or('onboarding_completed.is.true,user_id.is.null');
-  } else if (tab === 'incomplete') {
-    // Signed in, never finished. `user_id IS NOT NULL AND NOT onboarding_completed`
-    // is the whole definition and it needs no new column: a row with no login and
-    // no onboarding is a roster row an exec pre-added, which is a different thing
-    // and belongs on Needs Attention where it has always been.
-    query = query.not('user_id', 'is', null).eq('onboarding_completed', false);
-  } else if (tab === 'permissions') {
-    query = query.not('privilege_claim_review', 'is', null);
-  } else if (tab === 'suspended') {
-    query = query.or('status.eq.suspended,is_banned.eq.true');
-  } else if (tab === 'inactive') {
-    query = query.eq('active_flag', false);
-  }
+    .limit(5000);
 
   // ?search= only seeds the box now — the filtering itself is client-side over
   // the rows below, so it costs no round trip per keystroke and cannot show a
@@ -306,10 +257,6 @@ export default async function PlayersPage({
   // writing a varsity note about, so they get the two tabs that list people who
   // actually play, and are not shown queues they cannot act on.
   const tabs = [
-    // First, and only for somebody who may moderate — see MODERATION_TABS. It
-    // is not the default tab: Competitive is what an exec wants on arrival, and
-    // "everybody, unsorted" is a tool you reach for rather than one you land in.
-    ...(canModerate ? [{ id: 'all', label: 'All', count: forCount.length }] : []),
     { id: 'competitive', label: 'Competitive', count: compCount },
     { id: 'recreational', label: 'Recreational', count: recCount },
     // Google Form entrants in a linked tournament (00292). Hidden at zero.
@@ -329,6 +276,67 @@ export default async function PlayersPage({
     ] : []),
   ];
 
+  // WHICH VIEWS ARE TICKED. ?show=a,b is the menu's own URL; ?tab=x is the old
+  // single view, still linked from the dashboard, and reads as one tick. With
+  // neither, every view this viewer has is ticked except Guests: Form entrants
+  // are not members, and the owner wanted them out of the roster by default.
+  // A view hidden at zero still counts as ticked, so the list does not change
+  // the day its first row appears.
+  const permittedViews = [
+    'competitive', 'recreational', 'guests',
+    ...(canModerate ? MODERATION_TABS : []),
+  ];
+  const defaultViews = permittedViews.filter((id) => id !== 'guests');
+  const requestedViews = params.show !== undefined
+    ? params.show.split(',')
+    : params.tab && params.tab !== 'all'
+      ? [params.tab]
+      : params.tab === 'all' ? permittedViews : defaultViews;
+  const selectedViews = permittedViews.filter((id) => requestedViews.includes(id));
+
+  type ViewRow = {
+    user_id: string | null; onboarding_completed: boolean | null; status: string;
+    is_guest: boolean | null; is_banned: boolean | null; active_flag: boolean | null;
+    privilege_claim_review: unknown;
+  };
+  // The same predicates as the counts above, so a view's count is what ticking
+  // it alone shows.
+  const inView = (view: string, p: ViewRow): boolean => {
+    switch (view) {
+      case 'competitive': return isCompetitive(p.status);
+      case 'recreational': return p.status === 'recreational' && !p.is_guest;
+      case 'guests': return p.is_guest === true;
+      case 'attention': return p.status === 'pending_approval' && !isIncompleteSignup(p);
+      case 'incomplete': return isIncompleteSignup(p);
+      case 'permissions': return hasPrivilegeClaimReview(p.privilege_claim_review as never);
+      case 'suspended': return p.status === 'suspended' || p.is_banned === true;
+      case 'inactive': return p.active_flag === false;
+      default: return false;
+    }
+  };
+  // A guest needs the Guests tick whatever else they match: an inactive guest
+  // is still not a member, and unticking Guests should hide every one of them.
+  const isShown = (p: ViewRow) =>
+    (!p.is_guest || selectedViews.includes('guests')) && selectedViews.some((view) => inView(view, p));
+  const shownPlayers = (players ?? []).filter(isShown);
+  const shownCount = forCount.filter(isShown).length;
+  const HIDDEN_LABELS: Record<string, string> = {
+    guests: 'Guests', incomplete: 'Incomplete', permissions: 'Permission review',
+  };
+  const hiddenTicked = selectedViews
+    .filter((id) => !tabs.some((t) => t.id === id))
+    .map((id) => ({ id, label: HIDDEN_LABELS[id] ?? id, count: 0 }));
+
+  // Which action set a row gets (roster-actions.ts), now that a row is not on
+  // one tab: the queue the row itself belongs to, most specific first.
+  const actionViewOf = (p: ViewRow): string =>
+    p.is_guest ? 'guests'
+      : isIncompleteSignup(p) ? 'incomplete'
+      : p.status === 'pending_approval' ? 'attention'
+      : p.status === 'suspended' || p.is_banned ? 'suspended'
+      : p.active_flag === false ? 'inactive'
+      : p.status;
+
   // Rows are built here, on the server, and handed to the client table as
   // already-rendered nodes: the waiver arithmetic below needs legal_documents
   // and the rating columns need the joined ratings, none of which should be
@@ -339,7 +347,7 @@ export default async function PlayersPage({
   // which is the whole point: an officer checking members in at the door is
   // holding a phone, and eight columns in a sideways-scrolling box is not a
   // roster they can read.
-  const rows: RosterRow[] = (players ?? []).map((player) => {
+  const rows: RosterRow[] = shownPlayers.map((player) => {
     const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
     const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
     const waiverCurrent =
@@ -372,7 +380,7 @@ export default async function PlayersPage({
     // The division, only where the tab does not already say it. On Competitive
     // and Recreational it would be the tab's own name printed on every row; on
     // Inactive and Suspended it is the thing a Restore has to decide.
-    const showDivision = !['competitive', 'recreational'].includes(tab)
+    const showDivision = !(selectedViews.length === 1 && ['competitive', 'recreational'].includes(selectedViews[0] ?? ''))
       && ['competitive', 'recreational'].includes(player.status);
 
     const rating = (elo: number | null | undefined, provisional: boolean | null | undefined) =>
@@ -503,7 +511,7 @@ export default async function PlayersPage({
           />
         )}
         {rosterActionsFor(
-          tab,
+          actionViewOf(player),
           { ...player, erasedGuest: !!player.is_guest && !!player.email?.endsWith('@deleted.invalid') },
           { isAdmin },
         )
@@ -681,22 +689,30 @@ export default async function PlayersPage({
         </div>
       ) : (
         <>
-        {/* Remounted per tab (key) so a query typed on one tab cannot carry over
+        {/* Remounted per set of ticks (key) so a query typed under one cannot carry over
             and silently hide rows on the next. */}
         <RosterTable
-          key={tab}
+          key={selectedViews.join(',')}
           initialQuery={params.search ?? ''}
           // The tab's own count, not the number of rows fetched. They are the
           // same number until a tab passes the 500-row cap on the list query
           // above, and on the day one does, this is what says so.
-          total={tabs.find((t) => t.id === tab)?.count ?? rows.length}
+          total={shownCount}
           // True only of the controls this viewer can reach. Every one of those
           // dialogs keeps its Save disabled until a reason is typed, and an
           // officer should learn that before they open one rather than after —
           // but telling a trainer costs them a line about a button they will
           // never see.
           note={canBan || canManage ? 'Suspensions and removals take a typed reason' : undefined}
-          tabs={<RosterViewMenu views={tabs} current={tab} />}
+          tabs={
+            <RosterViewMenu
+              // A ticked view stays listed at zero, or it could not be unticked.
+              views={[...tabs, ...hiddenTicked]}
+              selected={selectedViews}
+              defaults={defaultViews}
+              shown={shownCount}
+            />
+          }
           head={
             <tr className="border-b border-[var(--border)]">
               {canBulk && (
