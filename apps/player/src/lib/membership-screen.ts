@@ -48,7 +48,7 @@ export async function loadMyMembershipScreen(
   if (season.seasonId) {
     const { data, error } = await supabase
       .from('club_fees')
-      .select('paid_at, fee_submissions(status)')
+      .select('paid_at, fee_submissions!fee_submissions_club_fee_fkey(status)')
       .eq('player_id', player.id)
       .eq('fee_type', 'dues')
       .eq('season_id', season.seasonId)

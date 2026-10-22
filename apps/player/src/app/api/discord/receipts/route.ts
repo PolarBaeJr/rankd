@@ -185,7 +185,7 @@ export async function GET(request: Request) {
   const [feesRead, seasonRead, payments] = await Promise.all([
     supabase
       .from('club_fees')
-      .select('id, fee_type, season_id, club_event_id, amount_cents, paid_at, fee_submissions(id, status, reference, reject_reason, submitted_at)')
+      .select('id, fee_type, season_id, club_event_id, amount_cents, paid_at, fee_submissions!fee_submissions_club_fee_fkey(id, status, reference, reject_reason, submitted_at)')
       .eq('player_id', player.id)
       .in('fee_type', ['dues', 'event'])
       .order('created_at', { ascending: false }),

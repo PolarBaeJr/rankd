@@ -14,7 +14,9 @@ import { createServerSupabaseClient, getActiveSeason } from './supabase-server';
 // Read on the SESSION client: RLS on club_fees (club_fees_select_own) and on
 // fee_submissions (fee_submissions_select_own, 00248) each say "yours only",
 // and the explicit player filter says it a third time. The receipts arrive
-// embedded through fee_submissions' composite key into club_fees.
+// embedded through fee_submissions' single-column key into club_fees. 00288
+// added that key beside the composite one (00248), and an unnamed embed with
+// two keys to choose from is refused (PGRST201), so every embed names it.
 
 export type OwnFeeSubmission = {
   id: string;
@@ -41,7 +43,7 @@ export type OwnFeeRow = {
 
 const OWN_FEE_COLUMNS =
   'id, fee_type, season_id, tournament_id, club_event_id, amount_cents, paid_at, method, reference, created_at, ' +
-  'fee_submissions(id, status, reference, reject_reason, submitted_at)';
+  'fee_submissions!fee_submissions_club_fee_fkey(id, status, reference, reject_reason, submitted_at)';
 
 /** Every fee row of this member's, newest first. Throws on a failed read. */
 export async function readOwnFees(supabase: SupabaseClient, playerId: string): Promise<OwnFeeRow[]> {
