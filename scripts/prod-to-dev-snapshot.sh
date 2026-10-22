@@ -549,7 +549,7 @@ fi
 # drop and the truncate cannot reach, and put back once the scrub has verified.
 # Members' sessions still go with the truncate. The holding schema is dropped at
 # the start of every run, so a failed run costs one sign-in at worst.
-STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
+STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca,sfubadminton@gmail.com}"
 
 echo "[$(date -u +%FT%TZ)] setting aside the staging admins' sessions and passkeys..."
 docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 \
@@ -851,7 +851,7 @@ SQL
 #
 # Comma-separated and overridable, so the next person who needs an account on
 # staging edits an env var and not this file.
-STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
+STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca,sfubadminton@gmail.com}"
 
 if [ -n "$STAGING_ADMIN_EMAILS" ]; then
   echo "[$(date -u +%FT%TZ)] re-granting staging admin: $STAGING_ADMIN_EMAILS"
