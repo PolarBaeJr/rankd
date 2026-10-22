@@ -17,6 +17,8 @@ import {
   buildRegistrationPayload,
   formMappingSchema,
   normalizeRegistration,
+  partnerNoteFor,
+  mappedQuestionTitles,
   receiptFileFor,
   scriptTimestamp,
   type FormMapping,
@@ -52,6 +54,7 @@ const TOURNAMENT_MAPPING: FormMapping = {
   SIGNATURE_QUESTION: '',
   MEDIA_QUESTION: '',
   MEDIA_ALLOW_ANSWER: '',
+  PARTNER_NOTE_QUESTION: '',
 };
 
 const CLUB_MAPPING: FormMapping = {
@@ -67,6 +70,7 @@ const CLUB_MAPPING: FormMapping = {
   SIGNATURE_QUESTION: '',
   MEDIA_QUESTION: '',
   MEDIA_ALLOW_ANSWER: '',
+  PARTNER_NOTE_QUESTION: '',
 };
 
 /** What the card builds for a season's dues form (00290): no event, a screenshot. */
@@ -83,6 +87,7 @@ const SEASON_MAPPING: FormMapping = {
   SIGNATURE_QUESTION: '',
   MEDIA_QUESTION: '',
   MEDIA_ALLOW_ANSWER: '',
+  PARTNER_NOTE_QUESTION: '',
 };
 
 /** A response as the two roads see it: titles with Apps Script values, and API answers by question id. */
@@ -354,5 +359,58 @@ describe("a season's dues form (00290)", () => {
       fileId: 'drive-1',
       mimeType: 'image/png',
     });
+  });
+});
+
+describe('the preferred partner question (00299)', () => {
+  const PARTNER = "Doubles: preferred partner's name (Optional)";
+  const mapping = { ...CLUB_MAPPING, PARTNER_NOTE_QUESTION: PARTNER };
+
+  it('parses a mapping saved before it existed, as no partner question', () => {
+    const { PARTNER_NOTE_QUESTION: _unused, ...stored } = CLUB_MAPPING;
+    const parsed = formMappingSchema.safeParse(stored);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.PARTNER_NOTE_QUESTION).toBe('');
+  });
+
+  it('picks up the answer, trimmed with its spaces collapsed', () => {
+    expect(partnerNoteFor(mapping, { [PARTNER]: ['  Krish   Bedi '] })).toBe('Krish Bedi');
+    expect(partnerNoteFor(mapping, { [PARTNER]: ['Hitansh'] })).toBe('Hitansh');
+  });
+
+  it("matches the question whichever apostrophe the form uses", () => {
+    const straight = { ...CLUB_MAPPING, PARTNER_NOTE_QUESTION: "Doubles: preferred partner's name (Optional)" };
+    expect(partnerNoteFor(straight, { 'Doubles: preferred partner\u2019s name (Optional)': ['Vansh'] })).toBe('Vansh');
+  });
+
+  it('is not a question the form must have', () => {
+    expect(mappedQuestionTitles(mapping)).not.toContain(PARTNER);
+  });
+
+  it('caps the answer at 120 characters', () => {
+    const note = partnerNoteFor(mapping, { [PARTNER]: ['a'.repeat(200)] });
+    expect(note).toBe('a'.repeat(120));
+  });
+
+  it('reads an empty or missing answer as null, so a re-read clears it', () => {
+    expect(partnerNoteFor(mapping, { [PARTNER]: ['   '] })).toBeNull();
+    expect(partnerNoteFor(mapping, {})).toBeNull();
+  });
+
+  it('reads nothing when the mapping names no partner question', () => {
+    expect(partnerNoteFor(CLUB_MAPPING, { [PARTNER]: ['Hitansh'] })).toBeUndefined();
+  });
+
+  it('leaves the payload, and so its hash, as it was', () => {
+    const questions = [
+      { questionId: 'qe', title: 'Email address' },
+      { questionId: 'qn', title: 'Full name' },
+      { questionId: 'qp', title: PARTNER },
+    ];
+    const answers = answersByTitle(questions, { qe: ['pat@example.org'], qn: ['Pat Player'], qp: ['Hitansh'] });
+    const response = { responseId: 'r1', lastSubmittedTime: '2026-10-09T11:00:00Z' };
+    const withNote = buildRegistrationPayload(mapping, 'form-1', response, answers);
+    expect(withNote).toEqual(buildRegistrationPayload(CLUB_MAPPING, 'form-1', response, answers));
+    expect(JSON.stringify(withNote)).not.toContain('Hitansh');
   });
 });

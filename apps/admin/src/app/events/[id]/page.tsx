@@ -133,6 +133,34 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           .eq('event_id', id)
           .order('created_at', { ascending: true })
       : { data: [] };
+  // The preferred partner each Form answer named (00299), read on its own so
+  // a database without the column shows no notes rather than no list.
+  const [{ data: memberNotes }, { data: guestNotes }] = canSeeSignups
+    ? await Promise.all([
+        adminClient
+          .from('club_event_signups')
+          .select('player_id, preferred_partner')
+          .eq('event_id', id)
+          .not('preferred_partner', 'is', null),
+        externals > 0
+          ? adminClient
+              .from('club_event_external_signups')
+              .select('id, preferred_partner')
+              .eq('event_id', id)
+              .not('preferred_partner', 'is', null)
+          : Promise.resolve({ data: [] }),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const memberPartner = new Map(
+    ((memberNotes ?? []) as { player_id: string; preferred_partner: string }[]).map((row) => [
+      row.player_id,
+      row.preferred_partner,
+    ]),
+  );
+  const guestPartner = new Map(
+    ((guestNotes ?? []) as { id: string; preferred_partner: string }[]).map((row) => [row.id, row.preferred_partner]),
+  );
+
   const entryById = new Map((formImports?.entries ?? []).map((entry) => [entry.id, entry]));
   const guests = (
     (guestData ?? []) as {
@@ -155,10 +183,18 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       entryId: entry && entry.status === 'entered' ? entry.id : null,
       waiverSigned: row.walk_in ? false : entry ? !!entry.waiver?.signed : null,
       fee: entry?.fee ?? null,
+      partner: guestPartner.get(row.id) ?? null,
     };
   });
   const signedUp: ClubEventSignupRow[] = [
-    ...signups.map((row): ClubEventSignupRow => ({ kind: 'member', key: `member:${row.player_id}`, ...row })),
+    ...signups.map(
+      (row): ClubEventSignupRow => ({
+        kind: 'member',
+        key: `member:${row.player_id}`,
+        ...row,
+        partner: memberPartner.get(row.player_id) ?? null,
+      }),
+    ),
     ...guests,
   ].sort((a, b) => a.created_at.localeCompare(b.created_at));
 

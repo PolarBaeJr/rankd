@@ -11,6 +11,7 @@ import {
   DEFAULT_SIGNATURE_QUESTION,
   DEFAULT_MEDIA_QUESTION,
   DEFAULT_MEDIA_ALLOW_ANSWER,
+  DEFAULT_PARTNER_NOTE_QUESTION,
   defaultPartnerQuestions,
   type FormMapping,
 } from '@/lib/registration-form-mapping';
@@ -137,6 +138,11 @@ export function FormReaderPanel({
             : "Not read by the console. The form's Apps Script can post its responses instead."}
         </p>
       )}
+      {mapping?.PARTNER_NOTE_QUESTION && (
+        <p className="text-[var(--text-muted)]">
+          Preferred partner question: &quot;{mapping.PARTNER_NOTE_QUESTION}&quot;
+        </p>
+      )}
       {mapping && reader.error && (
         <p role="status" className="text-[var(--color-danger)]">
           {READER_ERROR_LABEL[reader.error] ?? 'The last read failed.'}
@@ -223,6 +229,10 @@ function FormMappingEditor({
     waiverSaved ? waiverSaved.MEDIA_ALLOW_ANSWER : DEFAULT_MEDIA_ALLOW_ANSWER,
   );
   const [waiverVersion, setWaiverVersion] = useState(mapping?.WAIVER_VERSION ?? '');
+  // The preferred partner question (00299), offered the same way.
+  const [partnerNoteQuestion, setPartnerNoteQuestion] = useState(
+    mapping && !reader?.partnerNoteNeverSet ? mapping.PARTNER_NOTE_QUESTION : DEFAULT_PARTNER_NOTE_QUESTION,
+  );
   const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
 
   const waiverFields = () =>
@@ -248,6 +258,7 @@ function FormMappingEditor({
         PARTNERS: {},
         RECEIPT_QUESTION: receiptQuestion.trim(),
         ...waiverFields(),
+        PARTNER_NOTE_QUESTION: targetKind === 'club_event' ? partnerNoteQuestion.trim() : '',
       };
     }
     const eventsMap: Record<string, string> = {};
@@ -274,6 +285,7 @@ function FormMappingEditor({
       PARTNERS: partners,
       RECEIPT_QUESTION: receiptQuestion.trim(),
       ...waiverFields(),
+      PARTNER_NOTE_QUESTION: '',
     };
   }
 
@@ -305,6 +317,16 @@ function FormMappingEditor({
           : 'E-transfer screenshot question (a file upload; leave empty if the form has none)'}
         <input className={inputClass} value={receiptQuestion} onChange={(e) => setReceiptQuestion(e.target.value)} />
       </label>
+      {targetKind === 'club_event' && (
+        <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+          Preferred partner question (shown on the sign-up list; leave empty if the form has none)
+          <input
+            className={inputClass}
+            value={partnerNoteQuestion}
+            onChange={(e) => setPartnerNoteQuestion(e.target.value)}
+          />
+        </label>
+      )}
       {targetKind !== 'season' && (
         <fieldset className="space-y-2 border-t border-[var(--border)] pt-2">
           <legend className="text-xs font-semibold text-[var(--text-secondary)]">Waiver on the form</legend>

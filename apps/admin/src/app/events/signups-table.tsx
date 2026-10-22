@@ -13,9 +13,10 @@ import { undoImportedEntry } from '@/lib/actions/registration-imports';
  * list, in sign-up order: the club treats them the same way at the door.
  * A guest carries the Form entry that put them here (removing them is that
  * entry's Undo) or none, for a walk-in, who is dealt with at the door.
+ * `partner` is the preferred partner the Form's answer named (00299), as typed.
  */
 export type ClubEventSignupRow =
-  | { kind: 'member'; key: string; player_id: string; name: string; created_at: string }
+  | { kind: 'member'; key: string; player_id: string; name: string; created_at: string; partner?: string | null }
   | {
       kind: 'guest';
       key: string;
@@ -26,6 +27,7 @@ export type ClubEventSignupRow =
       entryId: string | null;
       waiverSigned: boolean | null;
       fee: { amountCents: number | null; paid: boolean } | null;
+      partner?: string | null;
     };
 
 function money(cents: number | null): string {
@@ -97,6 +99,7 @@ export function ClubEventSignupsTable({
             {row.kind === 'guest' && row.email && (
               <div className="truncate text-xs text-[var(--ink-2)]">{row.email}</div>
             )}
+            {row.partner && <div className="truncate text-xs text-[var(--mute)]">Partner: {row.partner}</div>}
             <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--mute)]">
               {row.kind === 'guest' && !row.walkIn ? 'Google Form' : 'Signed up'} {formatDateTime(row.created_at)}
               {row.kind === 'guest' && row.waiverSigned !== null && (
