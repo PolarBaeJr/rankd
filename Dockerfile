@@ -10,8 +10,9 @@ COPY package.json package-lock.json turbo.json tsconfig.base.json .npmrc ./
 COPY apps/player/package.json apps/player/
 COPY apps/admin/package.json apps/admin/
 COPY apps/bot/package.json apps/bot/
-# Not built here (it has its own apps/data-api/Dockerfile), but npm ci checks
-# every workspace in the lockfile against its manifest.
+# The bot and the data API are not built here (each has its own Dockerfile
+# under apps/), but npm ci checks every workspace in the lockfile against its
+# manifest.
 COPY apps/data-api/package.json apps/data-api/
 COPY packages/shared/package.json packages/shared/
 COPY packages/ui/package.json packages/ui/
@@ -19,7 +20,7 @@ COPY packages/config/package.json packages/config/
 
 RUN npm ci
 
-# ---- Stage 2: Build both apps ----
+# ---- Stage 2: Build the app the image is for ----
 FROM deps AS builder
 WORKDIR /app
 
@@ -64,8 +65,13 @@ ARG SENTRY_PROJECT
 # builder's history and in the build cache, a secret mount is neither. It is
 # exposed as an env var for this one RUN only. Absent (the staging build passes
 # none) leaves it unset, which skips the upload exactly as an empty ARG did.
+# Which apps to compile. CI builds one image per job and passes that app alone
+# (BUILD_APP=player or admin), so a job no longer compiles the other app too;
+# a bare local `docker build` builds both, as before.
+ARG BUILD_APP="player admin"
 RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
-    npx turbo run build --filter=player --filter=admin --filter=bot --concurrency=1
+    filters=""; for app in $BUILD_APP; do filters="$filters --filter=$app"; done; \
+    npx turbo run build $filters --concurrency=1
 
 # ---- Stage 3: Player runner ----
 FROM node:24.22.1-bookworm-slim AS runner-player
@@ -112,30 +118,4 @@ USER nextjs
 EXPOSE 3001
 CMD ["node", "apps/admin/server.js"]
 
-# ---- Stage 5: Discord bot runner ----
-# An HTTP interactions endpoint, not a gateway bot: Discord POSTs signed requests
-# here, so the process is stateless and replicas are safe. A gateway bot holds a
-# WebSocket and would need sharding before a second replica could exist at all.
-#
-# No node_modules is copied because the bot has NO runtime dependencies - it is
-# node:http plus node:crypto. If a dependency is ever added, this stage must start
-# copying the production tree, and forgetting to is a crash on boot rather than a
-# silent failure, which is the failure mode to prefer.
-FROM node:24.22.1-bookworm-slim AS runner-bot
-WORKDIR /app
-
-ENV NODE_ENV=production
-ENV PORT=3002
-
-RUN addgroup --system --gid 1001 bot && \
-    adduser --system --uid 1001 bot
-
-# dist is ESM. Node's syntax detection would infer that on its own, but it is a
-# heuristic; carrying the package.json states "type": "module" outright so the
-# module system does not depend on how the emitted code happens to look.
-COPY --from=builder --chown=bot:bot /app/apps/bot/package.json ./package.json
-COPY --from=builder --chown=bot:bot /app/apps/bot/dist ./dist
-
-USER bot
-EXPOSE 3002
-CMD ["node", "dist/index.js"]
+# The Discord bot's image is built from apps/bot/Dockerfile.

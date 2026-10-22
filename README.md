@@ -236,8 +236,9 @@ Run from the repository root:
 
 ## Container images
 
-The root `Dockerfile` builds the player, admin and bot images (targets
-`runner-player`, `runner-admin` and `runner-bot`); `apps/data-api/Dockerfile`
-builds the Data API. The `NEXT_PUBLIC_*` values are build arguments, because
+The root `Dockerfile` builds the player and admin images (targets
+`runner-player` and `runner-admin`; pass `--build-arg BUILD_APP=player` or
+`admin` to compile only that app); `apps/bot/Dockerfile` builds the bot and
+`apps/data-api/Dockerfile` the Data API. The `NEXT_PUBLIC_*` values are build arguments, because
 Next.js bakes them into the client bundle. This repository does not include
 deployment configuration.

@@ -126,7 +126,7 @@ services:
     image: ghcr.io/polarbaejr/badminton-bot:${IMAGE_TAG:-latest}
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: apps/bot/Dockerfile
       target: runner-bot
     env_file: .env
     environment:
