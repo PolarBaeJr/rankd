@@ -320,6 +320,21 @@ export function requiredQuestions(mapping: FormMapping): string[] {
   return [mapping.EMAIL_QUESTION, mapping.NAME_QUESTION];
 }
 
+/** Every question title a mapping names, once each, for checking a form has them all. */
+export function mappedQuestionTitles(mapping: FormMapping): string[] {
+  const titles = [
+    mapping.EMAIL_QUESTION,
+    mapping.NAME_QUESTION,
+    mapping.EVENT_QUESTION,
+    mapping.RECEIPT_QUESTION,
+    mapping.WAIVER_QUESTION,
+    mapping.SIGNATURE_QUESTION,
+    mapping.MEDIA_QUESTION,
+    ...Object.values(mapping.PARTNERS).flatMap((p) => [p.NAME_QUESTION, p.EMAIL_QUESTION, p.CATEGORY_QUESTION]),
+  ];
+  return [...new Set(titles.filter((title) => title !== ''))];
+}
+
 // ---- defaults the card starts from -----------------------------------------
 
 /** The script's example titles, so a form built from its comments maps with no typing. */

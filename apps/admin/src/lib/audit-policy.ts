@@ -179,6 +179,8 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // binding off is when it stopped. Same weight as minting and revoking.
   'registration_form_bound',
   'registration_form_unbound',
+  // A Form the console made for a target (00296): from then on it is read.
+  'registration_form_created',
   // A club event handed to a tournament event (00292): from then on entries
   // there sign people up, and bill them, here.
   'club_event_tournament_linked',

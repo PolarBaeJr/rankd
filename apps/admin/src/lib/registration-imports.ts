@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/nextjs';
 import { TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import type { createAdminClient } from './supabase-server';
 import { formMappingSchema, type FormMapping } from './registration-form-mapping';
+import { readFormMaker } from './form-maker';
 
 // GOOGLE FORM REGISTRATIONS (00283, 00284): what the console shows about them.
 //
@@ -364,4 +365,70 @@ async function loadSeasonResponses(admin: Admin, importIds: string[]): Promise<I
       fee: fee ? { amountCents: fee.amount_cents, paid: !!fee.paid_at } : null,
     };
   });
+}
+
+// ---- THE FORM THE CONSOLE MADE (00296) --------------------------------------
+
+/** What the Google Form card shows about the target's made Form. No personal data is in it. */
+export interface ManagedFormView {
+  /** The console has the form maker's address and secret. */
+  configured: boolean;
+  row: {
+    id: string;
+    state: 'creating' | 'failed' | 'unverified' | 'live';
+    bindingId: string | null;
+    responderUrl: string | null;
+    editUrl: string | null;
+    accepting: boolean | null;
+    closeReason: string | null;
+    lastError: string | null;
+    templateWaiverVersion: string | null;
+    claimedAt: string | null;
+  } | null;
+  /** The published waiver's version, to say when the template's text is older. */
+  liveWaiverVersion: string | null;
+}
+
+/** The target's current made Form, or null before 00296. */
+export async function loadManagedForm(
+  admin: Admin,
+  kind: 'club_event' | 'tournament',
+  targetId: string,
+): Promise<ManagedFormView | null> {
+  const column = kind === 'tournament' ? 'tournament_id' : 'club_event_id';
+  const [rowsRes, waiverRes] = await Promise.all([
+    admin
+      .from('managed_registration_forms' as never)
+      .select(
+        'id, state, binding_id, responder_url, edit_url, accepting, close_reason, last_error, template_waiver_version, claimed_at',
+      )
+      .eq(column, targetId)
+      .neq('state', 'retired')
+      .order('created_at', { ascending: false })
+      .limit(1),
+    admin.from('legal_documents').select('version').eq('document', 'waiver').maybeSingle(),
+  ]);
+  if (rowsRes.error) {
+    if ((rowsRes.error as { code?: string }).code === MISSING) return null;
+    throw new Error(`Could not read the made form: ${(rowsRes.error as { message: string }).message}`);
+  }
+  const stored = ((rowsRes.data ?? []) as unknown as Record<string, unknown>[])[0];
+  return {
+    configured: readFormMaker().state === 'ready',
+    row: stored
+      ? {
+          id: stored.id as string,
+          state: stored.state as NonNullable<ManagedFormView['row']>['state'],
+          bindingId: (stored.binding_id as string | null) ?? null,
+          responderUrl: (stored.responder_url as string | null) ?? null,
+          editUrl: (stored.edit_url as string | null) ?? null,
+          accepting: (stored.accepting as boolean | null) ?? null,
+          closeReason: (stored.close_reason as string | null) ?? null,
+          lastError: (stored.last_error as string | null) ?? null,
+          templateWaiverVersion: (stored.template_waiver_version as string | null) ?? null,
+          claimedAt: (stored.claimed_at as string | null) ?? null,
+        }
+      : null,
+    liveWaiverVersion: waiverRes.error ? null : ((waiverRes.data?.version as string | undefined) ?? null),
+  };
 }
