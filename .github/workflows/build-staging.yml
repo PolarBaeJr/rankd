@@ -81,6 +81,9 @@ jobs:
             base_path: /admin
           - app: data-api
             dockerfile: apps/data-api/Dockerfile
+          # The bot too: one tsc run, no Next.js builder.
+          - app: bot
+            dockerfile: apps/bot/Dockerfile
           # The Rust Data API (1.1.0b), run on staging beside the TypeScript
           # one so the two can be compared on the same host and data.
           - app: data-api-rs
@@ -151,6 +154,9 @@ jobs:
             NEXT_PUBLIC_PLAYER_URL=https://badminton.polardev.org
             NEXT_PUBLIC_ADMIN_URL=https://badminton.polardev.org/admin
             NEXT_PUBLIC_BASE_PATH=${{ matrix.base_path }}
+            # The root Dockerfile compiles only this image's app (ignored by
+            # the bot's and data API's own Dockerfiles).
+            BUILD_APP=${{ matrix.app }}
             # Must be a registrable suffix of the staging origin. Scoping it to
             # the staging host also means a staging passkey cannot be asserted
             # against production, or the reverse.
