@@ -100,7 +100,9 @@ export function EtransferForm({
     const storedMethod = dues ? detectedMethod : 'e_transfer';
     if (!isPlausibleReference(cleaned, storedMethod)) {
       setError(
-        `The reference is ${storedMethod === 'e_transfer' ? 6 : 4} to 32 letters, digits or hyphens, with no spaces.`,
+        storedMethod === 'e_transfer'
+          ? 'The reference is 6 to 32 letters, digits or hyphens, with no spaces, or the number exactly as your bank shows it.'
+          : 'The reference is 4 to 32 letters, digits or hyphens, with no spaces.',
       );
       return;
     }
@@ -179,7 +181,7 @@ export function EtransferForm({
             setReference(e.target.value);
           }}
           placeholder={reading ? 'Reading your screenshot...' : 'e.g. CA1a2B3c4D or 12345678'}
-          maxLength={32}
+          maxLength={48}
           autoComplete="off"
           spellCheck={false}
           disabled={pending}

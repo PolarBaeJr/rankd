@@ -87,7 +87,9 @@ export async function checkFeeSubmission(
   }
   if (!isPlausibleReference(reference, method)) {
     throw new ExpectedError(
-      `The reference is ${method === 'e_transfer' ? 6 : 4} to 32 letters, digits or hyphens, with no spaces`,
+      method === 'e_transfer'
+        ? 'The reference is 6 to 32 letters, digits or hyphens, with no spaces, or the number exactly as your bank shows it'
+        : 'The reference is 4 to 32 letters, digits or hyphens, with no spaces',
     );
   }
   // The fee the receipt would attach to, if it exists yet: the row named, or
@@ -113,29 +115,33 @@ export async function checkFeeSubmission(
 /**
  * File the receipt: the checks above, then (for dues with no row yet) the dues
  * row, then the submission. A pending receipt for the same fee is refused by
- * the unique index, whichever door the first one came through.
+ * the unique index, whichever door the first one came through. Returns the
+ * submission's id, for the server's own read of it (00297).
  */
 export async function fileFeeSubmission(
   admin: ServiceClient,
   player: ReceiptPayer,
   input: FileFeeSubmissionInput,
   options: { feeTypes?: readonly ReceiptFeeType[] } = {},
-): Promise<void> {
+): Promise<string> {
   const checked = await checkFeeSubmission(admin, player, input, options);
   // Everything is checked before duesFee, which may write.
   const feeId = checked.feeId ?? (await duesFee(admin, checked.duesSeasonId as string, player));
 
-  const { error } = await admin.from('fee_submissions').insert({
+  const { data, error } = await admin.from('fee_submissions').insert({
     club_fee_id: feeId,
     player_id: player.id,
     reference: checked.reference,
     screenshot_path: input.screenshotPath,
     method: checked.method,
-  });
-  if (error?.code === '23505') {
+  }).select('id').single();
+  // Only the one-pending index means "already waiting"; 00297's other unique
+  // indexes are never written by this insert, so anything else is a fault.
+  if (error?.code === '23505' && /fee_submissions_one_pending/.test(`${error.message} ${error.details ?? ''}`)) {
     throw new ExpectedError('You already have a submission waiting for this fee.');
   }
   if (error) throw new Error(`The receipt was not saved: ${error.message}`);
+  return (data as { id: string }).id;
 }
 
 /** An existing fee row: the member's own, unpaid, and not a reinstatement. */

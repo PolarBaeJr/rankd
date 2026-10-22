@@ -20,6 +20,7 @@ import {
   MEMBERSHIP_PAYMENTS_SETTING_KEY,
   safeEtransferEmail,
   safeInstagramUrl,
+  safePayeeName,
   safePurchaseUrl,
 } from '@badminton/shared';
 import { clubToday } from '@badminton/shared';
@@ -202,6 +203,13 @@ function invalidClubLink(key: string, value: Record<string, unknown>): string | 
     }
     if (!blankOr(value.etransfer_email, (v) => safeEtransferEmail(v) !== null)) {
       return 'The e-transfer email does not look like an email address.';
+    }
+    // Absent on a row saved before the field existed.
+    if (
+      value.etransfer_payee_name !== undefined &&
+      !blankOr(value.etransfer_payee_name, (v) => safePayeeName(v) !== null)
+    ) {
+      return 'The e-transfer payee name is at most 100 characters.';
     }
   }
   return null;

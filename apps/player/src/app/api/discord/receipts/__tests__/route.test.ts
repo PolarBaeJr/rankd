@@ -97,6 +97,16 @@ vi.mock('@/lib/supabase-server', () => ({
   }),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The server's own read of the receipt (00297) runs after the reply; queued
+// here, never run, since the OCR is not what these pin.
+const afterTasks = vi.hoisted(() => [] as (() => unknown)[]);
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: (task: () => unknown) => {
+    afterTasks.push(task);
+  },
+}));
+vi.mock('@/lib/receipt-ocr-server', () => ({ serverReceiptOcr: {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 
 const { ExpectedError } = await import('@badminton/shared');
@@ -132,6 +142,7 @@ const body = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  afterTasks.length = 0;
   process.env.DISCORD_SERVICE_SECRET = 'test-secret';
   caller = { ok: true, player: PLAYER };
   member = { ok: true, player: PLAYER };
@@ -248,6 +259,12 @@ describe('POST /api/discord/receipts', () => {
     const response = await POST(post(body()));
     expect(await response.json()).toMatchObject({ ok: false, refusal: 'rule' });
     expect(remove).toHaveBeenCalledWith([upload.mock.calls[0]![0]]);
+    expect(afterTasks).toHaveLength(0);
+  });
+
+  it('queues the server read of a filed receipt for after the reply (00297)', async () => {
+    await POST(post(body()));
+    expect(afterTasks).toHaveLength(1);
   });
 
   it('removes the upload and answers 503 when filing fails for another reason', async () => {

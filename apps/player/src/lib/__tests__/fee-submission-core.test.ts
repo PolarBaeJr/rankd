@@ -24,7 +24,7 @@ type FeeRow = { id: string; player_id: string; fee_type: string; paid_at: string
 let feeRow: FeeRow | null;
 let activeSeason: boolean;
 let duesRow: { id: string; paid_at: string | null; amount_cents: number | null } | null;
-let submissionError: { code?: string; message: string } | null;
+let submissionError: { code?: string; message: string; details?: string } | null;
 let pendingFor: string | null;
 const inserts: { table: string; row: Record<string, unknown> }[] = [];
 
@@ -44,7 +44,14 @@ function client() {
         update: () => chain,
         insert: (row: Record<string, unknown>) => {
           inserts.push({ table, row });
-          if (table === 'fee_submissions') return Promise.resolve({ error: submissionError });
+          if (table === 'fee_submissions') {
+            return {
+              select: () => ({
+                single: () =>
+                  Promise.resolve(submissionError ? { data: null, error: submissionError } : { data: { id: 'sub-new' }, error: null }),
+              }),
+            };
+          }
           return {
             select: () => ({
               single: () => Promise.resolve({ data: { id: 'dues-new', paid_at: null, amount_cents: row.amount_cents }, error: null }),
@@ -126,9 +133,34 @@ describe('fileFeeSubmission', () => {
     expect(inserts[1]?.row.club_fee_id).toBe('dues-new');
   });
 
-  it('turns the unique index into "already waiting"', async () => {
-    submissionError = { code: '23505', message: 'duplicate' };
+  it('returns the new submission id, for the server to read it (00297)', async () => {
+    expect(await fileFeeSubmission(client(), ME, forFee())).toBe('sub-new');
+  });
+
+  it('turns the one-pending index into "already waiting"', async () => {
+    submissionError = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "fee_submissions_one_pending"',
+    };
     expect(await refusal(fileFeeSubmission(client(), ME, forFee()))).toMatch(/already have a submission waiting/);
+  });
+
+  it('does not call any other unique violation "already waiting"', async () => {
+    submissionError = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "fee_submissions_reference_key_once"',
+    };
+    const failure = fileFeeSubmission(client(), ME, forFee());
+    await expect(failure).rejects.toThrow(/not saved/);
+    await failure.catch((err) => expect(isExpectedFailure(err)).toBe(false));
+  });
+
+  it('takes an e-transfer number as the bank prints it, hidden part and all', async () => {
+    await fileFeeSubmission(client(), ME, forFee({ reference: 'H99517225\u2026111525803' }));
+    expect(inserts.find((i) => i.table === 'fee_submissions')?.row.reference).toBe('H99517225...111525803');
+    inserts.length = 0;
+    await fileFeeSubmission(client(), ME, forFee({ reference: 'C1Aarp***bAz' }));
+    expect(inserts.find((i) => i.table === 'fee_submissions')?.row.reference).toBe('C1Aarp***bAz');
   });
 
   it('throws a plain error, not a refusal, when the insert fails otherwise', async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import * as Sentry from '@sentry/nextjs';
 import { isExpectedFailure, rateLimit } from '@badminton/shared';
@@ -14,6 +14,8 @@ import { downloadDiscordReceipt, parseFeeChoice, type ReceiptFileFailure } from 
 import { latestSubmission, seasonFeeFor, type OwnFeeRow } from '@/lib/member-fees';
 import { canUploadReceipt, money } from '@/lib/fees';
 import { getMembershipPayments } from '@/lib/club-socials';
+import { checkSubmission } from '@badminton/shared/src/utils/receipt-check';
+import { serverReceiptOcr } from '@/lib/receipt-ocr-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -131,8 +133,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'upload_failed' }, { status: 503 });
   }
 
+  let submissionId: string;
   try {
-    await fileFeeSubmission(supabase, player, { ...input, screenshotPath: path }, { feeTypes: DISCORD_FEE_TYPES });
+    submissionId = await fileFeeSubmission(supabase, player, { ...input, screenshotPath: path }, { feeTypes: DISCORD_FEE_TYPES });
   } catch (err) {
     const { error: removeError } = await supabase.storage.from('fee-proofs').remove([path]);
     if (removeError) console.error('[discord] could not remove an orphaned receipt upload:', removeError.message);
@@ -140,6 +143,16 @@ export async function POST(request: Request) {
     console.error('[discord] receipt insert failed:', err);
     return NextResponse.json({ error: 'insert_failed' }, { status: 503 });
   }
+
+  // The server's own read (00297), after the reply: the bot is not kept waiting.
+  after(async () => {
+    try {
+      await checkSubmission(supabase, submissionId, serverReceiptOcr);
+    } catch (err) {
+      // The RPC's message only: nothing read off the screenshot is in it.
+      console.error('[discord] the receipt check failed:', err instanceof Error ? err.message : typeof err);
+    }
+  });
 
   try {
     revalidatePath('/membership');

@@ -27,6 +27,30 @@ const appVersion = require('../../package.json').version;
 
 const path = require('path');
 
+// THE SERVER'S RECEIPT OCR (00297, src/lib/receipt-ocr-server.ts). tesseract.js
+// runs its worker as a worker_threads script it names by path, and its core
+// is required by name inside that worker, so a bundler sees neither: kept
+// external, and traced in by hand for the routes that read a receipt. Missing
+// any of it, the build is clean and the read fails in the container only
+// (safely: the receipt is held for an exec as 'ocr_failed').
+// ALL of tesseract.js-core, not only its LSTM builds: tesseract.js 7 hands its
+// core picker a boolean where it compares an OEM number, so whatever the OEM it
+// loads the full core (worker-script/node/getCore.js).
+const TESSERACT_FILES = [
+  '../../node_modules/tesseract.js/**',
+  '../../node_modules/tesseract.js-core/**',
+  '../../node_modules/wasm-feature-detect/**',
+  '../../node_modules/zlibjs/**',
+  '../../node_modules/bmp-js/**',
+  '../../node_modules/is-url/**',
+  '../../node_modules/node-fetch/**',
+  '../../node_modules/whatwg-url/**',
+  '../../node_modules/tr46/**',
+  '../../node_modules/webidl-conversions/**',
+  '../../node_modules/regenerator-runtime/**',
+  '../../node_modules/idb-keyval/**',
+];
+
 const nextConfig = {
   output: 'standalone',
   // Inlined at build time, so the standalone server needs nothing at runtime.
@@ -47,7 +71,10 @@ const nextConfig = {
   outputFileTracingIncludes: {
     '/api/discord/card/[token]': ['./src/fonts/*.ttf'],
     '/api/discord/card/probe': ['./src/fonts/*.ttf'],
+    '/membership': TESSERACT_FILES,
+    '/api/discord/receipts': TESSERACT_FILES,
   },
+  serverExternalPackages: ['tesseract.js', 'tesseract.js-core'],
   // src/instrumentation.ts (Sentry server/edge init) needed an experimental
   // flag on 14; it is default-on from 15, and leaving the flag set now only
   // earns an "unrecognised experimental option" warning.

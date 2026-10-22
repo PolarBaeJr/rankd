@@ -534,8 +534,18 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // (00248), so the FK scan finds reviewed_by alone; both are listed.
     playerColumns: ['player_id', 'reviewed_by'],
     disposition: 'project',
-    withheldColumns: ['reviewed_by', 'screenshot_path'],
-    why: 'Every payment receipt you sent the club (e-transfer or SFU Rec): the reference, how it was paid, when you sent it, and whether an exec confirmed or rejected it, with the reason they gave. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
+    // image_sha256 is a fingerprint of the screenshot, which the export already
+    // reduces to whether one is held; the rest is the read's own bookkeeping.
+    withheldColumns: [
+      'reviewed_by',
+      'screenshot_path',
+      'image_sha256',
+      'ocr_attempts',
+      'ocr_attempted_at',
+      'ocr_state',
+      'reference_key',
+    ],
+    why: 'Every payment receipt you sent the club (e-transfer or SFU Rec): the reference, how it was paid, when you sent it, and whether it was confirmed or rejected, with the reason given. A receipt the site read and confirmed automatically says so, and one it held for an exec says why. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
   },
   club_ledger: {
     playerColumns: ['paid_by', 'marked_by', 'reimbursed_by'],

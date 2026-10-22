@@ -42,3 +42,30 @@ describe('receipt OCR is self-hosted', () => {
     expect(statSync(join(APP, 'public', 'tesseract', name)).size).toBeGreaterThan(0);
   });
 });
+
+// The server's own read (00297) is held to the same rule: the model comes off
+// this app's disk, so a screenshot never leaves the container. Both apps run it.
+describe.each(['admin', 'player'])('the %s server OCR is self-hosted', (app) => {
+  const root = join(APP, '..', app);
+  const server = readFileSync(join(root, 'src', 'lib', 'receipt-ocr-server.ts'), 'utf8');
+
+  it('names no remote host and reads the model off disk', () => {
+    for (const needle of ['jsdelivr', 'unpkg', 'http:', 'https:', 'tessdata.projectnaptha']) {
+      expect(server.toLowerCase(), needle).not.toContain(needle);
+    }
+    expect(server).toContain("path.join(process.cwd(), 'apps', '" + app + "', 'public', 'tesseract')");
+    expect(server).toContain("cacheMethod: 'none'");
+    expect(statSync(join(root, 'public', 'tesseract', 'eng.traineddata.gz')).size).toBeGreaterThan(0);
+  });
+
+  it('never logs the text it read', () => {
+    expect(server).not.toMatch(/console\.\w+\([^)]*data\.text/);
+    expect(server).not.toMatch(/console\.\w+\([^)]*, err\)/);
+  });
+
+  it('keeps tesseract external and traces all of it into the build', () => {
+    const config = readFileSync(join(root, 'next.config.js'), 'utf8');
+    expect(config).toContain("serverExternalPackages: ['tesseract.js', 'tesseract.js-core']");
+    expect(config).toContain("'../../node_modules/tesseract.js-core/**'");
+  });
+});

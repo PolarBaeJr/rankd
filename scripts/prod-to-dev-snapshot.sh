@@ -1230,6 +1230,15 @@ BEGIN
        SET email = 'invite.' || substr(md5(id::text), 1, 10) || '@staging.invalid', last_error = NULL;
   END IF;
 
+  -- RECEIPTS STILL QUEUED for the server's own read (00297). Staging has prod's
+  -- rows but not its fee-proofs objects, so a staging check could only fail
+  -- them; closed here so nothing on staging reaches for them. Guarded on the
+  -- column, which exists only once production has 00297.
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'fee_submissions' AND column_name = 'ocr_state') THEN
+    UPDATE public.fee_submissions SET ocr_state = 'done' WHERE ocr_state = 'pending';
+  END IF;
+
   -- Device records. Passkeys are scoped to the hostname they were enrolled on,
   -- so production's cannot work on staging regardless; push endpoints are
   -- per-device URLs that would aim staging's notifications at real phones.

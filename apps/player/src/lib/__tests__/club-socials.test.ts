@@ -79,12 +79,17 @@ describe('getMembershipPayments', () => {
     await expect(getMembershipPayments()).resolves.toEqual({
       sfssPurchaseUrl: DEFAULT_MEMBERSHIP_PURCHASE_URL,
       etransferEmail: null,
+      etransferPayeeName: null,
     });
   });
 
   it('hides a purchase link that is not https', async () => {
     state.rows.membership_payments = { sfss_purchase_url: 'http://example.com', etransfer_email: '' };
-    await expect(getMembershipPayments()).resolves.toEqual({ sfssPurchaseUrl: null, etransferEmail: null });
+    await expect(getMembershipPayments()).resolves.toEqual({
+      sfssPurchaseUrl: null,
+      etransferEmail: null,
+      etransferPayeeName: null,
+    });
   });
 
   it.each(['error', 'throw', 'builder-throws'] as const)('never throws on a %s', async (mode) => {
@@ -92,6 +97,7 @@ describe('getMembershipPayments', () => {
     await expect(getMembershipPayments()).resolves.toEqual({
       sfssPurchaseUrl: DEFAULT_MEMBERSHIP_PURCHASE_URL,
       etransferEmail: null,
+      etransferPayeeName: null,
     });
   });
 });
