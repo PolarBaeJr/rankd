@@ -1183,6 +1183,53 @@ BEGIN
   -- exists only once production has 00254.
   IF to_regclass('public.guest_waiver_signings') IS NOT NULL THEN DELETE FROM public.guest_waiver_signings; END IF;
 
+  -- THE GOOGLE FORM READER (00287 onward). Two separate leaks, both closed here.
+  --
+  -- 1. The BINDINGS. A copied registration_import_forms row is prod's live Form
+  --    id, active, and staging holds the same reader key, so staging's 5-minute
+  --    poll read the REAL Form and imported real respondents (caught by the
+  --    owner 2026-10-21). Each form_id becomes a placeholder no Google Form can
+  --    have, and every binding is switched off. drive_file_id on receipts goes
+  --    the same way, or staging could download a real e-transfer screenshot.
+  -- 2. What prod ALREADY imported: respondents' names and emails on the
+  --    imports, entries, guest sign-ups and waiver invites, and the raw result.
+  IF to_regclass('public.registration_import_forms') IS NOT NULL THEN
+    UPDATE public.registration_import_forms
+       SET form_id = 'staging-scrubbed-' || substr(md5(id::text), 1, 12),
+           active = FALSE, poll_error = NULL;
+  END IF;
+  IF to_regclass('public.registration_import_receipts') IS NOT NULL THEN
+    UPDATE public.registration_import_receipts
+       SET drive_file_id = 'staging-scrubbed-' || substr(md5(id::text), 1, 12);
+  END IF;
+  IF to_regclass('public.registration_imports') IS NOT NULL THEN
+    UPDATE public.registration_imports
+       SET submitter_name  = CASE WHEN submitter_name  IS NULL THEN NULL ELSE 'Form Respondent' END,
+           submitter_email = CASE WHEN submitter_email IS NULL THEN NULL
+                                  ELSE 'respondent.' || substr(md5(id::text), 1, 10) || '@staging.invalid' END,
+           result = CASE jsonb_typeof(result) WHEN 'array' THEN '[]'::jsonb WHEN 'object' THEN '{}'::jsonb ELSE result END;
+  END IF;
+  IF to_regclass('public.registration_import_entries') IS NOT NULL THEN
+    UPDATE public.registration_import_entries
+       SET external_name  = CASE WHEN external_name  IS NULL THEN NULL ELSE 'Form Guest' END,
+           external_email = CASE WHEN external_email IS NULL THEN NULL
+                                 ELSE 'guest.' || substr(md5(id::text), 1, 10) || '@staging.invalid' END,
+           partner_name   = CASE WHEN partner_name   IS NULL THEN NULL ELSE 'Form Partner' END,
+           partner_email  = CASE WHEN partner_email  IS NULL THEN NULL
+                                 ELSE 'partner.' || substr(md5(id::text), 1, 10) || '@staging.invalid' END,
+           confirm_email_error = NULL;
+  END IF;
+  IF to_regclass('public.club_event_external_signups') IS NOT NULL THEN
+    UPDATE public.club_event_external_signups
+       SET full_name = 'Form Guest',
+           email = CASE WHEN email IS NULL THEN NULL
+                        ELSE 'guest.' || substr(md5(id::text), 1, 10) || '@staging.invalid' END;
+  END IF;
+  IF to_regclass('public.guest_waiver_invites') IS NOT NULL THEN
+    UPDATE public.guest_waiver_invites
+       SET email = 'invite.' || substr(md5(id::text), 1, 10) || '@staging.invalid', last_error = NULL;
+  END IF;
+
   -- Device records. Passkeys are scoped to the hostname they were enrolled on,
   -- so production's cannot work on staging regardless; push endpoints are
   -- per-device URLs that would aim staging's notifications at real phones.
@@ -1369,7 +1416,29 @@ SELECT 'guest waiver signings  ' || CASE
          WHEN to_regclass('public.guest_waiver_signings') IS NULL THEN 0
          ELSE (xpath('/row/n/text()', query_to_xml(
                 'SELECT count(*) AS n FROM public.guest_waiver_signings', false, true, '')))[1]::text::int
-       END;
+       END
+UNION ALL
+-- The Form reader, the same way. A binding still naming a real Form is the
+-- worse of the two: the staging poll would import live respondents again.
+SELECT 'live Form bindings     ' || CASE
+         WHEN to_regclass('public.registration_import_forms') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                $q$SELECT count(*) AS n FROM public.registration_import_forms
+                    WHERE form_id NOT LIKE 'staging-scrubbed-%' OR active$q$, false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'Form respondent emails ' || (
+         SELECT coalesce(sum(n), 0)::int FROM (VALUES
+           ('registration_imports', 'submitter_email'),
+           ('registration_import_entries', 'external_email'),
+           ('registration_import_entries', 'partner_email'),
+           ('club_event_external_signups', 'email'),
+           ('guest_waiver_invites', 'email')) AS c(tbl, col),
+         LATERAL (SELECT CASE WHEN to_regclass('public.' || c.tbl) IS NULL THEN 0
+                    ELSE (xpath('/row/n/text()', query_to_xml(format(
+                      'SELECT count(*) AS n FROM public.%I WHERE %I IS NOT NULL AND %I NOT LIKE %L',
+                      c.tbl, c.col, c.col, '%@staging.invalid'), false, true, '')))[1]::text::int
+                  END AS n) AS counted);
 SQL
   )
   echo "$leak" | sed 's/^/  remaining /'
