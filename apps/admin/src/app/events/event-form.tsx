@@ -2,7 +2,18 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Card, Checkbox, DateTimePicker, Dialog, Input, Select, Textarea, useConfirm } from '@badminton/ui';
+import {
+  Button,
+  Card,
+  Checkbox,
+  DateTimePicker,
+  Dialog,
+  Input,
+  Select,
+  Textarea,
+  useConfirm,
+  useEditableSection,
+} from '@badminton/ui';
 import { CLUB_EVENT_KINDS, CLUB_EVENT_KIND_LABELS } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { cancelClubEvent, createClubEvent, deleteClubEvent, updateClubEvent } from '@/lib/actions/club-events';
@@ -49,6 +60,7 @@ export function ClubEventForm({
 }) {
   const router = useRouter();
   const { toast } = useToast();
+  const { close } = useEditableSection();
   const [values, setValues] = useState<ClubEventFormValues>(initial);
   const [saving, setSaving] = useState(false);
 
@@ -81,6 +93,7 @@ export function ClubEventForm({
         }
         toast('Event saved', 'success');
         router.refresh();
+        close();
       } else {
         const result = await createClubEvent(input);
         if (!result.ok) {
@@ -95,94 +108,100 @@ export function ClubEventForm({
     }
   }
 
-  return (
-    <Card>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <Input
-          label="Title"
+  // On an event's page the form sits inside the Details section's card, so it
+  // brings its own only on /events/new.
+  const form = (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <Input
+        label="Title"
+        required
+        maxLength={120}
+        value={values.title}
+        onChange={(e) => set('title', e.target.value)}
+      />
+      <Select
+        label="Kind"
+        options={KIND_OPTIONS}
+        value={values.kind}
+        onChange={(e) => set('kind', e.target.value)}
+      />
+      <Textarea
+        label="Description"
+        maxLength={4000}
+        rows={5}
+        value={values.description}
+        onChange={(e) => set('description', e.target.value)}
+      />
+      <Input
+        label="Location"
+        maxLength={200}
+        value={values.location}
+        onChange={(e) => set('location', e.target.value)}
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DateTimePicker
+          label="Starts"
           required
-          maxLength={120}
-          value={values.title}
-          onChange={(e) => set('title', e.target.value)}
+          value={values.starts_at}
+          onChange={(next) => set('starts_at', next)}
         />
-        <Select
-          label="Kind"
-          options={KIND_OPTIONS}
-          value={values.kind}
-          onChange={(e) => set('kind', e.target.value)}
+        <DateTimePicker
+          label="Ends"
+          value={values.ends_at}
+          onChange={(next) => set('ends_at', next)}
         />
-        <Textarea
-          label="Description"
-          maxLength={4000}
-          rows={5}
-          value={values.description}
-          onChange={(e) => set('description', e.target.value)}
+        <DateTimePicker
+          label="Sign-ups open"
+          value={values.signup_opens_at}
+          onChange={(next) => set('signup_opens_at', next)}
+        />
+        <DateTimePicker
+          label="Sign-ups close"
+          value={values.signup_closes_at}
+          onChange={(next) => set('signup_closes_at', next)}
         />
         <Input
-          label="Location"
-          maxLength={200}
-          value={values.location}
-          onChange={(e) => set('location', e.target.value)}
+          label="Capacity"
+          type="number"
+          min={1}
+          step={1}
+          placeholder="No limit"
+          value={values.capacity}
+          onChange={(e) => set('capacity', e.target.value)}
         />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <DateTimePicker
-            label="Starts"
-            required
-            value={values.starts_at}
-            onChange={(next) => set('starts_at', next)}
-          />
-          <DateTimePicker
-            label="Ends"
-            value={values.ends_at}
-            onChange={(next) => set('ends_at', next)}
-          />
-          <DateTimePicker
-            label="Sign-ups open"
-            value={values.signup_opens_at}
-            onChange={(next) => set('signup_opens_at', next)}
-          />
-          <DateTimePicker
-            label="Sign-ups close"
-            value={values.signup_closes_at}
-            onChange={(next) => set('signup_closes_at', next)}
-          />
-          <Input
-            label="Capacity"
-            type="number"
-            min={1}
-            step={1}
-            placeholder="No limit"
-            value={values.capacity}
-            onChange={(e) => set('capacity', e.target.value)}
-          />
-          <Input
-            label="Cost (dollars)"
-            type="number"
-            min={0}
-            max={1000}
-            step={0.01}
-            placeholder="Not shown"
-            value={values.cost_dollars}
-            onChange={(e) => set('cost_dollars', e.target.value)}
-          />
-        </div>
-        <p className="text-[12px] text-[var(--mute)]">
-          Times are club time. The cost is shown to members only; nothing charges for it.
-        </p>
-        <Checkbox
-          checked={values.publish}
-          onChange={(checked) => set('publish', checked)}
-          label="Published: members can see it and sign up"
-          showLabel
+        <Input
+          label="Cost (dollars)"
+          type="number"
+          min={0}
+          max={1000}
+          step={0.01}
+          placeholder="Not shown"
+          value={values.cost_dollars}
+          onChange={(e) => set('cost_dollars', e.target.value)}
         />
-        <div>
-          <Button type="submit" loading={saving}>
-            {eventId ? 'Save' : 'Create event'}
+      </div>
+      <p className="text-[12px] text-[var(--mute)]">
+        Times are club time. The cost is shown to members only; nothing charges for it.
+      </p>
+      <Checkbox
+        checked={values.publish}
+        onChange={(checked) => set('publish', checked)}
+        label="Published: members can see it and sign up"
+        showLabel
+      />
+      <div className="flex gap-2">
+        <Button type="submit" loading={saving}>
+          {eventId ? 'Save' : 'Create event'}
+        </Button>
+        {eventId && (
+          <Button type="button" variant="ghost" onClick={close} disabled={saving}>
+            Cancel
           </Button>
-        </div>
-      </form>
-    </Card>
+        )}
+      </div>
+    </form>
   );
+  return eventId ? form : <Card>{form}</Card>;
 }
 
 /**

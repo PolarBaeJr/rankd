@@ -5,7 +5,17 @@ import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@
 // that can disagree about what Admin means — see console-access.ts.
 import { PermissionEditor } from '@/app/permissions/permission-editor';
 import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
-import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
+import {
+  Badge,
+  AvatarChip,
+  EmptyState,
+  ResponsiveTable,
+  TableCard,
+  Atomic,
+  EditableSectionProvider,
+  EditableSectionToggle,
+  EditableSectionContent,
+} from '@badminton/ui';
 import {
   clubDate,
   readFeatureFlags,
@@ -19,7 +29,7 @@ import {
 } from '@badminton/shared';
 import { PLAYER_STATUS_LABELS, describeMatchShape, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
 import type { SeasonMatchRow } from '@badminton/shared';
-import { PlayerEditForm } from './edit-form';
+import { PlayerEditForm, PlayerRecordSummary } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
 import { ReliabilityEditor } from './reliability-editor';
 import { CancelDeletionButton } from './cancel-deletion-button';
@@ -612,8 +622,16 @@ export default async function PlayerDetailPage({
             players.update.write, so every control in it — status, membership,
             the reason box, Save — would reject them. */}
         {canManage && (
-        <Panel title="Edit member" icon={<SquarePen className="h-4 w-4 text-[var(--text-muted)]" />}>
-          <PlayerEditForm player={player} rating={r} isAdmin={isAdmin} canApprove={canApprove} />
+        <EditableSectionProvider>
+        <Panel
+          title="Member"
+          icon={<SquarePen className="h-4 w-4 text-[var(--text-muted)]" />}
+          trailing={<EditableSectionToggle />}
+        >
+          <EditableSectionContent
+            read={<PlayerRecordSummary player={player} rating={r} isAdmin={isAdmin} />}
+            form={<PlayerEditForm player={player} rating={r} isAdmin={isAdmin} canApprove={canApprove} />}
+          />
           {isAdmin && (
             <div className="mt-5 border-t border-[var(--border)] pt-4">
               <PanelLabel>Legal</PanelLabel>
@@ -624,6 +642,7 @@ export default async function PlayerDetailPage({
             </div>
           )}
         </Panel>
+        </EditableSectionProvider>
         )}
 
         {/* Reliability. Roster data — the counters are this member's record —

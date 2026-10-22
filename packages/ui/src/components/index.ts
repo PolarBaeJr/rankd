@@ -46,3 +46,12 @@ export { RouteError } from './RouteError';
 export { RouteLoading } from './RouteLoading';
 export { LegalMarkdown } from './LegalMarkdown';
 export { ConfirmProvider, useConfirm, type ConfirmOptions } from './ConfirmDialog';
+export {
+  EditableSection,
+  EditableSectionProvider,
+  EditableSectionToggle,
+  EditableSectionContent,
+  useEditableSection,
+  DetailList,
+  DetailRow,
+} from './EditableSection';

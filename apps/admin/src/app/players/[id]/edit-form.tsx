@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Input, Select, Switch, Textarea } from '@badminton/ui';
+import { useRouter } from 'next/navigation';
+import { Button, DetailList, DetailRow, Input, Select, Switch, Textarea, useEditableSection } from '@badminton/ui';
 import {
   PLAYER_STATUS_LABELS,
   MIN_ELO,
@@ -57,6 +58,8 @@ export function PlayerEditForm({
   canApprove: boolean;
 }) {
   const { toast } = useToast();
+  const router = useRouter();
+  const { close } = useEditableSection();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
   const [membershipType, setMembershipType] = useState(
@@ -151,6 +154,7 @@ export function PlayerEditForm({
     };
     const hasOtherChanges = Object.values(changes).some((v) => v !== undefined);
 
+    let saved = false;
     try {
       if (isPending) {
         const res = await approvePlayer(player.id, status as 'competitive' | 'recreational', reason);
@@ -166,6 +170,7 @@ export function PlayerEditForm({
           if (!rest.ok) { toast(rest.error, 'error'); setLoading(false); return; }
         }
         toast('Player approved', 'success');
+        saved = true;
       } else {
         const res = await updatePlayer(player.id, {
           status: status !== player.status ? status as Player['status'] : undefined,
@@ -174,11 +179,16 @@ export function PlayerEditForm({
         });
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Player updated', 'success');
+        saved = true;
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
+    if (saved) {
+      router.refresh();
+      close();
+    }
   }
 
   // `pending_approval` is not something this form SETS — letting a signup in
@@ -340,9 +350,66 @@ export function PlayerEditForm({
           you do not hold. Ask an admin.
         </p>
       )}
-      <Button type="submit" loading={loading} className="w-full" disabled={approvalBlocked}>
-        {isPending ? 'Approve Player' : 'Save Changes'}
-      </Button>
+      <div className="flex gap-2">
+        <Button type="button" variant="ghost" onClick={close} disabled={loading}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={loading} className="flex-1" disabled={approvalBlocked}>
+          {isPending ? 'Approve Player' : 'Save Changes'}
+        </Button>
+      </div>
     </form>
+  );
+}
+
+/**
+ * What the form above edits, as text. It shows no more than the form shows the
+ * same viewer: Elo, the exec bio fields and fee-exempt only for an admin, and
+ * the exec fields only on somebody already on the exec team. Gender is here for
+ * the same reason it is on the form (00129), and it is drawn only where the
+ * form is, behind players.update.write.
+ */
+export function PlayerRecordSummary({
+  player,
+  rating,
+  isAdmin,
+}: {
+  player: Player;
+  rating: Rating | null;
+  isAdmin: boolean;
+}) {
+  const membershipType = (player as { membership_type?: string }).membership_type ?? 'internal';
+  const category =
+    toCompetitionCategory((player as { competition_category?: unknown }).competition_category) ?? '';
+  const isExec = player.is_exec ?? false;
+  const execPhotoUrl = (player as { exec_photo_url?: string | null }).exec_photo_url ?? '';
+  const execHidden = (player as { exec_hidden?: boolean | null }).exec_hidden ?? false;
+
+  return (
+    <DetailList>
+      <DetailRow label="Status" value={PLAYER_STATUS_LABELS[player.status] ?? player.status} />
+      <DetailRow
+        label="Membership"
+        value={MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.label ?? membershipType}
+      />
+      <DetailRow
+        label="Gender"
+        value={COMPETITION_CATEGORY_CHOICES.find((c) => c.value === category)?.label}
+      />
+      {isAdmin && (
+        <>
+          <DetailRow label="Singles Elo" value={rating?.singles_elo ?? 400} />
+          <DetailRow label="Doubles Elo" value={rating?.doubles_elo ?? 400} />
+          {isExec && (
+            <>
+              <DetailRow label="Executive title" value={player.exec_title} mono={false} />
+              <DetailRow label="Exec photo URL" value={execPhotoUrl} wide />
+              <DetailRow label="Hidden from the exec page" value={execHidden ? 'Yes' : 'No'} />
+            </>
+          )}
+          <DetailRow label="Fee exempt" value={(player.fee_exempt ?? false) ? 'Yes' : 'No'} />
+        </>
+      )}
+    </DetailList>
   );
 }

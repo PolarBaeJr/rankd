@@ -189,6 +189,7 @@ describe('reading a form with Google (00287)', () => {
             SIGNATURE_QUESTION: '',
             MEDIA_QUESTION: '',
             MEDIA_ALLOW_ANSWER: '',
+            PARTNER_NOTE_QUESTION: '',
           },
           poll_watermark: null,
           poll_error: null,

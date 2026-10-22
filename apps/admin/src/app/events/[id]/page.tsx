@@ -2,13 +2,15 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  CLUB_EVENT_KIND_LABELS,
   formatClubEventCost,
   formatClubEventTime,
   isUuid,
   readFeatureFlags,
   utcToClubWallClock,
+  type ClubEventKind,
 } from '@badminton/shared';
-import { Badge, Card, PageHeader } from '@badminton/ui';
+import { Badge, Card, DetailList, DetailRow, EditableSection, PageHeader } from '@badminton/ui';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { ClubEventControls, ClubEventForm, type ClubEventFormValues } from '../event-form';
@@ -131,6 +133,34 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           .eq('event_id', id)
           .order('created_at', { ascending: true })
       : { data: [] };
+  // The preferred partner each Form answer named (00299), read on its own so
+  // a database without the column shows no notes rather than no list.
+  const [{ data: memberNotes }, { data: guestNotes }] = canSeeSignups
+    ? await Promise.all([
+        adminClient
+          .from('club_event_signups')
+          .select('player_id, preferred_partner')
+          .eq('event_id', id)
+          .not('preferred_partner', 'is', null),
+        externals > 0
+          ? adminClient
+              .from('club_event_external_signups')
+              .select('id, preferred_partner')
+              .eq('event_id', id)
+              .not('preferred_partner', 'is', null)
+          : Promise.resolve({ data: [] }),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const memberPartner = new Map(
+    ((memberNotes ?? []) as { player_id: string; preferred_partner: string }[]).map((row) => [
+      row.player_id,
+      row.preferred_partner,
+    ]),
+  );
+  const guestPartner = new Map(
+    ((guestNotes ?? []) as { id: string; preferred_partner: string }[]).map((row) => [row.id, row.preferred_partner]),
+  );
+
   const entryById = new Map((formImports?.entries ?? []).map((entry) => [entry.id, entry]));
   const guests = (
     (guestData ?? []) as {
@@ -153,10 +183,18 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       entryId: entry && entry.status === 'entered' ? entry.id : null,
       waiverSigned: row.walk_in ? false : entry ? !!entry.waiver?.signed : null,
       fee: entry?.fee ?? null,
+      partner: guestPartner.get(row.id) ?? null,
     };
   });
   const signedUp: ClubEventSignupRow[] = [
-    ...signups.map((row): ClubEventSignupRow => ({ kind: 'member', key: `member:${row.player_id}`, ...row })),
+    ...signups.map(
+      (row): ClubEventSignupRow => ({
+        kind: 'member',
+        key: `member:${row.player_id}`,
+        ...row,
+        partner: memberPartner.get(row.player_id) ?? null,
+      }),
+    ),
     ...guests,
   ].sort((a, b) => a.created_at.localeCompare(b.created_at));
 
@@ -230,8 +268,9 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         sub={<Link href="/events" className="hover:underline">Back to club events</Link>}
       />
       <div className="flex flex-col gap-5">
-        <Card>
-          <div className="flex flex-col gap-2 text-sm text-[var(--ink-2)]">
+        <EditableSection
+          title="Details"
+          sub={
             <div className="flex flex-wrap items-center gap-2">
               {cancelled ? (
                 <Badge variant="danger">Cancelled</Badge>
@@ -244,19 +283,45 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 <Badge variant="warning">Over capacity</Badge>
               )}
             </div>
-            <div>
-              {formatClubEventTime(event.starts_at)}
-              {event.ends_at ? ` to ${formatClubEventTime(event.ends_at)}` : ''}
-            </div>
-            <div>
-              {event.capacity === null ? `${taken} signed up` : `${taken} of ${event.capacity} places taken`}
-            </div>
-            {cost && <div>Cost: {cost}</div>}
-            {cancelled && event.cancelled_reason && <div>Reason: {event.cancelled_reason}</div>}
-          </div>
-        </Card>
-
-        {canEdit && !cancelled && <ClubEventForm eventId={event.id} initial={initial} />}
+          }
+          canEdit={canEdit && !cancelled}
+          read={
+            <DetailList>
+              <DetailRow label="Title" value={event.title} mono={false} />
+              <DetailRow
+                label="Kind"
+                value={CLUB_EVENT_KIND_LABELS[event.kind as ClubEventKind] ?? event.kind}
+                mono={false}
+              />
+              <DetailRow
+                label="Description"
+                value={
+                  event.description ? <span className="whitespace-pre-wrap">{event.description}</span> : null
+                }
+                mono={false}
+                wide
+              />
+              <DetailRow label="Location" value={event.location} mono={false} />
+              <DetailRow label="Starts" value={formatClubEventTime(event.starts_at)} />
+              <DetailRow label="Ends" value={event.ends_at ? formatClubEventTime(event.ends_at) : null} />
+              <DetailRow
+                label="Sign-ups open"
+                value={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
+              />
+              <DetailRow
+                label="Sign-ups close"
+                value={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
+              />
+              <DetailRow
+                label="Capacity"
+                value={event.capacity === null ? `No limit, ${taken} signed up` : `${taken} of ${event.capacity} places taken`}
+              />
+              <DetailRow label="Cost" value={cost} />
+              {cancelled && <DetailRow label="Cancel reason" value={event.cancelled_reason} mono={false} wide />}
+            </DetailList>
+          }
+          form={<ClubEventForm key={event.id} eventId={event.id} initial={initial} />}
+        />
 
         <ClubEventControls
           eventId={event.id}

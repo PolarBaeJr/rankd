@@ -11,6 +11,7 @@ import {
   DEFAULT_SIGNATURE_QUESTION,
   DEFAULT_MEDIA_QUESTION,
   DEFAULT_MEDIA_ALLOW_ANSWER,
+  DEFAULT_PARTNER_NOTE_QUESTION,
   defaultPartnerQuestions,
   type FormMapping,
 } from '@/lib/registration-form-mapping';
@@ -118,85 +119,7 @@ export function FormReaderPanel({
   const reader = binding.reader;
   const mapping = reader?.mapping ?? null;
   const [editing, setEditing] = useState(false);
-  const [emailQuestion, setEmailQuestion] = useState(mapping?.EMAIL_QUESTION ?? DEFAULT_EMAIL_QUESTION);
-  const [nameQuestion, setNameQuestion] = useState(mapping?.NAME_QUESTION ?? DEFAULT_NAME_QUESTION);
-  const [eventQuestion, setEventQuestion] = useState(mapping?.EVENT_QUESTION ?? DEFAULT_EVENT_QUESTION);
-  // A saved mapping keeps what it has, '' (no receipt question) included.
-  const [receiptQuestion, setReceiptQuestion] = useState(mapping ? mapping.RECEIPT_QUESTION : DEFAULT_RECEIPT_QUESTION);
-  // The waiver questions (00295): a new mapping, or one saved before they
-  // existed, starts from the Chaos Cards form's titles; a mapping saved since
-  // keeps what it has, empty included.
-  const waiverSaved = mapping && !reader?.waiverNeverSet ? mapping : null;
-  const [waiverQuestion, setWaiverQuestion] = useState(waiverSaved ? waiverSaved.WAIVER_QUESTION : DEFAULT_WAIVER_QUESTION);
-  const [signatureQuestion, setSignatureQuestion] = useState(
-    waiverSaved ? waiverSaved.SIGNATURE_QUESTION : DEFAULT_SIGNATURE_QUESTION,
-  );
-  const [mediaQuestion, setMediaQuestion] = useState(waiverSaved ? waiverSaved.MEDIA_QUESTION : DEFAULT_MEDIA_QUESTION);
-  const [mediaAllow, setMediaAllow] = useState(
-    waiverSaved ? waiverSaved.MEDIA_ALLOW_ANSWER : DEFAULT_MEDIA_ALLOW_ANSWER,
-  );
-  const [waiverVersion, setWaiverVersion] = useState(mapping?.WAIVER_VERSION ?? '');
-  const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
-
   if (!reader) return null;
-
-  const waiverFields = () =>
-    targetKind === 'season'
-      ? { WAIVER_QUESTION: '', WAIVER_VERSION: '', SIGNATURE_QUESTION: '', MEDIA_QUESTION: '', MEDIA_ALLOW_ANSWER: '' }
-      : {
-          WAIVER_QUESTION: waiverQuestion.trim(),
-          WAIVER_VERSION: waiverQuestion.trim() ? waiverVersion.trim() : '',
-          SIGNATURE_QUESTION: signatureQuestion.trim(),
-          MEDIA_QUESTION: mediaQuestion.trim(),
-          MEDIA_ALLOW_ANSWER: mediaAllow.trim(),
-        };
-
-  function build(): FormMapping {
-    if (targetKind === 'club_event' || targetKind === 'season') {
-      return {
-        EMAIL_QUESTION: emailQuestion.trim(),
-        NAME_QUESTION: nameQuestion.trim(),
-        EVENT_QUESTION: '',
-        EVENTS: {},
-        // A season's form names no event (00290).
-        DEFAULT_EVENT_ID: targetKind === 'season' ? '' : targetId,
-        PARTNERS: {},
-        RECEIPT_QUESTION: receiptQuestion.trim(),
-        ...waiverFields(),
-      };
-    }
-    const eventsMap: Record<string, string> = {};
-    const partners: FormMapping['PARTNERS'] = {};
-    for (const event of events) {
-      const row = rows[event.id];
-      const choice = row?.choice.trim() ?? '';
-      if (!row || !choice) continue;
-      eventsMap[choice] = event.id;
-      if (row.partnerName.trim() || row.partnerEmail.trim() || row.category.trim()) {
-        partners[choice] = {
-          NAME_QUESTION: row.partnerName.trim(),
-          EMAIL_QUESTION: row.partnerEmail.trim(),
-          CATEGORY_QUESTION: row.category.trim(),
-        };
-      }
-    }
-    return {
-      EMAIL_QUESTION: emailQuestion.trim(),
-      NAME_QUESTION: nameQuestion.trim(),
-      EVENT_QUESTION: eventQuestion.trim(),
-      EVENTS: eventsMap,
-      DEFAULT_EVENT_ID: '',
-      PARTNERS: partners,
-      RECEIPT_QUESTION: receiptQuestion.trim(),
-      ...waiverFields(),
-    };
-  }
-
-  const choices = targetKind === 'tournament' ? events.map((e) => rows[e.id]?.choice.trim() ?? '').filter(Boolean) : [];
-  const repeatedChoice = choices.find((choice, i) => choices.indexOf(choice) !== i);
-
-  const setRow = (id: string, patch: Partial<EventRow>) =>
-    setRows((current) => ({ ...current, [id]: { ...current[id]!, ...patch } }));
 
   return (
     <div className="w-full space-y-2 text-xs">
@@ -213,6 +136,11 @@ export function FormReaderPanel({
           {reader.mappingInvalid
             ? READER_ERROR_LABEL.mapping_invalid
             : "Not read by the console. The form's Apps Script can post its responses instead."}
+        </p>
+      )}
+      {mapping?.PARTNER_NOTE_QUESTION && (
+        <p className="text-[var(--text-muted)]">
+          Preferred partner question: &quot;{mapping.PARTNER_NOTE_QUESTION}&quot;
         </p>
       )}
       {mapping && reader.error && (
@@ -246,149 +174,279 @@ export function FormReaderPanel({
       )}
 
       {canEdit && editing && (
-        <div className="space-y-3 rounded-xl border border-[var(--border)] p-3 text-sm">
+        <FormMappingEditor
+          binding={binding}
+          targetKind={targetKind}
+          targetId={targetId}
+          events={events}
+          pending={pending}
+          onSave={onSave}
+          onCancel={() => setEditing(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The question mapping, mounted only while it is being edited: every draft
+ * below starts from the saved mapping each time, and Cancel drops them all.
+ */
+function FormMappingEditor({
+  binding,
+  targetKind,
+  targetId,
+  events,
+  pending,
+  onSave,
+  onCancel,
+}: {
+  binding: FormBinding;
+  targetKind: ImportTargetKind;
+  targetId: string;
+  events: MappableEvent[];
+  pending: boolean;
+  onSave: (mapping: FormMapping | null, after: () => void) => void;
+  onCancel: () => void;
+}) {
+  const reader = binding.reader;
+  const mapping = reader?.mapping ?? null;
+  const [emailQuestion, setEmailQuestion] = useState(mapping?.EMAIL_QUESTION ?? DEFAULT_EMAIL_QUESTION);
+  const [nameQuestion, setNameQuestion] = useState(mapping?.NAME_QUESTION ?? DEFAULT_NAME_QUESTION);
+  const [eventQuestion, setEventQuestion] = useState(mapping?.EVENT_QUESTION ?? DEFAULT_EVENT_QUESTION);
+  // A saved mapping keeps what it has, '' (no receipt question) included.
+  const [receiptQuestion, setReceiptQuestion] = useState(mapping ? mapping.RECEIPT_QUESTION : DEFAULT_RECEIPT_QUESTION);
+  // The waiver questions (00295): a new mapping, or one saved before they
+  // existed, starts from the Chaos Cards form's titles; a mapping saved since
+  // keeps what it has, empty included.
+  const waiverSaved = mapping && !reader?.waiverNeverSet ? mapping : null;
+  const [waiverQuestion, setWaiverQuestion] = useState(waiverSaved ? waiverSaved.WAIVER_QUESTION : DEFAULT_WAIVER_QUESTION);
+  const [signatureQuestion, setSignatureQuestion] = useState(
+    waiverSaved ? waiverSaved.SIGNATURE_QUESTION : DEFAULT_SIGNATURE_QUESTION,
+  );
+  const [mediaQuestion, setMediaQuestion] = useState(waiverSaved ? waiverSaved.MEDIA_QUESTION : DEFAULT_MEDIA_QUESTION);
+  const [mediaAllow, setMediaAllow] = useState(
+    waiverSaved ? waiverSaved.MEDIA_ALLOW_ANSWER : DEFAULT_MEDIA_ALLOW_ANSWER,
+  );
+  const [waiverVersion, setWaiverVersion] = useState(mapping?.WAIVER_VERSION ?? '');
+  // The preferred partner question (00299), offered the same way.
+  const [partnerNoteQuestion, setPartnerNoteQuestion] = useState(
+    mapping && !reader?.partnerNoteNeverSet ? mapping.PARTNER_NOTE_QUESTION : DEFAULT_PARTNER_NOTE_QUESTION,
+  );
+  const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
+
+  const waiverFields = () =>
+    targetKind === 'season'
+      ? { WAIVER_QUESTION: '', WAIVER_VERSION: '', SIGNATURE_QUESTION: '', MEDIA_QUESTION: '', MEDIA_ALLOW_ANSWER: '' }
+      : {
+          WAIVER_QUESTION: waiverQuestion.trim(),
+          WAIVER_VERSION: waiverQuestion.trim() ? waiverVersion.trim() : '',
+          SIGNATURE_QUESTION: signatureQuestion.trim(),
+          MEDIA_QUESTION: mediaQuestion.trim(),
+          MEDIA_ALLOW_ANSWER: mediaAllow.trim(),
+        };
+
+  function build(): FormMapping {
+    if (targetKind === 'club_event' || targetKind === 'season') {
+      return {
+        EMAIL_QUESTION: emailQuestion.trim(),
+        NAME_QUESTION: nameQuestion.trim(),
+        EVENT_QUESTION: '',
+        EVENTS: {},
+        // A season's form names no event (00290).
+        DEFAULT_EVENT_ID: targetKind === 'season' ? '' : targetId,
+        PARTNERS: {},
+        RECEIPT_QUESTION: receiptQuestion.trim(),
+        ...waiverFields(),
+        PARTNER_NOTE_QUESTION: targetKind === 'club_event' ? partnerNoteQuestion.trim() : '',
+      };
+    }
+    const eventsMap: Record<string, string> = {};
+    const partners: FormMapping['PARTNERS'] = {};
+    for (const event of events) {
+      const row = rows[event.id];
+      const choice = row?.choice.trim() ?? '';
+      if (!row || !choice) continue;
+      eventsMap[choice] = event.id;
+      if (row.partnerName.trim() || row.partnerEmail.trim() || row.category.trim()) {
+        partners[choice] = {
+          NAME_QUESTION: row.partnerName.trim(),
+          EMAIL_QUESTION: row.partnerEmail.trim(),
+          CATEGORY_QUESTION: row.category.trim(),
+        };
+      }
+    }
+    return {
+      EMAIL_QUESTION: emailQuestion.trim(),
+      NAME_QUESTION: nameQuestion.trim(),
+      EVENT_QUESTION: eventQuestion.trim(),
+      EVENTS: eventsMap,
+      DEFAULT_EVENT_ID: '',
+      PARTNERS: partners,
+      RECEIPT_QUESTION: receiptQuestion.trim(),
+      ...waiverFields(),
+      PARTNER_NOTE_QUESTION: '',
+    };
+  }
+
+  const choices = targetKind === 'tournament' ? events.map((e) => rows[e.id]?.choice.trim() ?? '').filter(Boolean) : [];
+  const repeatedChoice = choices.find((choice, i) => choices.indexOf(choice) !== i);
+
+  const setRow = (id: string, patch: Partial<EventRow>) =>
+    setRows((current) => ({ ...current, [id]: { ...current[id]!, ...patch } }));
+
+  return (
+    <div className="space-y-3 rounded-xl border border-[var(--border)] p-3 text-sm">
+      <p className="text-xs text-[var(--text-muted)]">
+        Type each question title exactly as it appears on the form. While the console reads this form, the
+        form&apos;s Apps Script is refused for it, so a response is never imported twice.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
+          Email question
+          <input className={inputClass} value={emailQuestion} onChange={(e) => setEmailQuestion(e.target.value)} />
+        </label>
+        <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
+          Full name question
+          <input className={inputClass} value={nameQuestion} onChange={(e) => setNameQuestion(e.target.value)} />
+        </label>
+      </div>
+      <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+        {targetKind === 'season'
+          ? 'E-transfer screenshot question (a file upload)'
+          : 'E-transfer screenshot question (a file upload; leave empty if the form has none)'}
+        <input className={inputClass} value={receiptQuestion} onChange={(e) => setReceiptQuestion(e.target.value)} />
+      </label>
+      {targetKind === 'club_event' && (
+        <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+          Preferred partner question (shown on the sign-up list; leave empty if the form has none)
+          <input
+            className={inputClass}
+            value={partnerNoteQuestion}
+            onChange={(e) => setPartnerNoteQuestion(e.target.value)}
+          />
+        </label>
+      )}
+      {targetKind !== 'season' && (
+        <fieldset className="space-y-2 border-t border-[var(--border)] pt-2">
+          <legend className="text-xs font-semibold text-[var(--text-secondary)]">Waiver on the form</legend>
           <p className="text-xs text-[var(--text-muted)]">
-            Type each question title exactly as it appears on the form. While the console reads this form, the
-            form&apos;s Apps Script is refused for it, so a response is never imported twice.
+            A non-member who agrees on the form is signed for the guest waiver, with the signature and photo
+            answer they gave. Leave the agree question empty if the form has no waiver.
           </p>
+          <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+            &quot;I agree&quot; question
+            <input className={inputClass} value={waiverQuestion} onChange={(e) => setWaiverQuestion(e.target.value)} />
+          </label>
           <div className="flex flex-wrap gap-2">
             <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
-              Email question
-              <input className={inputClass} value={emailQuestion} onChange={(e) => setEmailQuestion(e.target.value)} />
+              Signature question
+              <input
+                className={inputClass}
+                value={signatureQuestion}
+                onChange={(e) => setSignatureQuestion(e.target.value)}
+              />
             </label>
-            <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
-              Full name question
-              <input className={inputClass} value={nameQuestion} onChange={(e) => setNameQuestion(e.target.value)} />
+            <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-[var(--text-secondary)]">
+              Waiver version the form shows
+              <input
+                className={inputClass}
+                value={waiverVersion}
+                placeholder="Empty: the current waiver"
+                onChange={(e) => setWaiverVersion(e.target.value)}
+              />
             </label>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
+              Photo and video question
+              <input className={inputClass} value={mediaQuestion} onChange={(e) => setMediaQuestion(e.target.value)} />
+            </label>
+            <label className="flex flex-1 min-w-[8rem] flex-col gap-1 text-[var(--text-secondary)]">
+              Its &quot;yes&quot; choice
+              <input className={inputClass} value={mediaAllow} onChange={(e) => setMediaAllow(e.target.value)} />
+            </label>
+          </div>
+        </fieldset>
+      )}
+      {targetKind === 'tournament' && (
+        <>
           <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
-            {targetKind === 'season'
-              ? 'E-transfer screenshot question (a file upload)'
-              : 'E-transfer screenshot question (a file upload; leave empty if the form has none)'}
-            <input className={inputClass} value={receiptQuestion} onChange={(e) => setReceiptQuestion(e.target.value)} />
+            Question listing the events
+            <input className={inputClass} value={eventQuestion} onChange={(e) => setEventQuestion(e.target.value)} />
           </label>
-          {targetKind !== 'season' && (
-            <fieldset className="space-y-2 border-t border-[var(--border)] pt-2">
-              <legend className="text-xs font-semibold text-[var(--text-secondary)]">Waiver on the form</legend>
-              <p className="text-xs text-[var(--text-muted)]">
-                A non-member who agrees on the form is signed for the guest waiver, with the signature and photo
-                answer they gave. Leave the agree question empty if the form has no waiver.
-              </p>
-              <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
-                &quot;I agree&quot; question
-                <input className={inputClass} value={waiverQuestion} onChange={(e) => setWaiverQuestion(e.target.value)} />
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
-                  Signature question
-                  <input
-                    className={inputClass}
-                    value={signatureQuestion}
-                    onChange={(e) => setSignatureQuestion(e.target.value)}
-                  />
-                </label>
-                <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-[var(--text-secondary)]">
-                  Waiver version the form shows
-                  <input
-                    className={inputClass}
-                    value={waiverVersion}
-                    placeholder="Empty: the current waiver"
-                    onChange={(e) => setWaiverVersion(e.target.value)}
-                  />
-                </label>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[var(--text-secondary)]">
-                  Photo and video question
-                  <input className={inputClass} value={mediaQuestion} onChange={(e) => setMediaQuestion(e.target.value)} />
-                </label>
-                <label className="flex flex-1 min-w-[8rem] flex-col gap-1 text-[var(--text-secondary)]">
-                  Its &quot;yes&quot; choice
-                  <input className={inputClass} value={mediaAllow} onChange={(e) => setMediaAllow(e.target.value)} />
-                </label>
-              </div>
-            </fieldset>
+          {events.length === 0 && (
+            <p className="text-xs text-[var(--text-muted)]">This tournament has no events yet.</p>
           )}
-          {targetKind === 'tournament' && (
-            <>
-              <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
-                Question listing the events
-                <input className={inputClass} value={eventQuestion} onChange={(e) => setEventQuestion(e.target.value)} />
-              </label>
-              {events.length === 0 && (
-                <p className="text-xs text-[var(--text-muted)]">This tournament has no events yet.</p>
-              )}
-              {events.map((event) => {
-                const row = rows[event.id]!;
-                return (
-                  <fieldset key={event.id} className="space-y-2 border-t border-[var(--border)] pt-2">
-                    <legend className="text-xs font-semibold text-[var(--text-secondary)]">{event.label}</legend>
-                    <label className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                      Its choice on the form (leave empty if the form does not offer it)
+          {events.map((event) => {
+            const row = rows[event.id]!;
+            return (
+              <fieldset key={event.id} className="space-y-2 border-t border-[var(--border)] pt-2">
+                <legend className="text-xs font-semibold text-[var(--text-secondary)]">{event.label}</legend>
+                <label className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+                  Its choice on the form (leave empty if the form does not offer it)
+                  <input
+                    className={inputClass}
+                    value={row.choice}
+                    onChange={(e) => setRow(event.id, { choice: e.target.value })}
+                  />
+                </label>
+                {event.doubles && (
+                  <div className="flex flex-wrap gap-2">
+                    <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-[var(--text-secondary)]">
+                      Partner name question
                       <input
                         className={inputClass}
-                        value={row.choice}
-                        onChange={(e) => setRow(event.id, { choice: e.target.value })}
+                        value={row.partnerName}
+                        onChange={(e) => setRow(event.id, { partnerName: e.target.value })}
                       />
                     </label>
-                    {event.doubles && (
-                      <div className="flex flex-wrap gap-2">
-                        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                          Partner name question
-                          <input
-                            className={inputClass}
-                            value={row.partnerName}
-                            onChange={(e) => setRow(event.id, { partnerName: e.target.value })}
-                          />
-                        </label>
-                        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                          Partner email question
-                          <input
-                            className={inputClass}
-                            value={row.partnerEmail}
-                            onChange={(e) => setRow(event.id, { partnerEmail: e.target.value })}
-                          />
-                        </label>
-                        <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                          Team category question (optional)
-                          <input
-                            className={inputClass}
-                            value={row.category}
-                            onChange={(e) => setRow(event.id, { category: e.target.value })}
-                          />
-                        </label>
-                      </div>
-                    )}
-                  </fieldset>
-                );
-              })}
-            </>
-          )}
-          {repeatedChoice && (
-            <p role="alert" className="text-xs text-[var(--color-danger)]">
-              Two events have the choice &quot;{repeatedChoice}&quot;. Each choice can enter one event.
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              disabled={
-                pending ||
-                emailQuestion.trim() === '' ||
-                nameQuestion.trim() === '' ||
-                (targetKind === 'season' && receiptQuestion.trim() === '') ||
-                !!repeatedChoice
-              }
-              onClick={() => onSave(build(), () => setEditing(false))}
-            >
-              Save and read
-            </Button>
-            <Button size="sm" variant="ghost" disabled={pending} onClick={() => setEditing(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
+                    <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-[var(--text-secondary)]">
+                      Partner email question
+                      <input
+                        className={inputClass}
+                        value={row.partnerEmail}
+                        onChange={(e) => setRow(event.id, { partnerEmail: e.target.value })}
+                      />
+                    </label>
+                    <label className="flex flex-1 min-w-[10rem] flex-col gap-1 text-xs text-[var(--text-secondary)]">
+                      Team category question (optional)
+                      <input
+                        className={inputClass}
+                        value={row.category}
+                        onChange={(e) => setRow(event.id, { category: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                )}
+              </fieldset>
+            );
+          })}
+        </>
       )}
+      {repeatedChoice && (
+        <p role="alert" className="text-xs text-[var(--color-danger)]">
+          Two events have the choice &quot;{repeatedChoice}&quot;. Each choice can enter one event.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          disabled={
+            pending ||
+            emailQuestion.trim() === '' ||
+            nameQuestion.trim() === '' ||
+            (targetKind === 'season' && receiptQuestion.trim() === '') ||
+            !!repeatedChoice
+          }
+          onClick={() => onSave(build(), onCancel)}
+        >
+          Save and read
+        </Button>
+        <Button size="sm" variant="ghost" disabled={pending} onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }

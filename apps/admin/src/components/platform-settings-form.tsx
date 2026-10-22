@@ -1,7 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Input, Select, Textarea } from '@badminton/ui';
+import {
+  Button,
+  DetailList,
+  DetailRow,
+  EditableSectionContent,
+  EditableSectionProvider,
+  EditableSectionToggle,
+  Input,
+  Select,
+  Textarea,
+  useEditableSection,
+} from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { updatePlatformSettings } from '@/lib/actions';
 // IMPORTED, NOT REDECLARED. /ratings and /seasons each copied this number into
@@ -24,6 +35,27 @@ import { SettingTile } from '@/components/setting-tile';
 
 function isScalar(v: unknown): boolean {
   return v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+}
+
+function isStructured(s: PlatformSetting): boolean {
+  const keyMeta = FIELD_META[s.key];
+  return (
+    !!keyMeta && Object.entries(s.value).every(([field, v]) => keyMeta[field] && isScalar(v))
+  );
+}
+
+function fieldsOf(s: PlatformSetting): [string, FieldMeta][] {
+  const keyMeta = FIELD_META[s.key] ?? {};
+  return Object.entries(keyMeta).filter(([field]) => field in s.value);
+}
+
+/** A saved value as text: On/Off for a switch, a select's label, '' for nothing. */
+function displayValue(raw: unknown, fm: FieldMeta): string {
+  if (fm.type === 'boolean') return raw === true ? 'On' : 'Off';
+  if (raw == null) return '';
+  const text = String(raw);
+  if (fm.type === 'select') return fm.options?.find((o) => o.value === text)?.label ?? text;
+  return text;
 }
 
 /* Pill settings toggle, hairline track;
@@ -78,6 +110,9 @@ export type PlatformSettingsLayout = 'rows' | 'tiles' | 'grouped' | 'links';
 // which section owns which key (see lib/platform-setting-sections.ts). It knows
 // the labels and field metadata for all of them, so the same component serves
 // both Ratings and Accounts.
+//
+// Each instance reads as text until its own Edit is pressed. The editor is
+// mounted only while editing, so Cancel drops every unsaved edit with it.
 export function PlatformSettingsForm({
   settings,
   layout = 'rows',
@@ -85,6 +120,55 @@ export function PlatformSettingsForm({
   settings: PlatformSetting[];
   layout?: PlatformSettingsLayout;
 }) {
+  return (
+    <EditableSectionProvider>
+      <EditableSectionContent
+        read={<PlatformSettingsSummary settings={settings} />}
+        form={<PlatformSettingsEditor settings={settings} layout={layout} />}
+      />
+    </EditableSectionProvider>
+  );
+}
+
+function PlatformSettingsSummary({ settings }: { settings: PlatformSetting[] }) {
+  return (
+    <div>
+      <div className="flex min-h-[38px] flex-wrap items-center justify-between gap-4">
+        <p className="settings-section-desc !mb-0">
+          Changes apply to every player immediately and are recorded in the audit log.
+        </p>
+        <EditableSectionToggle />
+      </div>
+      <div className="mt-5 flex flex-col gap-6">
+        {settings.map((s) => (
+          <div key={s.key}>
+            <div className="settings-group-heading">{SETTING_LABELS[s.key] || s.key}</div>
+            {isStructured(s) ? (
+              <DetailList className="mt-3">
+                {fieldsOf(s).map(([field, fm]) => (
+                  <DetailRow key={field} label={fm.label} value={displayValue(s.value[field], fm)} />
+                ))}
+              </DetailList>
+            ) : (
+              <pre className="mt-3 whitespace-pre-wrap break-words rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 font-mono text-xs text-[var(--text-secondary)]">
+                {JSON.stringify(s.value, null, 2)}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlatformSettingsEditor({
+  settings,
+  layout,
+}: {
+  settings: PlatformSetting[];
+  layout: PlatformSettingsLayout;
+}) {
+  const { close } = useEditableSection();
   const [fieldEdits, setFieldEdits] = useState<Record<string, Record<string, FieldValue>>>({});
   const [jsonEdits, setJsonEdits] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
@@ -177,9 +261,9 @@ export function PlatformSettingsForm({
 
       await updatePlatformSettings(updates, reason);
       toast('Settings saved', 'success');
-      setFieldEdits({});
-      setJsonEdits({});
-      setReason('');
+      setLoading(false);
+      close();
+      return;
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to save settings', 'error');
     }
@@ -187,18 +271,6 @@ export function PlatformSettingsForm({
   }
 
   const hasChanges = Object.keys(fieldEdits).length > 0 || Object.keys(jsonEdits).length > 0;
-
-  function isStructured(s: PlatformSetting): boolean {
-    const keyMeta = FIELD_META[s.key];
-    return (
-      !!keyMeta && Object.entries(s.value).every(([field, v]) => keyMeta[field] && isScalar(v))
-    );
-  }
-
-  function fieldsOf(s: PlatformSetting): [string, FieldMeta][] {
-    const keyMeta = FIELD_META[s.key] ?? {};
-    return Object.entries(keyMeta).filter(([field]) => field in s.value);
-  }
 
   function isEdited(key: string, field: string): boolean {
     return field in (fieldEdits[key] ?? {});
@@ -499,8 +571,8 @@ export function PlatformSettingsForm({
             fill in. Save stays disabled until it holds real text — the same
             rule /ratings' save bar follows, and the same rule the server
             enforces for anyone who gets past this. */}
-        {hasChanges && (
-          <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+        <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+          {hasChanges && (
             <div className="w-full min-w-0 sm:w-[320px]">
               <Input
                 value={reason}
@@ -509,11 +581,16 @@ export function PlatformSettingsForm({
                 placeholder="Reason (required), logged with your name."
               />
             </div>
+          )}
+          <Button variant="ghost" onClick={close} disabled={loading}>
+            Cancel
+          </Button>
+          {hasChanges && (
             <Button onClick={handleSave} loading={loading} disabled={!enoughReason}>
               Save Changes
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className={layout === 'rows' ? undefined : 'mt-5'}>

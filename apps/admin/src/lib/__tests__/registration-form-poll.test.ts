@@ -626,3 +626,49 @@ describe("the form's waiver (00295)", () => {
     expect(receipts().at(-1)).toMatchObject({ p_read: false, p_watermark: null, p_error: 'import_failed' });
   });
 });
+
+describe('the preferred partner question (00299)', () => {
+  const PARTNER_MAPPING = { ...MAPPING, PARTNER_NOTE_QUESTION: 'Preferred partner' };
+  const ITEMS_WITH_PARTNER = {
+    items: [...FORM_ITEMS.items, { title: 'Preferred partner', questionItem: { question: { questionId: 'qp' } } }],
+  };
+  const notes = () => rpcs.filter((r) => r.fn === 'record_form_partner_note').map((r) => r.args);
+
+  function readsOne(mapping: unknown, partner: string | null) {
+    const base = response('r1', '2026-10-09T11:10:00Z');
+    const answers: Record<string, unknown> = { ...base.answers };
+    if (partner !== null) answers.qp = { questionId: 'qp', textAnswers: { answers: [{ value: partner }] } };
+    claimed = [{ ...form('b1', 'form-1'), read_mapping: mapping as typeof MAPPING }];
+    google = (url) =>
+      url.pathname.endsWith('/responses')
+        ? json(200, { responses: [{ ...base, answers }] })
+        : json(200, ITEMS_WITH_PARTNER);
+  }
+
+  it('records the trimmed answer, on a replay too, and never in the payload', async () => {
+    readsOne(PARTNER_MAPPING, '  Hitansh ');
+    importResult = () => ({ data: [{ item: 1, event_id: EVENT, status: 'entered', reason: null, replayed: true }], error: null });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(notes()).toEqual([{ p_binding_id: 'b1', p_response_id: 'r1', p_note: 'Hitansh' }]);
+    expect(JSON.stringify(imports())).not.toContain('Hitansh');
+  });
+
+  it('sends null for an empty answer, so the note is cleared', async () => {
+    readsOne(PARTNER_MAPPING, null);
+    await runRegistrationFormPoll(admin(), deps());
+    expect(notes()).toEqual([{ p_binding_id: 'b1', p_response_id: 'r1', p_note: null }]);
+  });
+
+  it('records nothing when the mapping names no partner question', async () => {
+    readsOne(MAPPING, 'Hitansh');
+    await runRegistrationFormPoll(admin(), deps());
+    expect(notes()).toEqual([]);
+  });
+
+  it('holds the watermark when the note fails to record', async () => {
+    readsOne(PARTNER_MAPPING, 'Hitansh');
+    rpcReplies.record_form_partner_note = () => ({ data: null, error: { message: 'boom' } });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(receipts().at(-1)).toMatchObject({ p_read: false, p_watermark: null, p_error: 'import_failed' });
+  });
+});

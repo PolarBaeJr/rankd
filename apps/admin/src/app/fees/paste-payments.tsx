@@ -1261,14 +1261,14 @@ export function PastePayments({
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={
-                    "Jane Doe <jane@example.org>\nsam.lee@example.net, $25\nDoe, John"
+                    "Jane Doe, jane@example.org, $5\nSam Lee, $5\nalex@example.org"
                   }
                   disabled={checking}
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-[var(--text-muted)]">
-                  One per line: a name, an email, both, or rows copied out of a
-                  spreadsheet. An amount like $25 is read too. A long list takes
+                  One per line: name, email, amount. The email and the amount
+                  can be left out. Rows copied out of a spreadsheet work too. A long list takes
                   a while to record; keep this window open until it finishes.
                 </p>
               </>
