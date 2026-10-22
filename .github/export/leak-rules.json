@@ -87,6 +87,7 @@
     {"path": "packages/shared/src/utils/member-identity.ts", "rule": "brand-word", "match": "^\\s*'sfu',\\s*$", "reason": "a reserved handle; it must match the v_reserved arrays in the migrations"},
     {"path": "supabase/migrations/00092_member_handle_and_number.sql", "rule": "brand-word", "match": "v_reserved TEXT\\[\\] := ARRAY\\[", "reason": "a reserved handle, mirrored in member-identity.ts"},
     {"path": "supabase/migrations/00235_backfill_handles_for_members_without_one.sql", "rule": "brand-word", "match": "v_reserved TEXT\\[\\] := ARRAY\\[", "reason": "a reserved handle, mirrored in member-identity.ts"},
+    {"path": "apps/admin/src/lib/__tests__/managed-form-content.test.ts", "rule": "polardev", "match": "expect\\(text\\)\\.not\\.toMatch\\(", "reason": "the test asserts a Form never names the host; the word is what it refuses"},
     {"path": "apps/mobile/**", "rule": "plist", "match": "\\bInfo\\.plist\\b", "reason": "the iOS app's own Info.plist and the lines naming it; the rule is for launchd job plists"},
     {"path": "package-lock.json", "rule": "email-domain", "reason": "third-party package author metadata written by npm"},
     {"path": "apps/*/src/lib/__tests__/auth-telemetry.test.ts", "rule": "email-domain", "reason": "a synthetic one-letter address the scrubber must redact"},

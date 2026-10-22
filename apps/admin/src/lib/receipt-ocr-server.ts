@@ -20,7 +20,7 @@ import type { OcrRead, ReceiptOcr } from '@badminton/shared/src/utils/receipt-ch
 // for the console's sweep.
 //
 // THE TEXT IS NEVER LOGGED, here or by a caller: it carries a member's name
-// and SFU ID. A failure is logged by its kind only.
+// and student ID. A failure is logged by its kind only.
 
 const OCR_TIMEOUT_MS = 30_000;
 const MAX_WAITING = 2;

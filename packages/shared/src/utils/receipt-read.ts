@@ -15,7 +15,7 @@
 // labels ("Amount", "Sent to") may sit on the line above their value. Anything
 // this cannot read holds the receipt, which is the safe way to be wrong.
 //
-// THE TEXT IS NEVER KEPT. It carries a member's name and SFU ID. Nothing here
+// THE TEXT IS NEVER KEPT. It carries a member's name and student ID. Nothing here
 // logs it, and no flag detail ever quotes a name.
 //
 // Dependency-free, so a test and both apps share it.

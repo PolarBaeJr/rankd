@@ -161,7 +161,7 @@ export function extractEtransferReference(text: string | null | undefined): Extr
 
 // "Order #: O-600857" on the desktop receipt, "O-601558" alone on a line on the
 // phone one. The OCR reads the O as a zero as often as not. Never the
-// "I-" invoice, the "R-" registration, nor the nine-digit SFU ID beside a name.
+// "I-" invoice, the "R-" registration, nor the nine-digit student ID beside a name.
 const SFU_REC_ORDER_LABELLED = /\border\s*(?:#|number|no\.?)?\s*:?\s*[O0o]\s*-\s*(\d{6,8})\b/i;
 const SFU_REC_ORDER_ALONE = /^[O0o]\s*-\s*(\d{6,8})$/;
 

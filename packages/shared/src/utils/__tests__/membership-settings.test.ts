@@ -35,7 +35,7 @@ describe('safeEtransferEmail', () => {
 
 describe('safePayeeName', () => {
   it('collapses whitespace and caps the length', () => {
-    expect(safePayeeName(' Sfu\n Badminton ')).toBe('Sfu Badminton');
+    expect(safePayeeName(' Riverside\n Smash ')).toBe('Riverside Smash');
     expect(safePayeeName('a'.repeat(100))).toBe('a'.repeat(100));
     expect(safePayeeName('a'.repeat(101))).toBeNull();
     expect(safePayeeName('')).toBeNull();
@@ -52,9 +52,9 @@ describe('parseMembershipPaymentSettings', () => {
 
   it('reads the payee name a bank shows, tidied', () => {
     expect(
-      parseMembershipPaymentSettings({ sfss_purchase_url: REC, etransfer_payee_name: '  Sfu   Badminton ' })
+      parseMembershipPaymentSettings({ sfss_purchase_url: REC, etransfer_payee_name: '  Riverside   Smash ' })
         .etransferPayeeName,
-    ).toBe('Sfu Badminton');
+    ).toBe('Riverside Smash');
   });
 
   it('reads an absent or malformed row as the defaults', () => {

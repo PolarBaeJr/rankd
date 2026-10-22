@@ -14,7 +14,7 @@
 // receipt queued for the sweep, its attempts untouched.
 //
 // NOTHING READ IS LOGGED OR RETURNED. The OCR text carries a member's name
-// and SFU ID; it lives in this function's scope and nowhere else. A fault is
+// and student ID; it lives in this function's scope and nowhere else. A fault is
 // thrown with the RPC's own message, which never contains it.
 
 import { createHash } from 'node:crypto';
