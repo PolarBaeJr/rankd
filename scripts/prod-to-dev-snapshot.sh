@@ -1241,11 +1241,17 @@ BEGIN
        SET manual_name = CASE WHEN manual_name IS NULL THEN NULL ELSE 'Unnamed Payer' END,
            ban_reason  = CASE WHEN ban_reason  IS NULL THEN NULL ELSE 'Reason removed for staging.' END;
     -- 00252's manual_email is a non-member's address waiting for a signup. It is
-    -- nulled, not rewritten: a made-up address would be claimed by the first
-    -- staging player given it, and the column only exists once 00252 is applied.
+    -- rewritten, not nulled: since 00284 a fee with no player must carry a name
+    -- AND an email (club_fees_shape_check), so a NULL here failed the whole
+    -- scrub the first time prod held a guest's event fee (2026-10-21). The
+    -- 'payer.' prefix keeps it apart from the 'member.' addresses players get,
+    -- so no staging player is ever handed the fee. The column only exists once
+    -- 00252 is applied.
     IF EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = 'club_fees' AND column_name = 'manual_email') THEN
-      EXECUTE 'UPDATE public.club_fees SET manual_email = NULL WHERE manual_email IS NOT NULL';
+      EXECUTE $q$UPDATE public.club_fees
+                    SET manual_email = 'payer.' || substr(md5(id::text), 1, 10) || '@staging.invalid'
+                  WHERE manual_email IS NOT NULL$q$;
     END IF;
   END IF;
 
