@@ -75,6 +75,7 @@ function amountAfter(text: string, pattern: RegExp): number | null {
 const SFU_REC_ORDER_LABEL = /\border\s*#?\s*:?\s*[O0o]\s*-\s*\d{6,8}\b/i;
 const SFU_REC_ORDER_ALONE = /^[O0o]\s*-\s*\d{6,8}$/m;
 const PROGRAM_SHEET = /total before tax/i;
+const DEPOSITED_NOTICE = /\btransfer\b.*\bdeposited\b/i;
 const PURCHASE_WORDS = /\breceipt\b|thank you for your purchase/i;
 
 function receiptKind(text: string, collapsed: string): ReceiptMethod | null {
@@ -84,6 +85,8 @@ function receiptKind(text: string, collapsed: string): ReceiptMethod | null {
     return 'sfu_rec';
   }
   if (SFU_REC_ORDER_ALONE.test(text) && PURCHASE_WORDS.test(collapsed)) return 'sfu_rec';
+  // A bank's "your transfer ... was successfully deposited" notice.
+  if (DEPOSITED_NOTICE.test(collapsed) && /\$\s?\d/.test(collapsed)) return 'e_transfer';
   return null;
 }
 
@@ -92,7 +95,9 @@ const HAS_EMAIL = /[^\s@:;,()<>]+@[^\s@:;,()<>]+\.[A-Za-z]{2,}/;
 
 /** Who an e-transfer went to: "sent to X with", "To X", or a "Sent to" label above the name. */
 function payeeName(lines: string[], collapsed: string): string | null {
-  const sentence = /\bsent to\s+(.+?)\s+with\b/i.exec(collapsed);
+  const sentence =
+    /\bsent to\s+(.+?)\s+with\b/i.exec(collapsed) ??
+    /\b(?:transfer|sent) to\s+(.+?)\s+(?:was|has been)\b/i.exec(collapsed);
   if (sentence) return sentence[1]!.trim();
   for (let i = 0; i < lines.length; i += 1) {
     const match = /^(?:sent\s+)?to\b\s*:?\s*(.*)$/i.exec(lines[i]!);
@@ -153,9 +158,13 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
       ...none,
       kind,
       reference: found?.confidence === 'anchored' ? normaliseReference(found.value) : null,
+      // Some banks print the figure with no "$": "Sent / 5.00 / to ...", or a
+      // line holding only the amount. Still only ever compared with the fee.
       amountCents:
-        amountAfter(collapsed, new RegExp(String.raw`\$\s?${MONEY}\s*CAD`, 'i')) ??
-        amountAfter(collapsed, new RegExp(String.raw`\bamount\s*:?\s*\$\s?${MONEY}`, 'i')),
+        amountAfter(collapsed, new RegExp(String.raw`\$\s?${MONEY}\s*\(?\s*CAD`, 'i')) ??
+        amountAfter(collapsed, new RegExp(String.raw`\bamount\s*:?\s*\$?\s?${MONEY}`, 'i')) ??
+        amountAfter(collapsed, new RegExp(String.raw`\bsent\s*:?\s*\$?\s?${MONEY}\b`, 'i')) ??
+        amountAfter(tidy, new RegExp(String.raw`^\$?\s?${MONEY}(?:\s*CAD)?$`, 'im')),
       payeeName: payeeName(lines, collapsed),
       payeeEmail: payeeEmail(lines, tidy),
     };
@@ -264,7 +273,10 @@ export function decideAutoConfirm(read: ReceiptReadout, ctx: AutoConfirmContext)
     return hold('amount_mismatch', `Receipt shows ${dollars(read.amountCents)}, the fee is ${dollars(ctx.amountCents)}`);
   }
   const emailMatches = !!read.payeeEmail && !!ctx.clubEmail && sameText(read.payeeEmail, ctx.clubEmail);
-  const nameMatches = !!read.payeeName && !!ctx.clubPayeeName && sameText(read.payeeName, ctx.clubPayeeName);
+  // Several names, comma separated: a bank may show the club's name or the
+  // account holder's ("Club Ladder, Linhui Sun").
+  const clubNames = (ctx.clubPayeeName ?? '').split(/[,;\n]/).filter((n) => n.trim());
+  const nameMatches = !!read.payeeName && clubNames.some((n) => sameText(read.payeeName!, n));
   if (!emailMatches && !nameMatches) {
     if (!read.payeeEmail && !read.payeeName) return hold('payee_unreadable');
     return hold('payee_mismatch', 'The receipt does not show the club as the recipient');

@@ -543,7 +543,7 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     },
     etransfer_payee_name: {
       label: 'E-transfer payee name',
-      hint: 'The name a member\'s bank shows the club as on an e-Transfer receipt, for example Club Ladder. An e-transfer receipt confirms itself only when it shows this name or the e-transfer email as the recipient; otherwise an exec reviews it. Leave empty to match on the email alone.',
+      hint: 'The name a member\'s bank shows the club as on an e-Transfer receipt, for example Club Ladder. Several names are separated by commas, for a bank that shows the account holder\'s own name instead. An e-transfer receipt confirms itself only when it shows one of these names or the e-transfer email as the recipient; otherwise an exec reviews it. Leave empty to match on the email alone.',
       type: 'text',
     },
   },

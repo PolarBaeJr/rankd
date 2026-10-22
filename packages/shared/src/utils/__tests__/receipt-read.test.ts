@@ -136,6 +136,29 @@ describe('decideAutoConfirm', () => {
     expect(decideAutoConfirm(parseReceiptText(REC_PHONE), DUES)).toMatchObject({ confirm: true, reference: 'O-601558' });
   });
 
+  it('reads an amount printed with no dollar sign', () => {
+    const sent = 'Sent\n5.00\nto treasurer@example.org\ntreasurer@example.org\nAutodeposit';
+    expect(parseReceiptText(sent)).toMatchObject({ kind: 'e_transfer', amountCents: 500 });
+    expect(
+      decideAutoConfirm(parseReceiptText(sent), { ...etransfer, amountCents: 500, clubEmail: 'treasurer@example.org' }),
+    ).toMatchObject({ confirm: true, amountCents: 500 });
+    expect(parseReceiptText('Interac e-Transfer\nAmount 12.50\nSent to Treasurer')).toMatchObject({ amountCents: 1250 });
+  });
+
+  it('reads a bank\'s deposited notice, and matches one of several payee names', () => {
+    const notice =
+      'Hi Sam,\n\nYour transfer to ALEX CHEN was\nsuccessfully deposited.\n\nThe $5.00 (CAD) you sent to ALEX CHEN has been successfully\ndeposited.\n';
+    expect(parseReceiptText(notice)).toMatchObject({ kind: 'e_transfer', amountCents: 500, payeeName: 'ALEX CHEN' });
+    const ctx = { ...etransfer, amountCents: 500, clubEmail: null };
+    expect(decideAutoConfirm(parseReceiptText(notice), { ...ctx, clubPayeeName: 'Riverside Smash, Alex Chen' })).toMatchObject({
+      confirm: true,
+    });
+    expect(decideAutoConfirm(parseReceiptText(notice), { ...ctx, clubPayeeName: 'Riverside Smash' })).toMatchObject({
+      confirm: false,
+      flag: 'payee_mismatch',
+    });
+  });
+
   it('matches the payee by the email when the name differs', () => {
     const decision = decideAutoConfirm(parseReceiptText(ALL_SET.replace('Riverside Smash', 'Treasurer')), {
       ...etransfer,
