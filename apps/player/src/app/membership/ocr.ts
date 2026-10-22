@@ -33,6 +33,24 @@ export type ReceiptRead = { reference: ExtractedReference | null; method: Receip
 
 const NOTHING: ReceiptRead = { reference: null, method: null };
 
+// Decoded by the browser first, then read off a canvas: tesseract's own image
+// decoder fails on some formats a phone saves (WebP, 16-bit PNG, HEIC in
+// Safari) with "Error attempting to read image". Anything the browser cannot
+// decode either, a PDF for one, goes to tesseract as it is.
+async function decoded(file: Blob): Promise<Blob | HTMLCanvasElement> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return canvas;
+  } catch {
+    return file;
+  }
+}
+
 export async function readReceipt(file: Blob): Promise<ReceiptRead> {
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -48,7 +66,7 @@ export async function readReceipt(file: Blob): Promise<ReceiptRead> {
       });
       try {
         if (timedOut) return NOTHING;
-        const { data } = await worker.recognize(file);
+        const { data } = await worker.recognize(await decoded(file));
         const method = classifyReceiptText(data.text);
         // An SFU Rec receipt carries an order, an invoice and a registration
         // number; the order is the one the club checks.
