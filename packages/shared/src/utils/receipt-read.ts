@@ -40,6 +40,7 @@ export const RECEIPT_FLAGS = [
   'ocr_timeout',
   'fee_not_payable',
   'undone',
+  'outside_window',
 ] as const;
 
 export type ReceiptFlag = (typeof RECEIPT_FLAGS)[number];

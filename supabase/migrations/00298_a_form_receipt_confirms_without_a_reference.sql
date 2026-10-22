@@ -15,6 +15,11 @@
 -- hash (fee_submissions_image_once) is then what stops one picture settling
 -- two fees.
 --
+-- The reader also holds a receipt sent outside the time its fee could be
+-- paid in ('outside_window'): from when the event, tournament or season was
+-- made until the event ends (the day after a tournament's or season's last
+-- day). A missing date leaves that end unchecked.
+--
 -- A member's own receipt is unchanged: it always carries a reference, and
 -- 'needs_reference' still answers for one that somehow has none. A typed
 -- reference on a Form receipt is still checked exactly as before.
@@ -23,6 +28,91 @@
 -- ============================================================
 
 BEGIN;
+
+-- 'outside_window': sent outside the time the fee could be paid in.
+ALTER TABLE public.fee_submissions DROP CONSTRAINT IF EXISTS fee_submissions_ocr_flag_check;
+ALTER TABLE public.fee_submissions ADD CONSTRAINT fee_submissions_ocr_flag_check
+  CHECK (ocr_flag IS NULL OR ocr_flag IN (
+    'no_reference', 'reference_used', 'screenshot_reused', 'amount_mismatch', 'amount_unreadable',
+    'payee_mismatch', 'payee_unreadable', 'name_mismatch', 'program_mismatch', 'not_a_receipt',
+    'wrong_method', 'unreadable_format', 'ocr_failed', 'ocr_timeout', 'fee_not_payable', 'undone',
+    'outside_window'
+  ));
+
+-- The reader records the new hold through this, which refuses a flag it does not list.
+CREATE OR REPLACE FUNCTION public.flag_fee_submission_ocr(
+  p_submission_id uuid,
+  p_flag text,
+  p_detail text DEFAULT NULL,
+  p_reference text DEFAULT NULL,
+  p_image_sha256 text DEFAULT NULL,
+  p_method text DEFAULT NULL
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_sub       fee_submissions%ROWTYPE;
+  v_method    text;
+  v_reference text;
+  v_key       text;
+  v_hash      text;
+BEGIN
+  IF p_flag IS NULL OR p_flag NOT IN (
+    'no_reference', 'reference_used', 'screenshot_reused', 'amount_mismatch', 'amount_unreadable',
+    'payee_mismatch', 'payee_unreadable', 'name_mismatch', 'program_mismatch', 'not_a_receipt',
+    'wrong_method', 'unreadable_format', 'ocr_failed', 'ocr_timeout', 'fee_not_payable',
+    'outside_window'
+  ) THEN
+    RETURN 'bad_flag';
+  END IF;
+  SELECT * INTO v_sub FROM fee_submissions WHERE id = p_submission_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN 'not_found'; END IF;
+  IF v_sub.status <> 'submitted' OR v_sub.ocr_state IS DISTINCT FROM 'pending' THEN RETURN 'not_pending'; END IF;
+
+  v_reference := left(NULLIF(replace(btrim(coalesce(p_reference, '')), U&'\2026', '...'), ''), 64);
+  v_method := coalesce(v_sub.method, CASE WHEN p_method IN ('e_transfer', 'sfu_rec') THEN p_method END);
+  -- fee_submissions_reference_check refuses a 4 or 5 character e-transfer
+  -- reference, so such a row stays without a method.
+  IF v_sub.method IS NULL AND v_method = 'e_transfer' AND v_sub.reference !~ '^[A-Za-z0-9-]{6,32}$' THEN
+    v_method := NULL;
+  END IF;
+  v_key := CASE WHEN v_method IS NOT NULL THEN fee_reference_key(v_method, v_reference) END;
+  v_hash := CASE WHEN lower(p_image_sha256) ~ '^[0-9a-f]{64}$' THEN lower(p_image_sha256) END;
+  IF v_key IS NOT NULL AND (v_sub.reference_key IS NOT NULL OR EXISTS (
+       SELECT 1 FROM fee_submissions o
+        WHERE o.id <> v_sub.id AND o.method = v_method AND o.reference_key = v_key
+          AND o.status IN ('submitted', 'confirmed'))) THEN
+    v_key := NULL;
+  END IF;
+  IF v_hash IS NOT NULL AND (v_sub.image_sha256 IS NOT NULL OR EXISTS (
+       SELECT 1 FROM fee_submissions o
+        WHERE o.id <> v_sub.id AND o.image_sha256 = v_hash AND o.status IN ('submitted', 'confirmed'))) THEN
+    v_hash := NULL;
+  END IF;
+
+  BEGIN
+    UPDATE fee_submissions
+       SET ocr_state = 'done', ocr_flag = p_flag, ocr_flag_detail = left(p_detail, 200),
+           ocr_reference = v_reference, method = v_method,
+           reference_key = coalesce(reference_key, v_key),
+           image_sha256 = coalesce(image_sha256, v_hash)
+     WHERE id = v_sub.id;
+  EXCEPTION WHEN unique_violation THEN
+    -- Another row took the key or the hash in between: held without them.
+    UPDATE fee_submissions
+       SET ocr_state = 'done', ocr_flag = p_flag, ocr_flag_detail = left(p_detail, 200),
+           ocr_reference = v_reference, method = v_method
+     WHERE id = v_sub.id;
+  END;
+  RETURN 'ok';
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.flag_fee_submission_ocr(uuid, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.flag_fee_submission_ocr(uuid, text, text, text, text, text) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.review_fee_submission_confirm(
   p_submission_id uuid,
@@ -126,11 +216,25 @@ DECLARE
   v_flag      text;
   v_detail    text;
   v_index     text;
+  v_from      timestamptz;
+  v_until     timestamptz;
 BEGIN
   SELECT * INTO v_sub FROM fee_submissions WHERE id = p_submission_id FOR UPDATE;
   IF NOT FOUND THEN RETURN 'not_found'; END IF;
   SELECT * INTO v_fee FROM club_fees WHERE id = v_sub.club_fee_id FOR UPDATE;
   IF v_sub.status <> 'submitted' OR v_sub.ocr_state IS DISTINCT FROM 'pending' THEN RETURN 'not_pending'; END IF;
+
+  -- 00298: the time the fee could be paid in. Either end is NULL when the
+  -- event, tournament or season has no such date, and is then not checked.
+  IF v_fee.club_event_id IS NOT NULL THEN
+    SELECT e.created_at, e.ends_at INTO v_from, v_until FROM club_events e WHERE e.id = v_fee.club_event_id;
+  ELSIF v_fee.tournament_id IS NOT NULL THEN
+    SELECT t.created_at, ((t.end_date + 1)::timestamp AT TIME ZONE 'America/Vancouver')
+      INTO v_from, v_until FROM tournaments t WHERE t.id = v_fee.tournament_id;
+  ELSIF v_fee.season_id IS NOT NULL THEN
+    SELECT se.created_at, ((se.end_date + 1)::timestamp AT TIME ZONE 'America/Vancouver')
+      INTO v_from, v_until FROM seasons se WHERE se.id = v_fee.season_id;
+  END IF;
 
   v_reference := NULLIF(replace(btrim(coalesce(p_reference, '')), U&'\2026', '...'), '');
   v_key := fee_reference_key(p_method, v_reference);
@@ -146,6 +250,12 @@ BEGIN
     v_detail := format('Receipt shows $%s, the fee is $%s',
                        to_char(p_amount_cents / 100.0, 'FM999990.00'),
                        to_char(v_fee.amount_cents / 100.0, 'FM999990.00'));
+  ELSIF (v_from IS NOT NULL AND v_sub.submitted_at < v_from)
+        OR (v_until IS NOT NULL AND v_sub.submitted_at > v_until) THEN
+    v_flag := 'outside_window';
+    v_detail := CASE WHEN v_from IS NOT NULL AND v_sub.submitted_at < v_from
+                     THEN 'Sent before this fee existed'
+                     ELSE 'Sent after the event ended' END;
   -- 00298: a Form e-transfer receipt whose screen shows no reference settles on
   -- the recipient and amount (checked by the reader) when the amount was read
   -- and the screenshot is hashed, so the same picture cannot settle twice.
@@ -222,6 +332,12 @@ BEGIN
   IF position('v_sub.import_receipt_id IS NOT NULL AND p_amount_cents IS NOT NULL AND v_hash IS NOT NULL'
               IN pg_get_functiondef('public.auto_confirm_fee_submission(uuid,text,text,text,integer)'::regprocedure)) = 0 THEN
     RAISE EXCEPTION '00298: auto_confirm_fee_submission does not settle a Form receipt without a reference';
+  END IF;
+  IF position('outside_window' IN pg_get_functiondef('public.auto_confirm_fee_submission(uuid,text,text,text,integer)'::regprocedure)) = 0
+     OR position('outside_window' IN pg_get_functiondef('public.flag_fee_submission_ocr(uuid,text,text,text,text,text)'::regprocedure)) = 0
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fee_submissions_ocr_flag_check'
+                     AND position('outside_window' IN pg_get_constraintdef(oid)) > 0) THEN
+    RAISE EXCEPTION '00298: the outside_window hold is missing';
   END IF;
   IF has_function_privilege('anon', 'public.auto_confirm_fee_submission(uuid,text,text,text,integer)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.auto_confirm_fee_submission(uuid,text,text,text,integer)', 'EXECUTE') THEN

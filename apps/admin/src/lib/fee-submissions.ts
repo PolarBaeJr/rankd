@@ -84,6 +84,7 @@ export const RECEIPT_FLAG_SENTENCES: Record<ReceiptFlag, string> = {
   ocr_timeout: 'Reading the screenshot took too long.',
   fee_not_payable: 'The fee was settled or had no amount when the receipt was read.',
   undone: 'An exec undid the automatic confirmation.',
+  outside_window: 'It was sent outside the time this fee could be paid in.',
 };
 
 /** "Checking..." while the server reads it, or why it held the receipt; null for a receipt from before 00297. */
