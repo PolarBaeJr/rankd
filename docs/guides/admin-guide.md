@@ -79,22 +79,28 @@ Seasons are the backbone — sessions and fees attach to the active season.
 
 ---
 
-## Finances
+## Fees and Finances
 
-The console calls this page **Finances**.
+Money lives on two pages under the **Club** menu.
 
-- Fees follow the **active season** and its track amounts.
-- Track who has paid / owes.
+**Fees** is the list of member fees, like the Players page: a search box and a **View** menu with a count beside each view.
+
+- **All**, **Paid**, **Unpaid** and **Waived** (shown once something is waived) list the season's dues. Fees follow the **active season** and its track amounts.
+- **To review** lists the payment receipts members sent, from any season. It opens first whenever one is waiting and you can settle receipts.
+- **Form screenshots** (shown once there are any) lists confirmed Google Form payments whose screenshot is kept as proof.
+- Reinstatement payments sit in their own card under the list.
 - *(Online payment collection is on the roadmap: today this is tracking.)*
 
-**Who sees what.** Every exec can open Finances and read the **Expenses** tab, including the receipt behind any row. The club fee roster and other income are not part of that: those need their own permission. Filing, editing, reimbursing or deleting an expense each need a permission too, granted on the **Permissions** page or held by an admin. So an officer with no grants sees the spending and changes none of it.
+**Finances** is the rest of the club's money, one section under another: the net position, how dues collection is going, **Expenses** and **Other income**.
+
+**Who sees what.** Every exec can open Finances and read the **Expenses** section, including the receipt behind any row. The club fee list and other income are not part of that: those need their own permission, so an exec with no grants is not shown the Fees page at all. Filing, editing, reimbursing or deleting an expense each need a permission too, granted on the **Permissions** page or held by an admin. So an officer with no grants sees the spending and changes none of it.
 
 ### Expenses, and getting your money back
 
-- An exec who pays for something out of their own pocket files it on the **Expenses** tab with themselves recorded as the person who paid. It then sits as money the club owes them until an admin marks it **reimbursed**.
+- An exec who pays for something out of their own pocket files it in the **Expenses** section of Finances with themselves recorded as the person who paid. It then sits as money the club owes them until an admin marks it **reimbursed**.
 - **Attach a photo of the receipt** when filing the expense, or add one later by editing it. This is optional. A receipt can be lost, emailed, or never printed, and the expense record stands on its own without one.
 - Accepted formats are JPEG, PNG and WebP, up to 8 MB.
-- Anyone who can read the Expenses tab can open the photo through the **Receipt** link on that row.
+- Anyone who can read the Expenses section can open the photo through the **Receipt** link on that row.
 - **Once an expense is marked reimbursed, its receipt is frozen.** The photo is the evidence for a payment the club has already made, so it cannot be changed after the fact.
 
 ---

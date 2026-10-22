@@ -18,7 +18,7 @@ import {
   type AccessLevel,
   type PermissionsInput,
 } from '@/lib/permissions';
-import { NAV_LAYOUT, adminNavItemOn, type NavItem } from './nav-sections';
+import { NAV_LAYOUT, adminNavItemHasContent, adminNavItemOn, type NavItem } from './nav-sections';
 import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import { isChromelessRoute } from '@/lib/chromeless-routes';
 
@@ -171,7 +171,8 @@ export function Sidebar({
     (item) =>
       accessLoaded
       && canAccess(access.level, permissions, item.href)
-      && adminNavItemOn(item.href, features, held),
+      && adminNavItemOn(item.href, features, held)
+      && adminNavItemHasContent(item.href, held),
   );
 
   const navText = (isActive: boolean) =>

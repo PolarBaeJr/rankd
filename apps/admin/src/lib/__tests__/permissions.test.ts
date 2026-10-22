@@ -108,6 +108,8 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   // back into the admin-only group with it — an exec with a link that bounces
   // them is a bug that has shipped before.
   { path: '/fees', admin: true, exec: true, trainer: false },
+  // The other ledgers, moved off /fees. Opened by the same page key.
+  { path: '/finances', admin: true, exec: true, trainer: false },
   // Who allows photos. Legal, so an exec's and not a trainer's, even though the
   // members half of it is roster data a trainer can otherwise read.
   { path: '/legal/media-consent', admin: true, exec: true, trainer: false },

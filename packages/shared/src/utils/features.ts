@@ -137,7 +137,7 @@ export const FEATURES = [
     label: 'Fees',
     summary: "A member's statement and e-transfer receipts",
     description:
-      "A member's own statement on the membership page, the way to pay it by e-transfer, the unpaid-fees banner and the Paid badge on profiles. Fees are still owed and still recorded in Finances; members just cannot see their statement or send receipts.",
+      "A member's own statement on the membership page, the way to pay it by e-transfer, the unpaid-fees banner and the Paid badge on profiles. Fees are still owed and still recorded on the console's Fees page; members just cannot see their statement or send receipts.",
     playerRoutes: ['/fees'],
     adminRoutes: [],
   },

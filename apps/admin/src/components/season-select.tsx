@@ -42,7 +42,7 @@ export function SeasonSelect({
   function choose(s: ScopeSeason) {
     // Change the season and NOTHING ELSE. Rebuilding the URL from basePath
     // alone threw away every other query parameter: picking a season while
-    // reading /fees?tab=expenses dropped you back on the Club fees tab, and on
+    // reading /fees?view=unpaid dropped you back on the default view, and on
     // /audit it cleared the filters that were the reason for looking.
     // The active season is still the bare path, so the canonical URL for "now"
     // has no ?season= on it.

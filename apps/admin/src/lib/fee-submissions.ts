@@ -149,7 +149,7 @@ export type PendingSubmission = {
 
 /**
  * Every receipt waiting for an exec, oldest first. `scope` 'club' is dues and
- * club events (the /fees Submitted tab); a tournament id is that tournament's
+ * club events (the To review view of /fees); a tournament id is that tournament's
  * entry fees.
  *
  * `which` 'keptFromForm' is instead the CONFIRMED receipts a Google Form

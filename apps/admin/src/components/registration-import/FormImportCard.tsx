@@ -27,7 +27,7 @@ import type { FormBinding, ImportedEntry, ImportedResponse, ImportTargetKind } f
 //
 // On /fees a form is linked to a SEASON (00290): it enters nobody, and each
 // response's e-transfer screenshot is filed against that person's dues for the
-// season, member or not, for review under Submitted.
+// season, member or not, for review under To review on /fees.
 // ---------------------------------------------------------------------------
 
 const STATUS_LABEL: Record<string, string> = {
@@ -204,7 +204,7 @@ export function FormImportCard({
           No Google Form is linked yet. Paste the form&apos;s id and pick the Data API key its script sends with.
           Its responses then show up below.
           {targetKind === 'season' &&
-            ' Each e-transfer screenshot is filed against that person\'s dues for this season and waits under Submitted.'}
+            ' Each e-transfer screenshot is filed against that person\'s dues for this season and waits under To review.'}
         </p>
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
