@@ -123,14 +123,18 @@ export function FormReaderPanel({
   const [eventQuestion, setEventQuestion] = useState(mapping?.EVENT_QUESTION ?? DEFAULT_EVENT_QUESTION);
   // A saved mapping keeps what it has, '' (no receipt question) included.
   const [receiptQuestion, setReceiptQuestion] = useState(mapping ? mapping.RECEIPT_QUESTION : DEFAULT_RECEIPT_QUESTION);
-  // The waiver questions (00295): a new mapping starts from the Chaos Cards
-  // form's titles, a saved one keeps what it has.
-  const [waiverQuestion, setWaiverQuestion] = useState(mapping ? mapping.WAIVER_QUESTION : DEFAULT_WAIVER_QUESTION);
+  // The waiver questions (00295): a new mapping, or one saved before they
+  // existed, starts from the Chaos Cards form's titles; a mapping saved since
+  // keeps what it has, empty included.
+  const waiverSaved = mapping && !reader?.waiverNeverSet ? mapping : null;
+  const [waiverQuestion, setWaiverQuestion] = useState(waiverSaved ? waiverSaved.WAIVER_QUESTION : DEFAULT_WAIVER_QUESTION);
   const [signatureQuestion, setSignatureQuestion] = useState(
-    mapping ? mapping.SIGNATURE_QUESTION : DEFAULT_SIGNATURE_QUESTION,
+    waiverSaved ? waiverSaved.SIGNATURE_QUESTION : DEFAULT_SIGNATURE_QUESTION,
   );
-  const [mediaQuestion, setMediaQuestion] = useState(mapping ? mapping.MEDIA_QUESTION : DEFAULT_MEDIA_QUESTION);
-  const [mediaAllow, setMediaAllow] = useState(mapping ? mapping.MEDIA_ALLOW_ANSWER : DEFAULT_MEDIA_ALLOW_ANSWER);
+  const [mediaQuestion, setMediaQuestion] = useState(waiverSaved ? waiverSaved.MEDIA_QUESTION : DEFAULT_MEDIA_QUESTION);
+  const [mediaAllow, setMediaAllow] = useState(
+    waiverSaved ? waiverSaved.MEDIA_ALLOW_ANSWER : DEFAULT_MEDIA_ALLOW_ANSWER,
+  );
   const [waiverVersion, setWaiverVersion] = useState(mapping?.WAIVER_VERSION ?? '');
   const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
 

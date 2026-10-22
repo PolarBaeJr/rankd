@@ -37,6 +37,11 @@ export interface FormBinding {
     mapping: FormMapping | null;
     /** A stored mapping that no longer parses; the card asks for a fresh save. */
     mappingInvalid: boolean;
+    /**
+     * The stored mapping predates the waiver questions (00295), so its empty
+     * waiver fields were never chosen: the editor offers the defaults.
+     */
+    waiverNeverSet: boolean;
     readAt: string | null;
     attemptedAt: string | null;
     importedCount: number;
@@ -106,6 +111,8 @@ function readerOf(row: Record<string, unknown>): FormBinding['reader'] {
   return {
     mapping: parsed?.success ? parsed.data : null,
     mappingInvalid: !!parsed && !parsed.success,
+    waiverNeverSet:
+      !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'WAIVER_QUESTION'),
     readAt: (row.poll_read_at as string | null) ?? null,
     attemptedAt: (row.poll_attempted_at as string | null) ?? null,
     importedCount: (row.poll_imported_count as number | null) ?? 0,
