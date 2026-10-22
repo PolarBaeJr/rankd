@@ -94,7 +94,8 @@ export default async function ClubEventsPage() {
         <div data-tour="events-upcoming">
           <EventTable title="Upcoming" rows={upcoming} taken={taken} empty="Nothing is coming up." />
         </div>
-        <EventTable title="Past" rows={past} taken={taken} empty="No club events have happened yet." />
+        {/* Hidden until an event has happened: an empty Past card is noise. */}
+        {past.length > 0 && <EventTable title="Past" rows={past} taken={taken} empty="" />}
       </div>
     </div>
   );
