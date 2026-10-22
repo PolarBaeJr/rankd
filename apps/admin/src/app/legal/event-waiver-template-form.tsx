@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Select } from '@badminton/ui';
+import { Button, Select, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { updateEventWaiverTemplate } from '@/lib/actions';
 import { AutoGrowTextarea } from './auto-grow-textarea';
@@ -48,7 +48,10 @@ export function EventWaiverTemplateForm({
   );
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  // Read until Edit, as the four documents are. Leaving edit mode drops the draft.
+  const [editing, setEditing] = useState(false);
   const { toast } = useToast();
+  const confirm = useConfirm();
 
   const saved = templates.find((t) => t.season_id === seasonId);
   const season = seasons.find((s) => s.id === seasonId);
@@ -57,16 +60,31 @@ export function EventWaiverTemplateForm({
   const currentValue = edits[seasonId] ?? saved?.content ?? '';
   const isEdited = seasonId in edits && edits[seasonId] !== (saved?.content ?? '');
 
+  function closeEditor() {
+    setEdits({});
+    setEditing(false);
+  }
+
+  async function switchSeason(next: string) {
+    if (isEdited) {
+      const discard = await confirm({
+        title: 'Discard your changes?',
+        message: `Your edit to ${season?.name ?? 'this season'}'s template is in this browser only.`,
+        confirmLabel: 'Discard changes',
+        danger: true,
+      });
+      if (!discard) return;
+    }
+    closeEditor();
+    setSeasonId(next);
+  }
+
   async function handleSave() {
     setSaving(true);
     try {
       await updateEventWaiverTemplate({ season_id: seasonId, content: currentValue });
       toast(`Template saved for ${season?.name ?? 'this season'}`, 'success');
-      setEdits((prev) => {
-        const next = { ...prev };
-        delete next[seasonId];
-        return next;
-      });
+      closeEditor();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to save template', 'error');
     }
@@ -98,7 +116,7 @@ export function EventWaiverTemplateForm({
           <Select
             label="Season"
             value={seasonId}
-            onChange={(e) => setSeasonId(e.target.value)}
+            onChange={(e) => void switchSeason(e.target.value)}
             options={seasons.map((s) => ({
               value: s.id,
               label: s.active_flag ? `${s.name} (active)` : s.name,
@@ -112,7 +130,7 @@ export function EventWaiverTemplateForm({
         </p>
       </div>
       <div className="settings-row-control wide">
-        {canEdit ? (
+        {canEdit && editing ? (
           <>
             {/* Said out loud in the UI as well as the migration header: the
                 seeded text is a fill-in-the-blanks skeleton, not wording anyone
@@ -130,18 +148,28 @@ export function EventWaiverTemplateForm({
             />
           </>
         ) : saved ? (
-          /* Read-only for execs, matching the four documents. No max-height:
+          /* Read-only for execs and, until Edit, for an admin, matching the four documents. No max-height:
              the page scrolls, not the box. */
           <pre className="font-mono text-xs whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-[var(--text-secondary)]">
             {saved.content}
           </pre>
         ) : (
           <p className="settings-section-desc">
-            No template for {season?.name ?? 'this season'} yet. An admin can add one.
+            No template for {season?.name ?? 'this season'} yet.{canEdit ? '' : ' An admin can add one.'}
           </p>
         )}
-        {canEdit && (
+        {canEdit && !editing && (
           <div className="flex items-center justify-end gap-2 mt-3">
+            <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+          </div>
+        )}
+        {canEdit && editing && (
+          <div className="flex items-center justify-end gap-2 mt-3">
+            <Button variant="ghost" onClick={closeEditor} disabled={saving}>
+              Cancel
+            </Button>
             <Button
               variant="secondary"
               onClick={handleSave}
