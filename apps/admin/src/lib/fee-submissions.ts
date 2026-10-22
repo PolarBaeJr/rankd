@@ -1,4 +1,5 @@
 import {
+  RECEIPT_FLAGS,
   isReceiptMethod,
   reminderDecision,
   lastRemindedAt,
@@ -6,6 +7,7 @@ import {
   unwrap,
   type FeeType,
   type PayableFeeLine,
+  type ReceiptFlag,
   type ReceiptMethod,
   type ReminderDecision,
 } from '@badminton/shared';
@@ -64,6 +66,37 @@ export async function inlineProof(admin: AdminClient, path: string): Promise<Res
   });
 }
 
+/** Why the server held a receipt for an exec (00297), as the console says it. */
+export const RECEIPT_FLAG_SENTENCES: Record<ReceiptFlag, string> = {
+  no_reference: 'No reference or order number could be read.',
+  reference_used: 'That reference is already on another receipt.',
+  screenshot_reused: 'The same screenshot was already sent for another fee.',
+  amount_mismatch: 'The amount on the receipt is not the fee.',
+  amount_unreadable: 'The amount could not be read.',
+  payee_mismatch: 'The receipt does not show the club as the recipient.',
+  payee_unreadable: 'The recipient could not be read.',
+  name_mismatch: "The name on the receipt is not the member's.",
+  program_mismatch: 'The receipt is for another program.',
+  not_a_receipt: 'The screenshot does not look like a receipt.',
+  wrong_method: 'That receipt cannot pay this fee.',
+  unreadable_format: 'The screenshot is a PDF or HEIC, which the server cannot read.',
+  ocr_failed: 'The screenshot could not be read.',
+  ocr_timeout: 'Reading the screenshot took too long.',
+  fee_not_payable: 'The fee was settled or had no amount when the receipt was read.',
+  undone: 'An exec undid the automatic confirmation.',
+};
+
+/** "Checking..." while the server reads it, or why it held the receipt; null for a receipt from before 00297. */
+export function receiptCheckNote(s: Pick<PendingSubmission, 'checking' | 'flag' | 'flagDetail'>): string | null {
+  if (s.checking) return 'Checking...';
+  if (!s.flag) return null;
+  return s.flagDetail ? `${s.flagDetail}.` : RECEIPT_FLAG_SENTENCES[s.flag];
+}
+
+function receiptFlag(value: string | null): ReceiptFlag | null {
+  return value && (RECEIPT_FLAGS as readonly string[]).includes(value) ? (value as ReceiptFlag) : null;
+}
+
 export type PendingSubmission = {
   id: string;
   /** Null for a receipt a Google Form collected (00288): the exec reads it off the screenshot. */
@@ -87,6 +120,16 @@ export type PendingSubmission = {
   line: string;
   /** An event fee whose sign-up is gone, or whose event was cancelled. */
   withdrawn: boolean;
+  /** The server is still reading the screenshot (00297). NULL state is a receipt from before. */
+  checking: boolean;
+  /** Why the server held it for an exec, when it did. */
+  flag: ReceiptFlag | null;
+  /** A sentence beside the flag, never a name: "Receipt shows $20.00, the fee is $25.00". */
+  flagDetail: string | null;
+  /** What the server read, when it read one. */
+  ocrReference: string | null;
+  /** When the server confirmed it by itself; set only on the 'autoConfirmed' list. */
+  autoConfirmedAt: string | null;
 };
 
 /**
@@ -98,25 +141,32 @@ export type PendingSubmission = {
  * collected whose screenshot is still on file (00288), newest first. The club
  * keeps them as proof of payment until somebody asks, through the privacy
  * address, for theirs to be erased; this is where an exec finds it.
+ *
+ * `which` 'autoConfirmed' is the receipts the server confirmed by itself
+ * (00297) in the last 60 days, newest first, each one an exec can undo.
  */
 export async function loadPendingSubmissions(
   admin: AdminClient,
   scope: 'club' | { tournamentId: string },
-  which: 'pending' | 'keptFromForm' = 'pending',
+  which: 'pending' | 'keptFromForm' | 'autoConfirmed' = 'pending',
 ): Promise<PendingSubmission[]> {
   const base = admin
     .from('fee_submissions')
-    .select('id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at, import_receipt_id');
-  const subs = unwrap(
-    await (which === 'pending'
+    .select(
+      'id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at, import_receipt_id, ocr_state, ocr_flag, ocr_flag_detail, ocr_reference, auto_confirmed_at',
+    );
+  const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+  const query =
+    which === 'pending'
       ? base.eq('status', 'submitted').order('submitted_at', { ascending: true })
-      : base
-          .eq('status', 'confirmed')
-          .not('import_receipt_id', 'is', null)
-          .not('screenshot_path', 'is', null)
-          .order('submitted_at', { ascending: false })),
-    'FEE-102',
-  ) as {
+      : which === 'autoConfirmed'
+        ? base.eq('status', 'confirmed').gte('auto_confirmed_at', since).order('auto_confirmed_at', { ascending: false })
+        : base
+            .eq('status', 'confirmed')
+            .not('import_receipt_id', 'is', null)
+            .not('screenshot_path', 'is', null)
+            .order('submitted_at', { ascending: false });
+  const subs = unwrap(await query, 'FEE-102') as {
     id: string;
     club_fee_id: string;
     player_id: string | null;
@@ -125,6 +175,11 @@ export async function loadPendingSubmissions(
     screenshot_path: string | null;
     submitted_at: string;
     import_receipt_id: string | null;
+    ocr_state: string | null;
+    ocr_flag: string | null;
+    ocr_flag_detail: string | null;
+    ocr_reference: string | null;
+    auto_confirmed_at: string | null;
   }[];
   if (subs.length === 0) return [];
 
@@ -237,6 +292,11 @@ export async function loadPendingSubmissions(
         (!fee.club_event_id ||
           !(s.player_id ? signedUp : guestSignedUp).has(signupKey) ||
           event?.status === 'cancelled'),
+      checking: s.ocr_state === 'pending',
+      flag: receiptFlag(s.ocr_flag),
+      flagDetail: s.ocr_flag_detail,
+      ocrReference: s.ocr_reference,
+      autoConfirmedAt: s.auto_confirmed_at,
     };
   });
 }

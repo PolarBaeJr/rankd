@@ -235,7 +235,10 @@ export async function MemberSection({
                     <div className="fees-receipt-amount">{money(l.owedCents)}</div>
                   </div>
                   <div className="fees-receipt-meta">
-                    {waiting && 'Submitted, awaiting confirmation'}
+                    {waiting &&
+                      (latest?.ocr_state === 'pending'
+                        ? 'Submitted, checking your receipt'
+                        : 'Submitted, awaiting confirmation')}
                     {latest?.status === 'rejected' && `Rejected: ${latest.reject_reason ?? ''}`}
                     {l.kind === 'reinstatement' && 'Settled with an exec'}
                     {l.kind !== 'reinstatement' && l.owedCents == null && 'No price recorded yet. Ask an exec.'}

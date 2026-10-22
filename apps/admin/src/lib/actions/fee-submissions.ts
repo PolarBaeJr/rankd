@@ -6,6 +6,7 @@ import {
   ETRANSFER_REFERENCE_PATTERN,
   ExpectedError,
   SFU_REC_REFERENCE_PATTERN,
+  isHiddenEtransferReference,
   normaliseReference,
   RECEIPT_METHODS,
   formatPaymentMethod,
@@ -34,6 +35,9 @@ import { duesFor, loadOutstandingMembers, submissionCapability } from '../fee-su
 // stored; a wrong stored method is corrected with Mark unpaid, then Mark paid.
 // The reference is the same: a receipt a Google Form collected (00288) has
 // none, and the exec's typed one is read only then.
+//
+// A receipt the server read and confirmed by itself (00297) can be put back
+// to waiting with undoAutoConfirmedSubmission, for an ordinary review.
 //
 // A form receipt belongs to somebody who may have no account, so the purge
 // cannot reach its screenshot by player. "Erase screenshot" removes it on
@@ -64,7 +68,15 @@ const REVIEW_REFUSALS: Record<string, string> = {
   bad_method: 'That is not how this fee can be paid. Only membership dues are sold on the SFU Rec website.',
   short_reference: 'That reference is too short for an e-transfer, which has 6 to 32 characters. A 4 or 5 character number is an SFU Rec receipt.',
   needs_reference: 'Type the reference from the screenshot before confirming.',
-  bad_reference: 'A reference is 4 to 32 letters, digits and hyphens.',
+  bad_reference: 'A reference is 4 to 32 letters, digits and hyphens, or an e-transfer number as the bank shows it.',
+};
+
+const UNDO_REFUSALS: Record<string, string> = {
+  not_found: NOT_FOUND,
+  not_auto: 'That receipt was not confirmed automatically, or has already been undone.',
+  bad_reason: 'Give a reason of 3 to 500 characters.',
+  fee_changed: 'That fee has been changed since it was confirmed. Mark it unpaid from the fee instead.',
+  pending_exists: 'Another receipt for that fee is already waiting. Review that one first.',
 };
 
 /** The submission, its fee, and the capability that settles it, checked. */
@@ -110,7 +122,11 @@ async function confirmImpl(id: string, method?: string, reference?: string): Pro
     z
       .string()
       .transform(normaliseReference)
-      .pipe(z.string().regex(SFU_REC_REFERENCE_PATTERN, REVIEW_REFUSALS.bad_reference!))
+      .pipe(
+        z
+          .string()
+          .refine((v) => SFU_REC_REFERENCE_PATTERN.test(v) || isHiddenEtransferReference(v), REVIEW_REFUSALS.bad_reference!),
+      )
       .optional(),
     reference === '' ? undefined : reference,
   );
@@ -122,7 +138,11 @@ async function confirmImpl(id: string, method?: string, reference?: string): Pro
   }
   const effectiveReference = sub.reference ?? typed;
   if (!effectiveReference) throw new ExpectedError(REVIEW_REFUSALS.needs_reference!);
-  if (effective === 'e_transfer' && !ETRANSFER_REFERENCE_PATTERN.test(effectiveReference)) {
+  if (
+    effective === 'e_transfer' &&
+    !ETRANSFER_REFERENCE_PATTERN.test(effectiveReference) &&
+    !isHiddenEtransferReference(effectiveReference)
+  ) {
     throw new ExpectedError(REVIEW_REFUSALS.short_reference!);
   }
   const { data, error } = await adminClient.rpc('review_fee_submission_confirm', {
@@ -147,6 +167,36 @@ async function confirmImpl(id: string, method?: string, reference?: string): Pro
     },
     { submissionId: sub.id },
   );
+  revalidate(fee);
+}
+
+/**
+ * Puts a receipt the server confirmed by itself (00297) back to waiting, and
+ * the fee back to unpaid, for an ordinary review. Needs the capability that
+ * marks the fee unpaid as well as the one that settles it. The RPC refuses
+ * once anybody has marked the fee since ('fee_changed'), and writes its own
+ * audit row in the same transaction.
+ */
+export async function undoAutoConfirmedSubmission(id: string, reason: string): Promise<ActionResult> {
+  return runAction(() => undoImpl(id, reason));
+}
+
+async function undoImpl(id: string, reason: string): Promise<void> {
+  const why = parseOrThrow(
+    z.string().trim().min(3, 'Give a reason of at least 3 characters').max(500, 'Keep the reason to 500 characters'),
+    reason ?? '',
+  );
+  const { adminClient, sub, fee } = await authorise(id);
+  const actor = await requireCapability(
+    fee.fee_type === 'tournament' ? 'tournaments.fees.markunpaid.write' : 'fees.clubfees.markunpaid.write',
+  );
+  const { data, error } = await adminClient.rpc('undo_auto_confirmed_fee_submission', {
+    p_submission_id: sub.id,
+    p_actor: actor.id,
+    p_reason: why,
+  });
+  if (error) throw new Error(`The confirmation was not undone: ${error.message}`);
+  if (data !== 'ok') throw new ExpectedError(UNDO_REFUSALS[data as string] ?? 'The confirmation was not undone.');
   revalidate(fee);
 }
 

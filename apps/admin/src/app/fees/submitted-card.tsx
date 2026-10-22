@@ -1,14 +1,19 @@
 import { formatPaymentMethod } from '@badminton/shared';
 import { Badge, Card, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { createAdminClient } from '@/lib/supabase-server';
-import { loadPendingSubmissions, type PendingSubmission } from '@/lib/fee-submissions';
+import { loadPendingSubmissions, receiptCheckNote, type PendingSubmission } from '@/lib/fee-submissions';
 import { CardHeading } from './card-heading';
-import { KeptScreenshotActions, SubmissionActions } from './submission-actions';
+import { AutoConfirmedActions, KeptScreenshotActions, SubmissionActions } from './submission-actions';
 
 // PAYMENT RECEIPTS WAITING FOR AN EXEC (00248, 00253): dues and club events,
 // oldest first. "Paid by" is what the member's browser read off the receipt;
 // Unclear when it could not tell, and confirming then asks. Rendered only for a holder of fees.clubfees.markpaid.write,
 // the capability that settles them; tournament entries are on their own page.
+//
+// The server reads each new receipt itself (00297) and confirms the routine
+// ones. A row waiting here says "Checking..." while that read runs, or why it
+// was held. The ones it confirmed are listed under the waiting ones, each with
+// Undo, so an exec can still check them against the bank and SFU Rec.
 
 const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
 
@@ -25,11 +30,15 @@ const RECEIPT_GROUPS: { method: PendingSubmission['method']; title: string; sub:
 const paidBy = (method: string | null) =>
   method ? formatPaymentMethod(method) : <Badge variant="warning">Unclear</Badge>;
 
+const when = (iso: string) =>
+  new Date(iso).toLocaleString('en-CA', { timeZone: 'America/Vancouver', dateStyle: 'medium', timeStyle: 'short' });
+
 export async function SubmittedCard() {
   const admin = createAdminClient();
-  const [submissions, kept] = await Promise.all([
+  const [submissions, kept, auto] = await Promise.all([
     loadPendingSubmissions(admin, 'club'),
     loadPendingSubmissions(admin, 'club', 'keptFromForm'),
+    loadPendingSubmissions(admin, 'club', 'autoConfirmed'),
   ]);
 
   return (
@@ -57,8 +66,50 @@ export async function SubmittedCard() {
           );
         })
       )}
+      {auto.length > 0 && <AutoConfirmed auto={auto} />}
       {kept.length > 0 && <KeptScreenshots kept={kept} />}
     </Card>
+  );
+}
+
+// Receipts the server read and confirmed by itself (00297) in the last 60
+// days. The fee is paid; Undo puts the receipt back to waiting and the fee
+// back to unpaid, until somebody marks the fee another way.
+function AutoConfirmed({ auto }: { auto: PendingSubmission[] }) {
+  return (
+    <section className="border-t border-[var(--border)]">
+      <div className="px-4 pt-4 pb-2">
+        <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+          Auto-confirmed <span className="font-normal text-[var(--text-muted)]">({auto.length})</span>
+        </h3>
+        <p className="text-xs text-[var(--text-muted)]">
+          Read and confirmed by the site in the last 60 days. Check them against the club&apos;s bank and SFU Rec, and undo one that is wrong.
+        </p>
+      </div>
+      <ul className="divide-y divide-[var(--border)]">
+        {auto.map((s) => (
+          <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[var(--text-primary)]">{s.playerName}</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                {[s.line, money(s.amountCents), s.method ? formatPaymentMethod(s.method) : null, s.autoConfirmedAt ? when(s.autoConfirmedAt) : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              <Atomic className="font-mono text-xs">{s.reference ?? 'No reference'}</Atomic>
+            </div>
+            <div className="flex items-center whitespace-nowrap">
+              <AutoConfirmedActions
+                submissionId={s.id}
+                memberName={s.playerName}
+                reference={s.reference}
+                proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -111,6 +162,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
           value={<Atomic>{money(s.amountCents)}</Atomic>}
           badges={s.withdrawn ? <Badge variant="warning">Withdrawn</Badge> : undefined}
           fields={[
+            ...(receiptCheckNote(s) ? [{ label: 'Check', value: receiptCheckNote(s) }] : []),
             { label: 'Paid by', value: s.fromForm ? `${paidBy(s.method)}, from the Google Form` : paidBy(s.method) },
             { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic> },
             { label: 'Sent', value: new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) },
@@ -170,6 +222,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
                     <Badge variant="warning">Withdrawn</Badge>
                   </span>
                 )}
+                {receiptCheckNote(s) && <p className="text-xs text-[var(--text-muted)]">{receiptCheckNote(s)}</p>}
               </td>
               <td className="px-4 py-3 text-right">
                 <Atomic className="font-mono text-[var(--text-primary)]">{money(s.amountCents)}</Atomic>

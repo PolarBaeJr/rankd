@@ -12,8 +12,8 @@ import Link from 'next/link';
 import { TournamentFeeActions } from './tournament-fee-actions';
 import { BulkTournamentFeeActions } from './bulk-tournament-fee-actions';
 import { NonMemberFees, type NonMemberFeeRow } from './non-member-fees';
-import { KeptScreenshotActions, SubmissionActions } from '../../../fees/submission-actions';
-import { loadPendingSubmissions } from '@/lib/fee-submissions';
+import { AutoConfirmedActions, KeptScreenshotActions, SubmissionActions } from '../../../fees/submission-actions';
+import { loadPendingSubmissions, receiptCheckNote } from '@/lib/fee-submissions';
 
 /** Card identity line: the same avatar + name + email the Player cell shows. */
 function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
@@ -132,16 +132,19 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
   // Keyed by FEE: a receipt a Google Form collected (00288) can sit on a
   // non-member's named row, which has no player id to key it by.
-  const [pending, kept] = canReview
+  const [pending, kept, auto] = canReview
     ? await Promise.all([
         loadPendingSubmissions(supabase, { tournamentId: id }),
         loadPendingSubmissions(supabase, { tournamentId: id }, 'keptFromForm'),
+        loadPendingSubmissions(supabase, { tournamentId: id }, 'autoConfirmed'),
       ])
-    : [[], []];
+    : [[], [], []];
   const submissionByFee = new Map(pending.map((s) => [s.feeId, s]));
   // A paid fee whose form screenshot is still on file: openable, and erasable
   // on request, the fee staying paid (00288).
   const keptByFee = new Map(kept.map((s) => [s.feeId, s]));
+  // A paid fee the site confirmed from its receipt by itself (00297): undoable.
+  const autoByFee = new Map(auto.map((s) => [s.feeId, s]));
   const submissionOf = (playerId: string) => {
     const feeId = feeByPlayer.get(playerId)?.id;
     return feeId ? submissionByFee.get(feeId) : undefined;
@@ -149,20 +152,35 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
   const reviewControls = (playerName: string, feeId: string | undefined) => {
     const s = feeId ? submissionByFee.get(feeId) : undefined;
+    const note = s ? receiptCheckNote(s) : null;
     return s ? (
-      <SubmissionActions
-        submissionId={s.id}
+      <>
+        {note && <span className="text-xs text-[var(--text-muted)] px-2">{note}</span>}
+        <SubmissionActions
+          submissionId={s.id}
+          memberName={playerName}
+          line={`${tournament.name} entry`}
+          amount={money(s.amountCents)}
+          reference={s.reference}
+          proofHref={s.hasScreenshot ? `/tournaments/${id}/fees/proof/${s.id}` : null}
+          method={s.method}
+          feeType="tournament"
+          fromForm={s.fromForm}
+          readableScreenshot={s.readableScreenshot}
+        />
+      </>
+    ) : (autoOf(playerName, feeId) ?? keptOf(playerName, feeId));
+  };
+  const autoOf = (playerName: string, feeId: string | undefined) => {
+    const a = feeId ? autoByFee.get(feeId) : undefined;
+    return a ? (
+      <AutoConfirmedActions
+        submissionId={a.id}
         memberName={playerName}
-        line={`${tournament.name} entry`}
-        amount={money(s.amountCents)}
-        reference={s.reference}
-        proofHref={s.hasScreenshot ? `/tournaments/${id}/fees/proof/${s.id}` : null}
-        method={s.method}
-        feeType="tournament"
-        fromForm={s.fromForm}
-        readableScreenshot={s.readableScreenshot}
+        reference={a.reference}
+        proofHref={a.hasScreenshot ? `/tournaments/${id}/fees/proof/${a.id}` : null}
       />
-    ) : keptOf(playerName, feeId);
+    ) : null;
   };
   const keptOf = (playerName: string, feeId: string | undefined) => {
     const k = feeId ? keptByFee.get(feeId) : undefined;

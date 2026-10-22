@@ -712,6 +712,12 @@ export async function assembleMemberExport(
       reviewed_at: row.reviewed_at,
       screenshot_held: row.screenshot_path != null,
       reviewed_by_role: officerDescriptor(row.reviewed_by as string | null),
+      // The site's own read of the screenshot (00297): what it read, why it
+      // held the receipt for an exec, or when it confirmed it.
+      ocr_reference: row.ocr_reference,
+      ocr_flag: row.ocr_flag,
+      ocr_flag_detail: row.ocr_flag_detail,
+      auto_confirmed_at: row.auto_confirmed_at,
     }),
   );
 

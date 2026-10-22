@@ -332,4 +332,12 @@ describe('updatePlatformSettings: the club links', () => {
     await updatePlatformSettings([payments({ etransfer_email: '' })], WHY);
     expect(settings().find((s) => s.key === 'membership_payments')?.value).toHaveProperty('etransfer_email', '');
   });
+
+  it('refuses a payee name over 100 characters, and allows an empty one (00297)', async () => {
+    await expect(updatePlatformSettings([payments({ etransfer_payee_name: 'a'.repeat(101) })], WHY)).rejects.toThrow(
+      /payee name/,
+    );
+    await updatePlatformSettings([payments({ etransfer_payee_name: '' })], WHY);
+    expect(settings().find((s) => s.key === 'membership_payments')?.value).toHaveProperty('etransfer_payee_name', '');
+  });
 });

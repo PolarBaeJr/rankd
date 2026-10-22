@@ -541,6 +541,11 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       hint: 'Where members send an Interac e-Transfer for club fees. While this is empty, members cannot upload payment receipts: the Membership page says e-transfer is not set up.',
       type: 'text',
     },
+    etransfer_payee_name: {
+      label: 'E-transfer payee name',
+      hint: 'The name a member\'s bank shows the club as on an e-Transfer receipt, for example Sfu Badminton. An e-transfer receipt confirms itself only when it shows this name or the e-transfer email as the recipient; otherwise an exec reviews it. Leave empty to match on the email alone.',
+      type: 'text',
+    },
   },
   // One switch per entry in the shared feature registry, so a feature added
   // there appears here with no second list to keep in step.

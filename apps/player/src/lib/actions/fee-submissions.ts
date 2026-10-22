@@ -1,10 +1,13 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { ExpectedError, type FeeSubmissionInput } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import { assertFeatureOn } from '../feature-gate';
 import { fileFeeSubmission } from '../fee-submission-core';
+import { checkSubmission } from '@badminton/shared/src/utils/receipt-check';
+import { serverReceiptOcr } from '../receipt-ocr-server';
 import { requirePlayer, runAction, type ActionResult } from './_shared';
 
 // A MEMBER SENDS A PAYMENT RECEIPT (00248, 00253).
@@ -18,6 +21,11 @@ import { requirePlayer, runAction, type ActionResult } from './_shared';
 //
 // The rules themselves live in ../fee-submission-core.ts, which Discord
 // /receipt files through too, so both doors refuse the same things.
+//
+// Once filed, the server reads the screenshot itself (00297) and may confirm
+// it with nobody looking. That runs after the response, so the member never
+// waits on the OCR; a check that never finishes is picked up by the console's
+// sweep.
 
 export async function submitFeeSubmission(input: FeeSubmissionInput): Promise<ActionResult> {
   return runAction(() => submitFeeSubmissionImpl(input));
@@ -43,8 +51,9 @@ async function submitFeeSubmissionImpl(input: FeeSubmissionInput): Promise<void>
     throw new ExpectedError('That screenshot could not be attached');
   }
 
+  let submissionId: string;
   try {
-    await fileFeeSubmission(createServiceRoleClient(), player, {
+    submissionId = await fileFeeSubmission(createServiceRoleClient(), player, {
       feeId: input?.feeId ?? null,
       duesSeasonId: input?.duesSeasonId ?? null,
       reference: input?.reference,
@@ -56,6 +65,17 @@ async function submitFeeSubmissionImpl(input: FeeSubmissionInput): Promise<void>
     throw err;
   }
 
+  after(() => checkReceipt(submissionId));
+
   revalidatePath('/membership');
   revalidatePath('/feed');
+}
+
+async function checkReceipt(submissionId: string): Promise<void> {
+  try {
+    await checkSubmission(createServiceRoleClient(), submissionId, serverReceiptOcr);
+  } catch (err) {
+    // The RPC's message only: nothing read off the screenshot is in it.
+    console.error('[membership] the receipt check failed:', err instanceof Error ? err.message : typeof err);
+  }
 }

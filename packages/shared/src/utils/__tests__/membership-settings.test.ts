@@ -3,6 +3,7 @@ import {
   DEFAULT_MEMBERSHIP_PURCHASE_URL,
   parseMembershipPaymentSettings,
   safeEtransferEmail,
+  safePayeeName,
   safePurchaseUrl,
 } from '../membership-settings';
 
@@ -32,24 +33,45 @@ describe('safeEtransferEmail', () => {
   });
 });
 
+describe('safePayeeName', () => {
+  it('collapses whitespace and caps the length', () => {
+    expect(safePayeeName(' Sfu\n Badminton ')).toBe('Sfu Badminton');
+    expect(safePayeeName('a'.repeat(100))).toBe('a'.repeat(100));
+    expect(safePayeeName('a'.repeat(101))).toBeNull();
+    expect(safePayeeName('')).toBeNull();
+    expect(safePayeeName(7)).toBeNull();
+  });
+});
+
 describe('parseMembershipPaymentSettings', () => {
   it('reads a valid pair', () => {
     expect(
       parseMembershipPaymentSettings({ sfss_purchase_url: REC, etransfer_email: 'treasurer@sfubadminton.com' }),
-    ).toEqual({ sfssPurchaseUrl: REC, etransferEmail: 'treasurer@sfubadminton.com' });
+    ).toEqual({ sfssPurchaseUrl: REC, etransferEmail: 'treasurer@sfubadminton.com', etransferPayeeName: null });
+  });
+
+  it('reads the payee name a bank shows, tidied', () => {
+    expect(
+      parseMembershipPaymentSettings({ sfss_purchase_url: REC, etransfer_payee_name: '  Sfu   Badminton ' })
+        .etransferPayeeName,
+    ).toBe('Sfu Badminton');
   });
 
   it('reads an absent or malformed row as the defaults', () => {
-    const defaults = { sfssPurchaseUrl: DEFAULT_MEMBERSHIP_PURCHASE_URL, etransferEmail: null };
+    const defaults = { sfssPurchaseUrl: DEFAULT_MEMBERSHIP_PURCHASE_URL, etransferEmail: null, etransferPayeeName: null };
     expect(parseMembershipPaymentSettings(null)).toEqual(defaults);
     expect(parseMembershipPaymentSettings([])).toEqual(defaults);
     expect(parseMembershipPaymentSettings({})).toEqual(defaults);
   });
 
   it('hides a stored value that fails its rule, and an explicit blank', () => {
-    const none = { sfssPurchaseUrl: null, etransferEmail: null };
-    expect(parseMembershipPaymentSettings({ sfss_purchase_url: 'javascript:x', etransfer_email: 3 })).toEqual(none);
-    expect(parseMembershipPaymentSettings({ sfss_purchase_url: '', etransfer_email: '' })).toEqual(none);
+    const none = { sfssPurchaseUrl: null, etransferEmail: null, etransferPayeeName: null };
+    expect(
+      parseMembershipPaymentSettings({ sfss_purchase_url: 'javascript:x', etransfer_email: 3, etransfer_payee_name: 4 }),
+    ).toEqual(none);
+    expect(
+      parseMembershipPaymentSettings({ sfss_purchase_url: '', etransfer_email: '', etransfer_payee_name: ' ' }),
+    ).toEqual(none);
   });
 
   it('seeds a default that passes its own rule', () => {

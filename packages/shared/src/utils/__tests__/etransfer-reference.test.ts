@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractEtransferReference,
+  extractSfuRecOrder,
+  isHiddenEtransferReference,
   isPlausibleReference,
   normaliseReference,
 } from '../etransfer-reference';
@@ -97,5 +99,68 @@ describe('SFU Rec receipt numbers (synthetic fixtures)', () => {
     expect(isPlausibleReference('4821', 'e_transfer')).toBe(false);
     expect(isPlausibleReference('4821')).toBe(false);
     expect(isPlausibleReference('482', 'sfu_rec')).toBe(false);
+  });
+});
+
+// The SFU Rec layouts below copy the shape of real receipts with every value
+// made up. The phone's member line is "Ana Lee" and an invented ID.
+const SFU_REC_DESKTOP = [
+  'Order #: O-600857',
+  'Invoice #: 1-502003',
+  'Registration #: R-497881',
+  'Total Before Tax: $25.00',
+  'Program Name: Badminton Club',
+].join('\n');
+
+const SFU_REC_PHONE = ['Receipt', '', 'O-601558', 'Thank you for', 'your purchase.', 'Ana Lee | ID #: 301234567'].join('\n');
+
+describe('extractSfuRecOrder (00297)', () => {
+  it('reads the order on a desktop receipt, never the invoice or registration', () => {
+    expect(extractSfuRecOrder(SFU_REC_DESKTOP)).toBe('O-600857');
+    expect(extractSfuRecOrder(SFU_REC_DESKTOP.replace('1-502003', 'I-502003'))).toBe('O-600857');
+  });
+
+  it('reads the order alone on its line on a phone receipt, never the student ID', () => {
+    expect(extractSfuRecOrder(SFU_REC_PHONE)).toBe('O-601558');
+  });
+
+  it('reads an OCR zero for the O, and spaces round the hyphen', () => {
+    expect(extractSfuRecOrder('Order #: 0-600857')).toBe('O-600857');
+    expect(extractSfuRecOrder('Receipt\no - 600857')).toBe('O-600857');
+  });
+
+  it('finds nothing without an order', () => {
+    expect(extractSfuRecOrder('Invoice #: I-502003\nRegistration #: R-497881')).toBeNull();
+    expect(extractSfuRecOrder('')).toBeNull();
+    expect(extractSfuRecOrder(null)).toBeNull();
+  });
+});
+
+describe('an e-transfer number shown with part of it hidden (00297)', () => {
+  it('reads an elided number whole, with three dots or the ellipsis character', () => {
+    expect(extractEtransferReference('Confirmation number: H99517225...111525803')?.value).toBe(
+      'H99517225...111525803',
+    );
+    expect(normaliseReference(extractEtransferReference('Confirmation number: H99517225\u2026111525803')!.value)).toBe(
+      'H99517225...111525803',
+    );
+  });
+
+  it('reads a masked number whole', () => {
+    expect(extractEtransferReference('Confirmation # C1Aarp***bAz')?.value).toBe('C1Aarp***bAz');
+  });
+
+  it('accepts a hidden number only as an e-transfer', () => {
+    expect(isHiddenEtransferReference('H99517225...111525803')).toBe(true);
+    expect(isHiddenEtransferReference('C1Aarp***bAz')).toBe(true);
+    expect(isHiddenEtransferReference('CA1Q7r2Kp9Xb')).toBe(false);
+    expect(isHiddenEtransferReference('a...b')).toBe(false);
+    expect(isPlausibleReference('C1Aarp***bAz', 'e_transfer')).toBe(true);
+    expect(isPlausibleReference('C1Aarp***bAz', 'sfu_rec')).toBe(false);
+    expect(isPlausibleReference('C1Aarp***bAz')).toBe(false);
+  });
+
+  it('turns the ellipsis character into three dots', () => {
+    expect(normaliseReference('H99517225\u2026111525803')).toBe('H99517225...111525803');
   });
 });

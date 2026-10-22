@@ -6,6 +6,7 @@ import {
   ETRANSFER_REFERENCE_PATTERN,
   SFU_REC_REFERENCE_PATTERN,
   formatPaymentMethod,
+  isHiddenEtransferReference,
   normaliseReference,
   type ReceiptMethod,
 } from '@badminton/shared';
@@ -17,6 +18,7 @@ import {
   eraseFormReceiptScreenshot,
   rejectFeeSubmission,
   remindUnpaidMembers,
+  undoAutoConfirmedSubmission,
 } from '@/lib/actions/fee-submissions';
 
 // The controls on a payment receipt (00248, 00253): look at the screenshot,
@@ -72,9 +74,11 @@ export function SubmissionActions({
   const choices: ReceiptMethod[] = feeType === 'dues' ? ['e_transfer', 'sfu_rec'] : ['e_transfer'];
   // The reference confirming would store: the one sent, else the one typed.
   const shownReference = reference ?? normaliseReference(typed);
-  const referenceReady = SFU_REC_REFERENCE_PATTERN.test(shownReference);
+  // An e-transfer number the bank printed with part of it hidden (00297).
+  const hiddenReference = isHiddenEtransferReference(shownReference);
+  const referenceReady = SFU_REC_REFERENCE_PATTERN.test(shownReference) || hiddenReference;
   // A 4 or 5 character number cannot be an e-transfer reference (00253).
-  const shortReference = referenceReady && !ETRANSFER_REFERENCE_PATTERN.test(shownReference);
+  const shortReference = SFU_REC_REFERENCE_PATTERN.test(shownReference) && !ETRANSFER_REFERENCE_PATTERN.test(shownReference);
   const effectiveMethod = method ?? chosen;
 
   function send(picked?: ReceiptMethod) {
@@ -229,7 +233,7 @@ export function SubmissionActions({
                     label="Reference"
                     value={typed}
                     onChange={(e) => setTyped(e.target.value)}
-                    maxLength={40}
+                    maxLength={48}
                     autoComplete="off"
                   />
                 </div>
@@ -255,7 +259,7 @@ export function SubmissionActions({
                   size="sm"
                   aria-pressed={chosen === m}
                   onClick={() => setChosen(m)}
-                  disabled={isPending || (m === 'e_transfer' && shortReference)}
+                  disabled={isPending || (m === 'e_transfer' && shortReference) || (m === 'sfu_rec' && hiddenReference)}
                 >
                   {m === 'e_transfer' ? 'Interac e-Transfer' : 'SFU Rec website'}
                 </Button>
@@ -278,7 +282,8 @@ export function SubmissionActions({
               disabled={
                 !effectiveMethod ||
                 !referenceReady ||
-                (effectiveMethod === 'e_transfer' && shortReference)
+                (effectiveMethod === 'e_transfer' && shortReference) ||
+                (effectiveMethod === 'sfu_rec' && hiddenReference)
               }
               className="flex-1"
             >
@@ -400,6 +405,87 @@ export function KeptScreenshotActions({
       <Button variant="ghost" size="sm" onClick={handleErase} loading={isPending}>
         Erase screenshot
       </Button>
+    </>
+  );
+}
+
+// A receipt the server read and confirmed by itself (00297). The fee is paid;
+// Undo asks why, then puts the receipt back to waiting and the fee back to
+// unpaid, for an ordinary Confirm or Reject. Nobody is notified: the member
+// sees their fee unpaid again with the receipt waiting.
+export function AutoConfirmedActions({
+  submissionId,
+  memberName,
+  reference,
+  proofHref,
+}: {
+  submissionId: string;
+  memberName: string;
+  reference: string | null;
+  /** Null when the screenshot was removed with a purged account, or erased. */
+  proofHref: string | null;
+}) {
+  const [undoing, setUndoing] = useState(false);
+  const [reason, setReason] = useState('');
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
+  const router = useRouter();
+
+  function handleUndo() {
+    startTransition(async () => {
+      const result = await undoAutoConfirmedSubmission(submissionId, reason);
+      if (!result.ok) {
+        toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
+        return;
+      }
+      toast('Confirmation undone. The receipt is waiting for review.', 'success');
+      setUndoing(false);
+      setReason('');
+      router.refresh();
+    });
+  }
+
+  return (
+    <>
+      {proofHref ? (
+        <a
+          href={withBase(proofHref)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-[var(--color-accent)] font-medium px-2"
+        >
+          View screenshot
+        </a>
+      ) : (
+        <span className="text-xs text-[var(--text-muted)] px-2">No screenshot</span>
+      )}
+      <Button variant="ghost" size="sm" onClick={() => setUndoing(true)} disabled={isPending}>
+        Undo
+      </Button>
+      <Dialog open={undoing} onClose={() => setUndoing(false)} title={`Undo confirmation: ${memberName}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            The site confirmed this receipt{reference ? ` (${reference})` : ''} by itself. Undoing marks the fee
+            unpaid again and puts the receipt back in the list to confirm or reject. {memberName} is not notified.
+          </p>
+          <Textarea
+            label="Reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. No payment with this reference reached the club"
+            maxLength={500}
+            rows={3}
+          />
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setUndoing(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUndo} loading={isPending} disabled={reason.trim().length < 3} className="flex-1">
+              Undo confirmation
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </>
   );
 }
