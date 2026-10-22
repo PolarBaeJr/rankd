@@ -4,8 +4,11 @@ name: CI
 # workflow built Docker images, so a red test suite could — and did — reach
 # production without anything objecting.
 #
-# Two ways in:
+# Three ways in:
 #   pull_request     — gate a PR before it can be merged into the prod branch
+#   push release/**  — check a release train when it is pushed. The prod push
+#                      that follows is the same commit, and build-images.yml
+#                      skips its own run when this one passed for that commit
 #   workflow_call    — build-images.yml calls this first, so an image is never
 #                      built from a commit that failed (see that file's `verify`)
 #
@@ -27,6 +30,9 @@ on:
   pull_request:
     branches:
       - deploy/docker-prod
+  push:
+    branches:
+      - 'release/**'
   workflow_call:
   workflow_dispatch:
 
