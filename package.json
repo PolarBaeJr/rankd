@@ -23,14 +23,14 @@
     "node": ">=24.0.0 <25"
   },
   "//overrides": "Every consumer (lucide-react, @react-email/render, @sentry/react, next) takes react as a PEER and accepts 19 \u2014 but npm was still hoisting an 18.3.1 to the workspace root, so the apps rendered with 19 while shared components were built by 18. Two copies means elements created by one are rejected by the other: React error #31 on prerender. Force one copy.",
-  "//overrides-2": "postcss is pinned exactly at 8.4.31 inside next and sharp ships with an advisory below 0.35; both are build-time only and semver-compatible, so lift them rather than wait for a next release to do it.",
+  "//overrides-2": "postcss is pinned exactly at 8.4.31 inside next, so it is lifted here; postcss runs at build time only. sharp is NOT build-time only: the standalone server loads it for /_next/image on every request, so it stays at a patched version (0.35.5 fixes a librsvg RCE).",
   "//overrides-3": "nanoid: GHSA-2v37-7h3g-55p8 (high) — a custom generator loops forever when size is zero, fixed in 3.3.18. This is the dependabot alert on every push. Raising the postcss floor does not reach it: postcss 8.5.25 asks for nanoid ^3.3.16 and npm was resolving 3.3.17, so the transitive dep needs its own override. postcss is the ONLY thing in the tree that depends on nanoid, and it is build-time CSS tooling — nothing at application runtime calls it, which is why this is hygiene rather than an incident. Remove this entry once every postcss in the tree asks for ^3.3.18 on its own.",
   "overrides": {
     "react": "$react",
     "react-dom": "$react-dom",
     "postcss": "^8.5.25",
     "nanoid": "^3.3.18",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.5"
   },
   "dependencies": {
     "react": "19.2.8",

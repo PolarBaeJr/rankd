@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ---- Stage 1: Install dependencies ----
-FROM node:24-bookworm-slim AS deps
+FROM node:24.22.1-bookworm-slim AS deps
 WORKDIR /app
 
 # .npmrc carries engine-strict=true, so this `npm ci` fails loudly if the base
@@ -68,7 +68,7 @@ RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
     npx turbo run build --filter=player --filter=admin --filter=bot --concurrency=1
 
 # ---- Stage 3: Player runner ----
-FROM node:24-bookworm-slim AS runner-player
+FROM node:24.22.1-bookworm-slim AS runner-player
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -87,7 +87,7 @@ EXPOSE 3000
 CMD ["node", "apps/player/server.js"]
 
 # ---- Stage 4: Admin runner ----
-FROM node:24-bookworm-slim AS runner-admin
+FROM node:24.22.1-bookworm-slim AS runner-admin
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -121,7 +121,7 @@ CMD ["node", "apps/admin/server.js"]
 # node:http plus node:crypto. If a dependency is ever added, this stage must start
 # copying the production tree, and forgetting to is a crash on boot rather than a
 # silent failure, which is the failure mode to prefer.
-FROM node:24-bookworm-slim AS runner-bot
+FROM node:24.22.1-bookworm-slim AS runner-bot
 WORKDIR /app
 
 ENV NODE_ENV=production
