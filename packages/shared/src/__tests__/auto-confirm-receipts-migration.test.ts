@@ -27,7 +27,7 @@ function functionBody(name: string): string {
 
 const RPCS: [string, string][] = [
   ['claim_fee_submission_ocr', 'uuid, integer'],
-  ['flag_fee_submission_ocr', 'uuid, text, text, text, text'],
+  ['flag_fee_submission_ocr', 'uuid, text, text, text, text, text'],
   ['auto_confirm_fee_submission', 'uuid, text, text, text, integer'],
   ['undo_auto_confirmed_fee_submission', 'uuid, uuid, text'],
   ['review_fee_submission_confirm', 'uuid, uuid, text, text'],

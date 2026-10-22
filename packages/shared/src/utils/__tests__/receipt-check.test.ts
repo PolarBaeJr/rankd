@@ -94,7 +94,11 @@ describe('checkSubmission', () => {
     const { admin, calls } = fakeAdmin([row({ amount_cents: 2500 })]);
     expect(await checkSubmission(admin, 'sub-1', fakeOcr({ text: TEXT }))).toBe('amount_mismatch');
     const flag = calls.find((c) => c.fn === 'flag_fee_submission_ocr')!;
-    expect(flag.args).toMatchObject({ p_flag: 'amount_mismatch', p_detail: 'Receipt shows $15.00, the fee is $25.00' });
+    expect(flag.args).toMatchObject({
+      p_flag: 'amount_mismatch',
+      p_detail: 'Receipt shows $15.00, the fee is $25.00',
+      p_method: 'e_transfer',
+    });
   });
 
   it('holds a timeout and a failed read by their kind', async () => {

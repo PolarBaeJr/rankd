@@ -261,13 +261,16 @@ $function$;
 -- 8. HOLD FOR AN EXEC -------------------------------------------------------------
 -- Acts only on a waiting row still queued. The key and the hash are reserved
 -- when free, so a second copy of the same receipt is held too; a taken one is
--- simply not stored. Never raises on a duplicate.
+-- simply not stored. Never raises on a duplicate. The method the read saw is
+-- kept when the member gave none, so the receipt waits under the right heading.
+DROP FUNCTION IF EXISTS public.flag_fee_submission_ocr(uuid, text, text, text, text);
 CREATE OR REPLACE FUNCTION public.flag_fee_submission_ocr(
   p_submission_id uuid,
   p_flag text,
   p_detail text DEFAULT NULL,
   p_reference text DEFAULT NULL,
-  p_image_sha256 text DEFAULT NULL
+  p_image_sha256 text DEFAULT NULL,
+  p_method text DEFAULT NULL
 )
 RETURNS text
 LANGUAGE plpgsql
@@ -276,6 +279,7 @@ SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
   v_sub       fee_submissions%ROWTYPE;
+  v_method    text;
   v_reference text;
   v_key       text;
   v_hash      text;
@@ -292,11 +296,17 @@ BEGIN
   IF v_sub.status <> 'submitted' OR v_sub.ocr_state IS DISTINCT FROM 'pending' THEN RETURN 'not_pending'; END IF;
 
   v_reference := left(NULLIF(replace(btrim(coalesce(p_reference, '')), U&'\2026', '...'), ''), 64);
-  v_key := CASE WHEN v_sub.method IS NOT NULL THEN fee_reference_key(v_sub.method, v_reference) END;
+  v_method := coalesce(v_sub.method, CASE WHEN p_method IN ('e_transfer', 'sfu_rec') THEN p_method END);
+  -- fee_submissions_reference_check refuses a 4 or 5 character e-transfer
+  -- reference, so such a row stays without a method.
+  IF v_sub.method IS NULL AND v_method = 'e_transfer' AND v_sub.reference !~ '^[A-Za-z0-9-]{6,32}$' THEN
+    v_method := NULL;
+  END IF;
+  v_key := CASE WHEN v_method IS NOT NULL THEN fee_reference_key(v_method, v_reference) END;
   v_hash := CASE WHEN lower(p_image_sha256) ~ '^[0-9a-f]{64}$' THEN lower(p_image_sha256) END;
   IF v_key IS NOT NULL AND (v_sub.reference_key IS NOT NULL OR EXISTS (
        SELECT 1 FROM fee_submissions o
-        WHERE o.id <> v_sub.id AND o.method = v_sub.method AND o.reference_key = v_key
+        WHERE o.id <> v_sub.id AND o.method = v_method AND o.reference_key = v_key
           AND o.status IN ('submitted', 'confirmed'))) THEN
     v_key := NULL;
   END IF;
@@ -309,7 +319,7 @@ BEGIN
   BEGIN
     UPDATE fee_submissions
        SET ocr_state = 'done', ocr_flag = p_flag, ocr_flag_detail = left(p_detail, 200),
-           ocr_reference = v_reference,
+           ocr_reference = v_reference, method = v_method,
            reference_key = coalesce(reference_key, v_key),
            image_sha256 = coalesce(image_sha256, v_hash)
      WHERE id = v_sub.id;
@@ -317,7 +327,7 @@ BEGIN
     -- Another row took the key or the hash in between: held without them.
     UPDATE fee_submissions
        SET ocr_state = 'done', ocr_flag = p_flag, ocr_flag_detail = left(p_detail, 200),
-           ocr_reference = v_reference
+           ocr_reference = v_reference, method = v_method
      WHERE id = v_sub.id;
   END;
   RETURN 'ok';
@@ -389,7 +399,7 @@ BEGIN
   END IF;
 
   IF v_flag IS NOT NULL THEN
-    PERFORM flag_fee_submission_ocr(v_sub.id, v_flag, v_detail, v_reference, v_hash);
+    PERFORM flag_fee_submission_ocr(v_sub.id, v_flag, v_detail, v_reference, v_hash, p_method);
     RETURN v_flag;
   END IF;
 
@@ -418,7 +428,7 @@ BEGIN
     -- Another row took the key or the screenshot between the check and here.
     GET STACKED DIAGNOSTICS v_index = CONSTRAINT_NAME;
     v_flag := CASE WHEN v_index = 'fee_submissions_image_once' THEN 'screenshot_reused' ELSE 'reference_used' END;
-    PERFORM flag_fee_submission_ocr(v_sub.id, v_flag, NULL, v_reference, NULL);
+    PERFORM flag_fee_submission_ocr(v_sub.id, v_flag, NULL, v_reference, NULL, p_method);
     RETURN v_flag;
   END;
   RETURN 'ok';
@@ -549,12 +559,12 @@ $function$;
 
 -- 11. GRANTS ------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.claim_fee_submission_ocr(uuid, integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.flag_fee_submission_ocr(uuid, text, text, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.flag_fee_submission_ocr(uuid, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.auto_confirm_fee_submission(uuid, text, text, text, integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.undo_auto_confirmed_fee_submission(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.review_fee_submission_confirm(uuid, uuid, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_fee_submission_ocr(uuid, integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.flag_fee_submission_ocr(uuid, text, text, text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.flag_fee_submission_ocr(uuid, text, text, text, text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.auto_confirm_fee_submission(uuid, text, text, text, integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.undo_auto_confirmed_fee_submission(uuid, uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.review_fee_submission_confirm(uuid, uuid, text, text) TO service_role;
@@ -600,7 +610,7 @@ BEGIN
 
   FOREACH v_fn IN ARRAY ARRAY[
     'public.claim_fee_submission_ocr(uuid,integer)',
-    'public.flag_fee_submission_ocr(uuid,text,text,text,text)',
+    'public.flag_fee_submission_ocr(uuid,text,text,text,text,text)',
     'public.auto_confirm_fee_submission(uuid,text,text,text,integer)',
     'public.undo_auto_confirmed_fee_submission(uuid,uuid,text)',
     'public.review_fee_submission_confirm(uuid,uuid,text,text)'

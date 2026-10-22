@@ -61,7 +61,7 @@ async function flag(
   admin: SupabaseClient,
   id: string,
   reason: ReceiptFlag,
-  extra: { detail?: string | null; reference?: string | null; hash?: string | null } = {},
+  extra: { detail?: string | null; reference?: string | null; hash?: string | null; method?: string | null } = {},
 ): Promise<ReceiptCheckOutcome> {
   const { error } = await admin.rpc('flag_fee_submission_ocr', {
     p_submission_id: id,
@@ -69,6 +69,7 @@ async function flag(
     p_detail: extra.detail ?? null,
     p_reference: extra.reference ?? null,
     p_image_sha256: extra.hash ?? null,
+    p_method: extra.method ?? null,
   });
   if (error) throw new Error(`Receipt check flag failed: ${error.message}`);
   return reason;
@@ -102,7 +103,8 @@ async function checkClaimed(admin: SupabaseClient, row: Claimed, ocr: ReceiptOcr
     return flag(admin, row.submission_id, read.error === 'timeout' ? 'ocr_timeout' : 'ocr_failed', { hash });
   }
   const payee = await clubPayee(admin);
-  const decision = decideAutoConfirm(parseReceiptText(read.text), {
+  const readout = parseReceiptText(read.text);
+  const decision = decideAutoConfirm(readout, {
     feeType: row.fee_type,
     amountCents: row.amount_cents,
     payerName: row.payer_name,
@@ -114,6 +116,7 @@ async function checkClaimed(admin: SupabaseClient, row: Claimed, ocr: ReceiptOcr
       detail: decision.detail,
       reference: decision.reference,
       hash,
+      method: readout.kind,
     });
   }
   const { data, error: confirmError } = await admin.rpc('auto_confirm_fee_submission', {
