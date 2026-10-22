@@ -14,6 +14,7 @@ import { LedgerCard } from '@/app/fees/ledger-card';
 import { NetPositionStrip } from '@/app/fees/net-position-strip';
 import { NetPositionChart } from '@/app/fees/net-position-chart';
 import { CollectionCharts } from '@/app/fees/collection-charts';
+import { ScrollToSection } from './scroll-to-section';
 
 // THE CLUB'S MONEY OTHER THAN THE FEE LIST: the net position, how dues
 // collection is going, expenses and other income. These were tabs on /fees
@@ -199,6 +200,7 @@ export default async function FinancesPage({
           />
         </div>
       )}
+      <ScrollToSection />
     </div>
   );
 }
