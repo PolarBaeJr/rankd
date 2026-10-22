@@ -16,7 +16,7 @@ import {
 import Link from 'next/link';
 import { AlertTriangle, ArrowUpRight } from 'lucide-react';
 import { PlayerActions } from '../players/player-actions';
-import { adminNavItemOn, openableSections } from '@/components/nav-sections';
+import { adminNavItemHasContent, adminNavItemOn, openableSections } from '@/components/nav-sections';
 import { getSeasonFinances } from '@/lib/season-finance';
 import { getDashboardFinances } from '@/lib/dashboard-finance';
 import { getOutstandingClubFees } from '@/lib/fees-outstanding';
@@ -263,7 +263,10 @@ export default async function DashboardPage({
   const openSections = hasTiles
     ? []
     : openableSections(level, permissions).filter(
-        (item) => item.href !== '/dashboard' && adminNavItemOn(item.href, features, held),
+        (item) =>
+          item.href !== '/dashboard'
+          && adminNavItemOn(item.href, features, held)
+          && adminNavItemHasContent(item.href, held),
       );
 
   // ------------------------------------------------------------------------
@@ -844,7 +847,7 @@ export default async function DashboardPage({
               strip empty for somebody whose only capability is this one, and an
               empty strip is two hairlines with nothing between them. */}
           {showClubFees && (
-            <Link href="/fees" className="hover:bg-[var(--surface)] transition-colors">
+            <Link href="/fees?view=unpaid" className="hover:bg-[var(--surface)] transition-colors">
               <p className="stat-label">Fees outstanding</p>
               <p className={`stat-value is-money ${(outstandingCents ?? 0) > 0 ? 'text-[var(--color-warning)]' : ''}`}>
                 {outstandingCents === null ? '—' : <Atomic>{money(outstandingCents)}</Atomic>}
@@ -1289,7 +1292,7 @@ export default async function DashboardPage({
               it: somebody may be able to file an expense and to see none, which
               is the state /fees was reshaped to support. */}
           {canAddExpense && (
-            <Link href="/fees?tab=expenses" className="group block">
+            <Link href="/finances#expenses" className="group block">
               <Card className="flex flex-wrap items-center justify-between gap-4 transition-colors hover:border-[var(--border-hover)]">
                 <div>
                   <p className="text-sm font-medium text-[var(--text-primary)]">Paid for something out of pocket?</p>

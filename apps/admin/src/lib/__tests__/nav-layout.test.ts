@@ -71,7 +71,7 @@ describe('the console top bar layout', () => {
     expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events'] });
   });
 
-  // The same thirteen links nav-drift.test.ts pins for an unrestricted exec, now in
+  // The same fourteen links nav-drift.test.ts pins for an unrestricted exec, now in
   // menus. System holds only admin-only sections, so it is gone entirely.
   it('shows an unrestricted exec these menus', () => {
     const visible = visibleFor('exec', UNRESTRICTED);
@@ -80,7 +80,7 @@ describe('the console top bar layout', () => {
       { play: ['/sessions', '/matches', '/seasons'] },
       { events: ['/tournaments'] },
       { members: ['/players'] },
-      { club: ['/announcements', '/fees', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'] },
+      { club: ['/announcements', '/fees', '/finances', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'] },
       '/settings',
     ]);
     expect(flattenEntries(visible).map((item) => item.href).sort()).toEqual(
@@ -109,7 +109,7 @@ describe('the console top bar layout', () => {
     ];
     expect(shape(visibleFor('exec', resolvePermissions('exec', 'finance', [], revokes)))).toEqual([
       '/dashboard',
-      { club: ['/fees'] },
+      { club: ['/fees', '/finances'] },
       '/settings',
     ]);
   });
@@ -159,7 +159,7 @@ describe('the console top bar with a feature switched off', () => {
   });
 
   it('drops Announcements from Club when announcements are off', () => {
-    expect(shape(visibleWith(off('announcements')))).toContainEqual({ club: ['/fees', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'] });
+    expect(shape(visibleWith(off('announcements')))).toContainEqual({ club: ['/fees', '/finances', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'] });
   });
 
   it('never hides an item that belongs to no feature', () => {
@@ -213,6 +213,7 @@ describe('nested rows', () => {
     expect(tree(club.items, club.nest)).toEqual([
       { href: '/announcements', selfLabel: undefined, children: [] },
       { href: '/fees', selfLabel: undefined, children: [] },
+      { href: '/finances', selfLabel: undefined, children: [] },
       { href: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] },
     ]);
   });

@@ -119,7 +119,7 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // behind it — club fees, other income, expenses, reinstatements, the net
   // position — each have their own read, and an exec holds exactly one of them
   // (fees.expenses.read) because the club owner asked for "execs can add
-  // expenses", not for the finance page. /fees/page.tsx enforces that by
+  // expenses", not for the finance page. fees/page.tsx and finances/page.tsx enforce that by
   // skipping their FETCHES rather than hiding the rendered output: a hidden card
   // whose query still ran ships the figures into the RSC payload for anyone with
   // devtools. Same reasoning, and the same shape, as dashboard/page.tsx.
@@ -132,6 +132,10 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // canAccess(…, '/fees'). The dashboard finance snapshot is the one place that
   // nearly did, and reusing this line is precisely what would have leaked it.
   '/fees': 'fees.page',
+  // The other half of the same section: other income, expenses and the money
+  // summary, moved off /fees. Same page key, and the same rule as above: each
+  // ledger on it is gated by its own read, at the fetch.
+  '/finances': 'fees.page',
   '/audit': 'audit.page',
   // The audit log's CSV download, which is a route rather than a server action
   // because a file has to arrive as a response with its own headers. Listed

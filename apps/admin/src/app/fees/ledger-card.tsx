@@ -143,9 +143,9 @@ export async function LedgerCard({
   const supabase = createAdminClient();
   const isIncome = kind === 'income';
   // ONE TABLE SINCE 00159, and `direction` is what used to be the table name.
-  // This component is rendered twice on /fees — once per tab — under two
+  // This component is rendered twice on /finances, once per ledger, under two
   // SEPARATE capabilities, so the filter is the only thing that still stops the
-  // income tab drawing the club's spending. It is not derived from `kind` at
+  // income section drawing the club's spending. It is not derived from `kind` at
   // the query site by accident: `kind` decides the columns, the heading, the
   // actions and now the rows, so all four move together or none do.
   const direction = isIncome ? 'income' : 'expense';

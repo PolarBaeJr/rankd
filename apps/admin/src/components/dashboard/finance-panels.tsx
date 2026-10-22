@@ -193,7 +193,7 @@ export function ExpensePanel({
       categoryLabel={formatExpenseCategory}
       breakdownLabel="Where it went"
       emptyNote={`Nothing has been filed against ${season.name} yet. Expenses appear here as they are recorded, and the chart starts once two days of them exist.`}
-      href="/fees?tab=expenses"
+      href="/finances#expenses"
       footer={
         // WHO IS STILL OUT OF POCKET. Net position is an accrual figure and
         // says nothing about this — see the reimbursement note in
@@ -239,7 +239,7 @@ export function OtherIncomePanel({
       categoryLabel={formatOtherIncomeCategory}
       breakdownLabel="Where it came from"
       emptyNote={`No donation, grant or social has been recorded against ${season.name} yet.`}
-      href="/fees?tab=income"
+      href="/finances#income"
     />
   );
 }
@@ -352,7 +352,7 @@ export function NetPositionPanel({
       <PanelHead title={season ? `${season.name} · Net position` : 'Net position'} />
       {season ? (
         <Link
-          href="/fees"
+          href="/finances"
           className="block space-y-4 px-4 py-4 transition-colors hover:bg-[var(--surface-2)]"
         >
           <ChartFigure
