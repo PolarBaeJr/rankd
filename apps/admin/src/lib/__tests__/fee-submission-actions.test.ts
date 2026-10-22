@@ -150,10 +150,10 @@ beforeEach(() => {
 const rowOf = (table: string, id: string) => store.db[table]!.find((row) => row.id === id)!;
 
 describe('confirming a form receipt', () => {
-  it('refuses with no reference typed', async () => {
+  it('confirms with no reference typed, as some bank screens show none (00298)', async () => {
     const result = await confirmFeeSubmission(SUB);
-    expect(result.ok).toBe(false);
-    expect(store.rpcs).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(store.rpcs[0]?.args).toMatchObject({ p_method: 'e_transfer', p_reference: null });
   });
 
   it("stores the exec's typed reference, normalised", async () => {

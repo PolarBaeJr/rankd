@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import {
   ETRANSFER_REFERENCE_PATTERN,
   SFU_REC_REFERENCE_PATTERN,
-  formatPaymentMethod,
   isHiddenEtransferReference,
   normaliseReference,
   type ReceiptMethod,
@@ -21,15 +20,15 @@ import {
   undoAutoConfirmedSubmission,
 } from '@/lib/actions/fee-submissions';
 
-// The controls on a payment receipt (00248, 00253): look at the screenshot,
-// confirm it (the fee is marked paid by the method the receipt was read as,
-// with the member's reference), or reject it with a reason the member is shown.
-// When the member's browser could not tell how it was paid, confirming asks.
+// The controls on a payment receipt (00248, 00253): one Review button opens the
+// screenshot with Approve (the fee is marked paid by the method the receipt was
+// read as, with the member's reference) and Reject (with a reason the member is
+// shown). When the member's browser could not tell how it was paid, it asks.
 //
-// A receipt a Google Form collected (00288) carries no reference: confirming
-// asks for it, and "Read screenshot" reads one off the image in this browser
-// (receipt-ocr.ts) for the exec to check. A PDF or HEIC is typed by hand. Its
-// screenshot can be erased on request, the payment record staying.
+// A receipt a Google Form collected (00288) carries no reference: one can be
+// typed, or read off the image in this browser (receipt-ocr.ts), and none at
+// all is fine (00298), since some banks' screens show none. Its screenshot can
+// be erased on request, the payment record staying.
 
 export function SubmissionActions({
   submissionId,
@@ -59,16 +58,15 @@ export function SubmissionActions({
   /** A JPEG, PNG or WebP the browser can read; a PDF or HEIC is not. */
   readableScreenshot?: boolean;
 }) {
+  const [reviewing, setReviewing] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
-  const [choosing, setChoosing] = useState(false);
   const [chosen, setChosen] = useState<ReceiptMethod | null>(null);
   const [typed, setTyped] = useState('');
   const [reading, setReading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
-  const confirm = useConfirm();
 
   // Only dues are sold on the SFU Rec website.
   const choices: ReceiptMethod[] = feeType === 'dues' ? ['e_transfer', 'sfu_rec'] : ['e_transfer'];
@@ -83,13 +81,13 @@ export function SubmissionActions({
 
   function send(picked?: ReceiptMethod) {
     startTransition(async () => {
-      const result = await confirmFeeSubmission(submissionId, picked, reference ? undefined : shownReference);
+      const result = await confirmFeeSubmission(submissionId, picked, reference ? undefined : shownReference || undefined);
       if (!result.ok) {
         toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
         return;
       }
       toast('Payment confirmed', 'success');
-      setChoosing(false);
+      setReviewing(false);
       setChosen(null);
       setTyped('');
       router.refresh();
@@ -121,18 +119,10 @@ export function SubmissionActions({
 
   const handleErase = useEraseScreenshot(submissionId, memberName, startTransition);
 
-  async function handleConfirm() {
-    if (!method || !reference) {
-      setChoosing(true);
-      return;
-    }
-    const ok = await confirm({
-      title: 'Confirm this payment?',
-      message: `${memberName}'s ${line} (${amount}) is marked paid by ${formatPaymentMethod(method)}, reference ${reference}. Check it arrived first.`,
-      confirmLabel: 'Confirm payment',
-    });
-    if (!ok) return;
-    send();
+  function close() {
+    setReviewing(false);
+    setRejecting(false);
+    setReason('');
   }
 
   function handleReject() {
@@ -143,153 +133,148 @@ export function SubmissionActions({
         return;
       }
       toast('Receipt rejected', 'success');
-      setRejecting(false);
-      setReason('');
+      close();
       router.refresh();
     });
   }
 
+  // A typed reference must be one the database takes; none at all is fine for
+  // a Form receipt (00298), whose bank screen may show no number.
+  const typedOk = reference !== null || !shownReference ? true : referenceReady;
+  const approveDisabled =
+    !effectiveMethod ||
+    !typedOk ||
+    (!reference && !shownReference && !fromForm) ||
+    (effectiveMethod === 'e_transfer' && shortReference) ||
+    (effectiveMethod === 'sfu_rec' && hiddenReference);
+
   return (
     <>
-      {/* One line: the screenshot (with Erase under it for a Form receipt,
-          whose file the club keeps), then the two decisions. Where a receipt
-          came from shows in the Paid by column, not here. */}
-      <div className="flex flex-col items-end px-2 leading-tight">
-        {proofHref ? (
-          <a
-            href={withBase(proofHref)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-[var(--color-accent)] font-medium"
-          >
-            View screenshot
-          </a>
-        ) : (
-          <span className="text-xs text-[var(--text-muted)]">No screenshot</span>
-        )}
-        {fromForm && proofHref && (
-          <button
-            type="button"
-            onClick={handleErase}
-            disabled={isPending}
-            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
-          >
-            Erase screenshot
-          </button>
-        )}
-      </div>
-      <Button variant="ghost" size="sm" onClick={handleConfirm} loading={isPending}>
-        Confirm
+      {/* The row keeps one decision button. Review opens the screenshot with
+          Approve and Reject beside it; Erase stays out here for a Form
+          receipt, whose file the club keeps. */}
+      {fromForm && proofHref && (
+        <Button variant="ghost" size="sm" onClick={handleErase} disabled={isPending}>
+          Erase screenshot
+        </Button>
+      )}
+      <Button variant="ghost" size="sm" onClick={() => setReviewing(true)} disabled={isPending}>
+        Review
       </Button>
-      <Button variant="ghost" size="sm" onClick={() => setRejecting(true)} disabled={isPending}>
-        Reject
-      </Button>
-      <Dialog open={rejecting} onClose={() => setRejecting(false)} title={`Reject receipt: ${memberName}`}>
+      <Dialog open={reviewing} onClose={close} title={`Review: ${memberName}`} size="wide">
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            {fromForm
-              ? `${memberName} sent this through the form, so nobody is notified. Tell them yourself if they should send another.`
-              : `${memberName} is sent a notification with this reason and can send a new receipt.`}
+            {line} ({amount}){reference ? `, reference ${reference}` : ''}. Check the recipient and the amount, and that
+            it arrived.
           </p>
-          <Textarea
-            label="Reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. No payment with this reference reached the club"
-            maxLength={500}
-            rows={3}
-          />
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => setRejecting(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleReject}
-              loading={isPending}
-              disabled={reason.trim().length < 3}
-              className="flex-1"
-            >
-              Reject receipt
-            </Button>
-          </div>
-        </div>
-      </Dialog>
-      <Dialog open={choosing} onClose={() => setChoosing(false)} title={`Confirm payment: ${memberName}`}>
-        <div className="space-y-4">
-          {reference ? (
-            <p className="text-sm text-[var(--text-secondary)]">
-              The site could not tell how {memberName} paid their {line} ({amount}), reference {reference}.
-              Check the screenshot, say how it was paid, and check it arrived first.
-            </p>
+          {proofHref ? (
+            readableScreenshot ? (
+              <a href={withBase(proofHref)} target="_blank" rel="noopener noreferrer" className="block">
+                {/* eslint-disable-next-line @next/next/no-img-element -- an exec-gated route, not a static asset */}
+                <img
+                  src={withBase(`${proofHref}?inline=1`)}
+                  alt={`Receipt from ${memberName}`}
+                  className="max-h-[55vh] w-auto mx-auto rounded-md border border-[var(--border)]"
+                />
+              </a>
+            ) : (
+              <a
+                href={withBase(proofHref)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-[var(--color-accent)] font-medium"
+              >
+                Open the screenshot (a PDF or HEIC opens in a new tab)
+              </a>
+            )
           ) : (
+            <p className="text-xs text-[var(--text-muted)]">No screenshot</p>
+          )}
+          {rejecting ? (
             <>
               <p className="text-sm text-[var(--text-secondary)]">
-                {memberName} sent a screenshot for their {line} ({amount}) and no reference. Type the reference
-                from the screenshot, and check it arrived first.
+                {fromForm
+                  ? `${memberName} sent this through the form, so nobody is notified. Tell them yourself if they should send another.`
+                  : `${memberName} is sent a notification with this reason and can send a new receipt.`}
               </p>
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <Input
-                    label="Reference"
-                    value={typed}
-                    onChange={(e) => setTyped(e.target.value)}
-                    maxLength={48}
-                    autoComplete="off"
-                  />
-                </div>
-                {proofHref && readableScreenshot && (
-                  <Button variant="ghost" size="sm" onClick={readScreenshot} loading={reading} disabled={isPending}>
-                    Read screenshot
-                  </Button>
-                )}
+              <Textarea
+                label="Reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. The amount on the receipt is not the fee"
+                maxLength={500}
+                rows={3}
+              />
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setRejecting(false)}>
+                  Back
+                </Button>
+                <Button
+                  onClick={handleReject}
+                  loading={isPending}
+                  disabled={reason.trim().length < 3}
+                  className="flex-1"
+                >
+                  Reject receipt
+                </Button>
               </div>
-              {proofHref && !readableScreenshot && (
+            </>
+          ) : (
+            <>
+              {!reference && (
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Input
+                      label={fromForm ? 'Reference (if the receipt shows one)' : 'Reference'}
+                      value={typed}
+                      onChange={(e) => setTyped(e.target.value)}
+                      maxLength={48}
+                      autoComplete="off"
+                    />
+                  </div>
+                  {proofHref && readableScreenshot && (
+                    <Button variant="ghost" size="sm" onClick={readScreenshot} loading={reading} disabled={isPending}>
+                      Read screenshot
+                    </Button>
+                  )}
+                </div>
+              )}
+              {!method && (
+                <div className="flex gap-2">
+                  {choices.map((m) => (
+                    <Button
+                      key={m}
+                      variant={chosen === m ? 'primary' : 'ghost'}
+                      size="sm"
+                      aria-pressed={chosen === m}
+                      onClick={() => setChosen(m)}
+                      disabled={isPending || (m === 'e_transfer' && shortReference) || (m === 'sfu_rec' && hiddenReference)}
+                    >
+                      {m === 'e_transfer' ? 'Interac e-Transfer' : 'SFU Rec website'}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {shortReference && (
                 <p className="text-xs text-[var(--text-muted)]">
-                  This screenshot is a PDF or HEIC, which the console cannot read. Open it and type the reference.
+                  {shownReference} is too short for an e-transfer reference, so this can only be an SFU Rec receipt.
                 </p>
               )}
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setRejecting(true)} disabled={isPending}>
+                  Reject
+                </Button>
+                <Button
+                  onClick={() => effectiveMethod && send(method ? undefined : effectiveMethod)}
+                  loading={isPending}
+                  disabled={approveDisabled}
+                  className="flex-1"
+                >
+                  Approve
+                </Button>
+              </div>
             </>
           )}
-          {!method && (
-            <div className="flex gap-2">
-              {choices.map((m) => (
-                <Button
-                  key={m}
-                  variant={chosen === m ? 'primary' : 'ghost'}
-                  size="sm"
-                  aria-pressed={chosen === m}
-                  onClick={() => setChosen(m)}
-                  disabled={isPending || (m === 'e_transfer' && shortReference) || (m === 'sfu_rec' && hiddenReference)}
-                >
-                  {m === 'e_transfer' ? 'Interac e-Transfer' : 'SFU Rec website'}
-                </Button>
-              ))}
-            </div>
-          )}
-          {shortReference && (
-            <p className="text-xs text-[var(--text-muted)]">
-              {shownReference} is too short for an e-transfer reference, so this can only be an SFU Rec receipt.
-              If it is not one, reject it and ask for the right reference.
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => setChoosing(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => effectiveMethod && send(method ? undefined : effectiveMethod)}
-              loading={isPending}
-              disabled={
-                !effectiveMethod ||
-                !referenceReady ||
-                (effectiveMethod === 'e_transfer' && shortReference) ||
-                (effectiveMethod === 'sfu_rec' && hiddenReference)
-              }
-              className="flex-1"
-            >
-              Confirm payment
-            </Button>
-          </div>
         </div>
       </Dialog>
     </>

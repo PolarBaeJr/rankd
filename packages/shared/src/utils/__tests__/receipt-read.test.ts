@@ -141,8 +141,8 @@ describe('decideAutoConfirm', () => {
       ...etransfer,
       amountCents: 500,
     });
-    // Passes the payee, then holds for the missing number.
-    expect(decision).toMatchObject({ confirm: false, flag: 'no_reference' });
+    // The "All set" screen shows no number: the payee and amount settle it (00298).
+    expect(decision).toMatchObject({ confirm: true, method: 'e_transfer', reference: null, amountCents: 500 });
   });
 
   const holds: [string, string, AutoConfirmContext, string][] = [
@@ -158,7 +158,6 @@ describe('decideAutoConfirm', () => {
     ['amount_mismatch', ETRANSFER, { ...etransfer, amountCents: 2500 }, 'Receipt shows $15.00, the fee is $25.00'],
     ['payee_mismatch', ETRANSFER.replace('Riverside Smash Club', 'Someone Else'), etransfer, ''],
     ['payee_unreadable', ETRANSFER.replace('Sent to\n\nRiverside Smash Club\n', ''), etransfer, ''],
-    ['no_reference', ALL_SET, { ...etransfer, amountCents: 500, clubPayeeName: 'Riverside Smash' }, ''],
   ];
 
   it.each(holds)('holds %s', (flag, text, ctx, detail) => {

@@ -17,6 +17,8 @@ function migration(suffix: string): string {
 }
 
 const sql = migration('_a_read_receipt_confirms_itself.sql');
+// 00298 redefines the flag CHECK with 'outside_window'; it is the current one.
+const flagSql = migration('_a_form_receipt_confirms_without_a_reference.sql');
 
 function functionBody(name: string): string {
   const start = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
@@ -35,7 +37,7 @@ const RPCS: [string, string][] = [
 
 describe('00297 a read receipt confirms itself', () => {
   it('accepts exactly the flags the server can raise', () => {
-    const check = /fee_submissions_ocr_flag_check\s+CHECK \(ocr_flag IS NULL OR ocr_flag IN \(([^)]*)\)\)/.exec(sql);
+    const check = /fee_submissions_ocr_flag_check\s+CHECK \(ocr_flag IS NULL OR ocr_flag IN \(([^)]*)\)\)/.exec(flagSql);
     expect(check).not.toBeNull();
     const flags = [...check![1]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(flags.sort()).toEqual([...RECEIPT_FLAGS].sort());
