@@ -266,6 +266,13 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         eyebrow="EVENTS"
         title={event.title}
         sub={<Link href="/events" className="hover:underline">Back to club events</Link>}
+        actions={
+          <ClubEventControls
+            eventId={event.id}
+            canCancel={canCancel && !cancelled}
+            canDelete={canDelete && taken === 0}
+          />
+        }
       />
       <div className="flex flex-col gap-5">
         <EditableSection
@@ -321,12 +328,6 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             </DetailList>
           }
           form={<ClubEventForm key={event.id} eventId={event.id} initial={initial} />}
-        />
-
-        <ClubEventControls
-          eventId={event.id}
-          canCancel={canCancel && !cancelled}
-          canDelete={canDelete && taken === 0}
         />
 
         {(linked || !cancelled) && (
