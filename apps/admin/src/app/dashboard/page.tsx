@@ -457,6 +457,10 @@ export default async function DashboardPage({
           .from('players')
           .select('id, full_name, avatar_url, joined_at, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
           .neq('status', 'pending_approval')
+          // Not guests (00292): a Form entrant given a record for a linked
+          // tournament has not joined the club, and signed its waiver on the
+          // Form, so listing them here also put them in "without a waiver".
+          .eq('is_guest', false)
           .gte('joined_at', weekStartInstant)
           .order('joined_at', { ascending: false })
           .limit(6)
