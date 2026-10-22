@@ -225,7 +225,7 @@ export interface AutoConfirmContext {
 }
 
 export type AutoConfirmDecision =
-  | { confirm: true; method: ReceiptMethod; reference: string; amountCents: number | null }
+  | { confirm: true; method: ReceiptMethod; reference: string | null; amountCents: number | null }
   | { confirm: false; flag: ReceiptFlag; detail: string | null; reference: string | null };
 
 /**
@@ -268,6 +268,8 @@ export function decideAutoConfirm(read: ReceiptReadout, ctx: AutoConfirmContext)
     if (!read.payeeEmail && !read.payeeName) return hold('payee_unreadable');
     return hold('payee_mismatch', 'The receipt does not show the club as the recipient');
   }
-  if (!read.reference) return hold('no_reference');
+  // Some banks' "sent" screens show no reference (00298): the recipient and
+  // the amount settle it, and the database takes that only for a Form receipt
+  // whose screenshot is hashed, answering 'no_reference' for any other.
   return { confirm: true, method: 'e_transfer', reference: read.reference, amountCents: read.amountCents };
 }

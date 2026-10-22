@@ -136,9 +136,11 @@ async function confirmImpl(id: string, method?: string, reference?: string): Pro
   if (effective === 'sfu_rec' && fee.fee_type !== 'dues') {
     throw new ExpectedError(REVIEW_REFUSALS.bad_method!);
   }
-  const effectiveReference = sub.reference ?? typed;
-  if (!effectiveReference) throw new ExpectedError(REVIEW_REFUSALS.needs_reference!);
+  const effectiveReference = sub.reference ?? typed ?? null;
+  // A Form receipt may have none: some banks' screens show no reference (00298).
+  if (!effectiveReference && !sub.import_receipt_id) throw new ExpectedError(REVIEW_REFUSALS.needs_reference!);
   if (
+    effectiveReference &&
     effective === 'e_transfer' &&
     !ETRANSFER_REFERENCE_PATTERN.test(effectiveReference) &&
     !isHiddenEtransferReference(effectiveReference)
