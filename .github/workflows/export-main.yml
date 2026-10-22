@@ -8,12 +8,11 @@ name: Export public main
 # reason: ci.yml gates the image builds through `needs: verify`, and an export
 # failure there would block the release it was only describing.
 #
-# Two ways in:
+# Three ways in:
 #   push to deploy/docker-prod   export, check, verify, then publish to main
+#   push to release/**           a dry run, so a leak fails on the train and
+#                                not after the prod push
 #   workflow_dispatch            a dry run, unless dispatched on the prod branch
-#
-# Release trains do not run it on every push: dispatch it on a release branch
-# (or run the local dry run in .github/export/README.md) to check one early.
 #
 # Actions logs on a public repo are public. Nothing here prints file contents
 # or the personal patterns; the export reports `path:line: [category] rule id`.
@@ -21,6 +20,7 @@ on:
   push:
     branches:
       - deploy/docker-prod
+      - 'release/**'
   workflow_dispatch:
 
 permissions:

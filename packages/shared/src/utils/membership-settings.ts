@@ -6,7 +6,7 @@
 //   etransfer_email    the Interac e-Transfer recipient for club fees
 //   etransfer_payee_name
 //                      the name a member's bank shows that recipient as
-//                      ("Sfu Badminton"). A receipt read on the server
+//                      ("Riverside Smash"). A receipt read on the server
 //                      (00297) confirms itself only when it was sent to the
 //                      club: this name, or the address above.
 //

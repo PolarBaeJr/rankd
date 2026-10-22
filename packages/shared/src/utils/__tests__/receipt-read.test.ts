@@ -15,7 +15,7 @@ const ETRANSFER = [
   '',
   'Sent to',
   '',
-  'SFU Badminton Club',
+  'Riverside Smash Club',
   'Reference number',
   'CA1Q7r2Kp9Xb',
 ].join('\n');
@@ -23,9 +23,9 @@ const ETRANSFER = [
 const ALL_SET = [
   'e-Transfer sent',
   'All set!',
-  '$5.00 CAD has been sent to Sfu Badminton with Interac e-Transfer.',
+  '$5.00 CAD has been sent to Riverside Smash with Interac e-Transfer.',
   'From Chequing',
-  'To Sfu Badminton',
+  'To Riverside Smash',
   'Email club@example.org',
   'Autodeposit enabled',
   'Amount $5.00 CAD',
@@ -39,7 +39,7 @@ const REC_DESKTOP = [
   'Total Before Tax: $25.00',
   '',
   'Program Name: Badminton Club',
-  'Offering/Instance: Burnaby Fall 2026 - Casual',
+  'Offering/Instance: Main Campus Fall 2026 - Casual',
 ].join('\n');
 
 const REC_PHONE = ['O-601558', '', 'Receipt', '', 'Thank you for', 'your purchase.', '', 'Ana Lee | ID #: 301234567'].join(
@@ -51,7 +51,7 @@ const DUES: AutoConfirmContext = {
   amountCents: 2500,
   payerName: 'Ana Lee',
   clubEmail: 'club@example.org',
-  clubPayeeName: 'SFU Badminton Club',
+  clubPayeeName: 'Riverside Smash Club',
 };
 
 describe('parseReceiptText', () => {
@@ -62,7 +62,7 @@ describe('parseReceiptText', () => {
       amountCents: 1500,
       programName: null,
       payerName: null,
-      payeeName: 'SFU Badminton Club',
+      payeeName: 'Riverside Smash Club',
       payeeEmail: null,
     });
   });
@@ -72,7 +72,7 @@ describe('parseReceiptText', () => {
     expect(read.kind).toBe('e_transfer');
     expect(read.reference).toBeNull();
     expect(read.amountCents).toBe(500);
-    expect(read.payeeName).toBe('Sfu Badminton');
+    expect(read.payeeName).toBe('Riverside Smash');
     expect(read.payeeEmail).toBe('club@example.org');
   });
 
@@ -99,7 +99,7 @@ describe('parseReceiptText', () => {
   });
 
   it('keeps an unlabelled guess out of the reference', () => {
-    const read = parseReceiptText('Interac e-Transfer sent\nAmount $15.00 CAD\nTo SFU Badminton Club\nZQ7X2K9P');
+    const read = parseReceiptText('Interac e-Transfer sent\nAmount $15.00 CAD\nTo Riverside Smash Club\nZQ7X2K9P');
     expect(read.reference).toBeNull();
   });
 });
@@ -137,7 +137,7 @@ describe('decideAutoConfirm', () => {
   });
 
   it('matches the payee by the email when the name differs', () => {
-    const decision = decideAutoConfirm(parseReceiptText(ALL_SET.replace('Sfu Badminton', 'Treasurer')), {
+    const decision = decideAutoConfirm(parseReceiptText(ALL_SET.replace('Riverside Smash', 'Treasurer')), {
       ...etransfer,
       amountCents: 500,
     });
@@ -156,9 +156,9 @@ describe('decideAutoConfirm', () => {
     ['program_mismatch', REC_DESKTOP.replace('Badminton Club', 'Climbing Club'), DUES, ''],
     ['amount_unreadable', ETRANSFER.replace('$15.00', 'fifteen'), etransfer, ''],
     ['amount_mismatch', ETRANSFER, { ...etransfer, amountCents: 2500 }, 'Receipt shows $15.00, the fee is $25.00'],
-    ['payee_mismatch', ETRANSFER.replace('SFU Badminton Club', 'Someone Else'), etransfer, ''],
-    ['payee_unreadable', ETRANSFER.replace('Sent to\n\nSFU Badminton Club\n', ''), etransfer, ''],
-    ['no_reference', ALL_SET, { ...etransfer, amountCents: 500, clubPayeeName: 'Sfu Badminton' }, ''],
+    ['payee_mismatch', ETRANSFER.replace('Riverside Smash Club', 'Someone Else'), etransfer, ''],
+    ['payee_unreadable', ETRANSFER.replace('Sent to\n\nRiverside Smash Club\n', ''), etransfer, ''],
+    ['no_reference', ALL_SET, { ...etransfer, amountCents: 500, clubPayeeName: 'Riverside Smash' }, ''],
   ];
 
   it.each(holds)('holds %s', (flag, text, ctx, detail) => {
@@ -170,13 +170,13 @@ describe('decideAutoConfirm', () => {
   });
 
   it('holds a payee name that differs from the setting only by more than case and spacing', () => {
-    // Equality, not a fuzzy match: "SFU Badminton Club" is not "Sfu Badminton".
-    expect(decideAutoConfirm(parseReceiptText(ETRANSFER), { ...etransfer, clubPayeeName: 'Sfu Badminton', clubEmail: null })).toMatchObject({
+    // Equality, not a fuzzy match: "Riverside Smash Club" is not "Riverside Smash".
+    expect(decideAutoConfirm(parseReceiptText(ETRANSFER), { ...etransfer, clubPayeeName: 'Riverside Smash', clubEmail: null })).toMatchObject({
       confirm: false,
       flag: 'payee_mismatch',
     });
     expect(
-      decideAutoConfirm(parseReceiptText(ETRANSFER), { ...etransfer, clubPayeeName: '  sfu  badminton CLUB ', clubEmail: null }),
+      decideAutoConfirm(parseReceiptText(ETRANSFER), { ...etransfer, clubPayeeName: '  riverside  smash CLUB ', clubEmail: null }),
     ).toMatchObject({ confirm: true });
   });
 
