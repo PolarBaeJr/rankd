@@ -42,6 +42,9 @@ export * from './utils/club-socials';
 export * from './utils/membership-settings';
 export * from './utils/etransfer-reference';
 export * from './utils/receipt-method';
+export * from './utils/receipt-read';
+// ./utils/receipt-check is not here: it hashes with node:crypto. Server code
+// imports it deeply, as event-waiver is.
 export * from './utils/fee-reminders';
 export * from './utils/finance-categories';
 export * from './utils/finance-refs';

@@ -36,6 +36,12 @@ import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 import { finalizeEvent } from '../tournament-actions/finalize';
+import {
+  managedFormIdsFor,
+  scheduleManagedFormCreate,
+  scheduleManagedFormSync,
+  scheduleManagedFormSyncFor,
+} from '../managed-forms';
 import { setEventStatus } from '../tournament-actions/events';
 import {
   describeCompletionBlockers,
@@ -112,6 +118,9 @@ export async function createTournament(data: {
   });
 
   revalidatePath('/tournaments');
+  // The tournament's Google Form (00296), made after the response when the
+  // console has a form maker and the creator may edit the tournament.
+  scheduleManagedFormCreate('tournament', tournament.id as string, admin);
   return tournament.id as string;
   });
 }
@@ -399,6 +408,7 @@ async function updateTournamentStatusImpl(tournamentId: string, status: Tourname
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+  scheduleManagedFormSync('tournament', tournamentId);
 }
 
 // Public entry point. Next.js replaces anything thrown out of a Server Action
@@ -578,6 +588,7 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+  scheduleManagedFormSync('tournament', tournamentId);
 }
 
 /**
@@ -670,6 +681,7 @@ export async function suspendTournament(tournamentId: string, reason: string) {
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+  scheduleManagedFormSync('tournament', tournamentId);
 }
 
 export async function resumeTournament(tournamentId: string) {
@@ -697,6 +709,7 @@ export async function resumeTournament(tournamentId: string) {
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+  scheduleManagedFormSync('tournament', tournamentId);
 }
 
 async function archiveTournamentImpl(tournamentId: string) {
@@ -738,6 +751,7 @@ async function archiveTournamentImpl(tournamentId: string) {
   }, { tournamentId });
 
   revalidatePath('/tournaments');
+  scheduleManagedFormSync('tournament', tournamentId);
 }
 
 // Public entry point, for the same reason updateTournamentStatus has one.
@@ -816,6 +830,8 @@ export async function deleteTournament(tournamentId: string) {
   // tournament_participants, tournament_pairs and tournament_matches all
   // reference tournament_events(id) ON DELETE CASCADE. So removing the events
   // removes the entrants, the pairs and the draw with them.
+  // Read before the delete: the made Form's row loses its tournament with it (00296).
+  const managedForms = await managedFormIdsFor(adminClient, 'tournament', tournamentId);
   const { error: eventsError } = await adminClient
     .from('tournament_events')
     .delete()
@@ -835,6 +851,7 @@ export async function deleteTournament(tournamentId: string) {
     target_id: tournamentId,
     old_value: old,
   }, { tournamentId });
+  scheduleManagedFormSyncFor(managedForms);
 
   revalidatePath('/tournaments');
 }

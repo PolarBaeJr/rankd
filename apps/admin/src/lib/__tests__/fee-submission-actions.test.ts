@@ -17,6 +17,7 @@ const store = vi.hoisted(() => ({
   audits: [] as Row[],
   notified: [] as string[][],
   gate: [] as string[],
+  rpcAnswer: 'ok' as string,
 }));
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -74,7 +75,7 @@ vi.mock('../supabase-server', () => ({
       from: query,
       rpc: async (fn: string, args: Row) => {
         store.rpcs.push({ fn, args });
-        return { data: 'ok', error: null };
+        return { data: store.rpcAnswer, error: null };
       },
       storage: {
         from: () => ({
@@ -88,9 +89,8 @@ vi.mock('../supabase-server', () => ({
   },
 }));
 
-const { confirmFeeSubmission, rejectFeeSubmission, eraseFormReceiptScreenshot } = await import(
-  '../actions/fee-submissions'
-);
+const { confirmFeeSubmission, rejectFeeSubmission, eraseFormReceiptScreenshot, undoAutoConfirmedSubmission } =
+  await import('../actions/fee-submissions');
 
 const SUB = '00000000-0000-4000-8000-000000000001';
 const OTHER_SUB = '00000000-0000-4000-8000-000000000002';
@@ -104,6 +104,7 @@ beforeEach(() => {
   store.audits = [];
   store.notified = [];
   store.gate = [];
+  store.rpcAnswer = 'ok';
   store.db = {
     club_fees: [
       { id: 'fee-named', fee_type: 'tournament', tournament_id: 't-1', amount_cents: 2500 },
@@ -149,10 +150,10 @@ beforeEach(() => {
 const rowOf = (table: string, id: string) => store.db[table]!.find((row) => row.id === id)!;
 
 describe('confirming a form receipt', () => {
-  it('refuses with no reference typed', async () => {
+  it('confirms with no reference typed, as some bank screens show none (00298)', async () => {
     const result = await confirmFeeSubmission(SUB);
-    expect(result.ok).toBe(false);
-    expect(store.rpcs).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(store.rpcs[0]?.args).toMatchObject({ p_method: 'e_transfer', p_reference: null });
   });
 
   it("stores the exec's typed reference, normalised", async () => {
@@ -165,6 +166,12 @@ describe('confirming a form receipt', () => {
     const result = await confirmFeeSubmission(SUB, undefined, '12345');
     expect(result.ok).toBe(false);
     expect(store.rpcs).toEqual([]);
+  });
+
+  it('accepts an e-transfer number typed as the bank hides part of it (00297)', async () => {
+    const result = await confirmFeeSubmission(SUB, undefined, 'H99517225\u2026111525803');
+    expect(result.ok).toBe(true);
+    expect(store.rpcs[0]?.args).toMatchObject({ p_reference: 'H99517225...111525803' });
   });
 
   it("ignores a typed reference when the member's own was sent", async () => {
@@ -227,5 +234,40 @@ describe('erasing a form receipt screenshot', () => {
     const result = await eraseFormReceiptScreenshot('../../etc');
     expect(result.ok).toBe(false);
     expect(store.gate).toEqual([]);
+  });
+});
+
+describe('undoing an automatic confirmation (00297)', () => {
+  it('asks for both the settle and the mark-unpaid capability, and passes the exec and reason', async () => {
+    const result = await undoAutoConfirmedSubmission(MEMBER_SUB, '  No such payment reached the club ');
+    expect(result.ok).toBe(true);
+    expect(store.gate).toEqual(['fees.clubfees.markpaid.write', 'fees.clubfees.markunpaid.write']);
+    expect(store.rpcs).toEqual([
+      {
+        fn: 'undo_auto_confirmed_fee_submission',
+        args: { p_submission_id: MEMBER_SUB, p_actor: 'exec-1', p_reason: 'No such payment reached the club' },
+      },
+    ]);
+  });
+
+  it('asks for the tournament capability on an event fee', async () => {
+    await undoAutoConfirmedSubmission(SUB, 'Wrong person');
+    expect(store.gate).toEqual(['tournaments.fees.markpaid.write', 'tournaments.fees.markunpaid.write']);
+  });
+
+  it('refuses a reason under 3 characters before reading anything', async () => {
+    const result = await undoAutoConfirmedSubmission(MEMBER_SUB, ' x ');
+    expect(result.ok).toBe(false);
+    expect(store.gate).toEqual([]);
+    expect(store.rpcs).toEqual([]);
+  });
+
+  it("says why the database refused, in the console's words", async () => {
+    store.rpcAnswer = 'fee_changed';
+    const result = await undoAutoConfirmedSubmission(MEMBER_SUB, 'Wrong person');
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'That fee has been changed since it was confirmed. Mark it unpaid from the fee instead.',
+    });
   });
 });

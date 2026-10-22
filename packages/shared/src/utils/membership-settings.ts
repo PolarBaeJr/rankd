@@ -4,6 +4,11 @@
 //                      historical reasons; today it is an Campus Recreation page.
 //                      '' hides the button.
 //   etransfer_email    the Interac e-Transfer recipient for club fees
+//   etransfer_payee_name
+//                      the name a member's bank shows that recipient as
+//                      ("Riverside Smash"). A receipt read on the server
+//                      (00297) confirms itself only when it was sent to the
+//                      club: this name, or the address above.
 //
 // Edited on /accounts by the generic settings form. No migration seeds the
 // row: an absent row, or an absent field, reads as the default below. Every
@@ -19,13 +24,18 @@ export const DEFAULT_MEMBERSHIP_PURCHASE_URL =
   'https://recreation.example.org/membership';
 
 /** The row a first save starts from, and what an absent row stands for. */
-export function defaultMembershipPaymentsValue(): { sfss_purchase_url: string; etransfer_email: string } {
-  return { sfss_purchase_url: DEFAULT_MEMBERSHIP_PURCHASE_URL, etransfer_email: '' };
+export function defaultMembershipPaymentsValue(): {
+  sfss_purchase_url: string;
+  etransfer_email: string;
+  etransfer_payee_name: string;
+} {
+  return { sfss_purchase_url: DEFAULT_MEMBERSHIP_PURCHASE_URL, etransfer_email: '', etransfer_payee_name: '' };
 }
 
 export interface MembershipPaymentSettings {
   sfssPurchaseUrl: string | null;
   etransferEmail: string | null;
+  etransferPayeeName: string | null;
 }
 
 // Deliberately simple: one @, no whitespace, a dot in the domain. This is not
@@ -34,6 +44,8 @@ export interface MembershipPaymentSettings {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const EMAIL_MAX = 254;
+
+const PAYEE_NAME_MAX = 100;
 
 /** An https link, any host, no credentials. Returns it normalised, or null. */
 export function safePurchaseUrl(raw: unknown): string | null {
@@ -59,6 +71,14 @@ export function safeEtransferEmail(raw: unknown): string | null {
   return EMAIL.test(trimmed) ? trimmed : null;
 }
 
+/** A payee name, trimmed and with its spaces collapsed, or null. */
+export function safePayeeName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.replace(/\s+/g, ' ').trim();
+  if (!trimmed || trimmed.length > PAYEE_NAME_MAX) return null;
+  return trimmed;
+}
+
 /**
  * The stored row as what the site may show. Never throws. An absent field is
  * its default; a stored value that fails its rule is hidden, not defaulted.
@@ -73,5 +93,6 @@ export function parseMembershipPaymentSettings(value: unknown): MembershipPaymen
   return {
     sfssPurchaseUrl: safePurchaseUrl(field('sfss_purchase_url')),
     etransferEmail: safeEtransferEmail(field('etransfer_email')),
+    etransferPayeeName: safePayeeName(field('etransfer_payee_name')),
   };
 }

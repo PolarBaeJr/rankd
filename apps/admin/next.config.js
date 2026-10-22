@@ -15,6 +15,30 @@ const appVersion = require('../../package.json').version;
 
 const path = require('path');
 
+// THE SERVER'S RECEIPT OCR (00297, src/lib/receipt-ocr-server.ts). tesseract.js
+// runs its worker as a worker_threads script it names by path, and its core
+// is required by name inside that worker, so a bundler sees neither: kept
+// external, and traced in by hand for the routes that read a receipt. Missing
+// any of it, the build is clean and the read fails in the container only
+// (safely: the receipt is held for an exec as 'ocr_failed').
+// ALL of tesseract.js-core, not only its LSTM builds: tesseract.js 7 hands its
+// core picker a boolean where it compares an OEM number, so whatever the OEM it
+// loads the full core (worker-script/node/getCore.js).
+const TESSERACT_FILES = [
+  '../../node_modules/tesseract.js/**',
+  '../../node_modules/tesseract.js-core/**',
+  '../../node_modules/wasm-feature-detect/**',
+  '../../node_modules/zlibjs/**',
+  '../../node_modules/bmp-js/**',
+  '../../node_modules/is-url/**',
+  '../../node_modules/node-fetch/**',
+  '../../node_modules/whatwg-url/**',
+  '../../node_modules/tr46/**',
+  '../../node_modules/webidl-conversions/**',
+  '../../node_modules/regenerator-runtime/**',
+  '../../node_modules/idb-keyval/**',
+];
+
 const nextConfig = {
   output: 'standalone',
   // Pin the tracing root to the workspace. Left to infer it, Next walks up
@@ -22,6 +46,10 @@ const nextConfig = {
   // ~/package-lock.json is enough), which decides what gets copied into the
   // standalone bundle the container runs.
   outputFileTracingRoot: path.join(__dirname, '../..'),
+  outputFileTracingIncludes: {
+    '/api/cron/registration-form-poll': TESSERACT_FILES,
+  },
+  serverExternalPackages: ['tesseract.js', 'tesseract.js-core'],
   // Inlined at build time, so the standalone server needs nothing at runtime.
   env: { NEXT_PUBLIC_APP_VERSION: appVersion },
   // The console is served at example.com/admin — the player app's own

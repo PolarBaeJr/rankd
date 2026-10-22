@@ -9,6 +9,7 @@ import {
 } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
+import { RowLink } from '@/components/row-link';
 import { Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 
 // CLUB EVENTS THAT ARE NOT TOURNAMENTS (00244). Admin-only by level today: no
@@ -62,6 +63,15 @@ export default async function ClubEventsPage() {
   );
   const taken = new Map<string, number>();
   for (const row of signupRows ?? []) taken.set(row.event_id, (taken.get(row.event_id) ?? 0) + 1);
+  // The places as the sign-up RPC counts them (form guests in, no-shows out,
+  // 00294), so this list agrees with the event page. The row count stands if
+  // the RPC is unavailable.
+  await Promise.all(
+    ids.map(async (id) => {
+      const { data, error } = await adminClient.rpc('club_event_taken' as never, { p_event_id: id } as never);
+      if (!error && typeof data === 'number') taken.set(id, data);
+    }),
+  );
 
   return (
     <div>
@@ -84,7 +94,8 @@ export default async function ClubEventsPage() {
         <div data-tour="events-upcoming">
           <EventTable title="Upcoming" rows={upcoming} taken={taken} empty="Nothing is coming up." />
         </div>
-        <EventTable title="Past" rows={past} taken={taken} empty="No club events have happened yet." />
+        {/* Hidden until an event has happened: an empty Past card is noise. */}
+        {past.length > 0 && <EventTable title="Past" rows={past} taken={taken} empty="" />}
       </div>
     </div>
   );
@@ -140,7 +151,11 @@ function EventTable({
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id} className="border-b border-[var(--line)] last:border-0">
+                <RowLink
+                  key={row.id}
+                  href={`/events/${row.id}`}
+                  className="cursor-pointer border-b border-[var(--line)] transition-colors last:border-0 hover:bg-[var(--line)]"
+                >
                   <td className="px-5 py-3.5 text-sm text-[var(--ink)]">
                     <Link href={`/events/${row.id}`} className="hover:underline">
                       {row.title}
@@ -158,7 +173,7 @@ function EventTable({
                   <td className="px-5 py-3.5 text-right font-mono text-xs text-[var(--ink-2)]">
                     <Places row={row} taken={taken.get(row.id) ?? 0} />
                   </td>
-                </tr>
+                </RowLink>
               ))}
             </tbody>
           </table>

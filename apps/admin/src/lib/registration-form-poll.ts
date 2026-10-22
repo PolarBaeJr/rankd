@@ -16,6 +16,7 @@ import {
   answersByTitle,
   buildRegistrationPayload,
   formMappingSchema,
+  formWaiverFor,
   receiptFileFor,
   requiredQuestions,
 } from './registration-form-mapping';
@@ -200,12 +201,8 @@ async function pollForm(
     for (const response of responses) {
       const at = Date.parse(response.lastSubmittedTime);
       if (!Number.isNaN(at) && (newest === null || at > newest)) newest = at;
-      const built = buildRegistrationPayload(
-        mapping.data,
-        form.form_id,
-        response,
-        answersByTitle(questions, response.answers),
-      );
+      const byTitle = answersByTitle(questions, response.answers);
+      const built = buildRegistrationPayload(mapping.data, form.form_id, response, byTitle);
       if (!built.ok) {
         outcome.skipped += 1;
         continue;
@@ -230,6 +227,26 @@ async function pollForm(
       if (whole) {
         outcome.skipped += 1;
         continue;
+      }
+      // The Form's waiver (00295), replays included, so a mapping saved after
+      // the responses came in still signs them. A refusal (an old waiver
+      // version) is the mapping's to fix and signs nobody; a fault holds the
+      // watermark like a failed import.
+      const waiver = formWaiverFor(mapping.data, byTitle);
+      if (waiver) {
+        const signed = await admin.rpc('record_form_guest_waiver' as never, {
+          p_binding_id: form.id,
+          p_response_id: built.payload.response_id,
+          p_signature: waiver.signature,
+          p_media_consent: waiver.mediaConsent,
+          p_waiver_version: mapping.data.WAIVER_VERSION,
+        } as never);
+        if (signed.error) {
+          failed = true;
+          Sentry.captureException(new Error(`Form waiver record failed: ${signed.error.message}`), {
+            extra: { job: 'registration-form-poll', binding: form.id },
+          });
+        }
       }
       const file = receiptFileFor(mapping.data, questions, response.fileAnswers);
       if (file) {

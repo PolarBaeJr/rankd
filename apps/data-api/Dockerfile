@@ -8,7 +8,7 @@
 # and this service is one tsc run over a package with no runtime dependencies.
 
 # ---- Stage 1: install the workspace's dev dependencies ----
-FROM node:24-bookworm-slim AS deps-data-api
+FROM node:24.22.1-bookworm-slim AS deps-data-api
 WORKDIR /app
 
 # npm ci validates the whole lockfile against every workspace manifest, so all
@@ -36,7 +36,7 @@ RUN npm run build --workspace=data-api
 # No node_modules is copied because the service has NO runtime dependencies:
 # node:http, node:crypto and the global fetch. If one is ever added, this stage
 # must start copying the production tree, and forgetting to is a crash on boot.
-FROM node:24-bookworm-slim AS runner-data-api
+FROM node:24.22.1-bookworm-slim AS runner-data-api
 WORKDIR /app
 
 ENV NODE_ENV=production

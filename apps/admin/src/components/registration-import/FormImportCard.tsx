@@ -130,6 +130,7 @@ export function FormImportCard({
   migrationMissing,
   reader,
   events = [],
+  enteredListedElsewhere = false,
 }: {
   targetKind: ImportTargetKind;
   targetId: string;
@@ -148,6 +149,8 @@ export function FormImportCard({
   reader: { state: 'not_configured' } | { state: 'invalid' } | { state: 'ready'; clientEmail: string };
   /** A tournament's events, for the question mapping. */
   events?: MappableEvent[];
+  /** The page lists entered people itself (a club event's Signed up), so only the rest are listed here. */
+  enteredListedElsewhere?: boolean;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -172,7 +175,9 @@ export function FormImportCard({
     return <p className="text-sm text-[var(--text-muted)]">{migrationMissing}</p>;
   }
 
-  const live = entries.filter((e) => e.status !== 'superseded');
+  const live = entries.filter(
+    (e) => e.status !== 'superseded' && !(enteredListedElsewhere && e.status === 'entered'),
+  );
   const readerShown = bindings.some((b) => b.reader !== null);
 
   return (
@@ -386,7 +391,9 @@ export function FormImportCard({
                       : e.waiver?.signed
                         ? 'Signed'
                         : 'Not signed'}
-                    {e.invite && <div className="text-[var(--text-muted)]">{INVITE_LABEL[e.invite]}</div>}
+                    {e.invite && !e.waiver?.signed && (
+                      <div className="text-[var(--text-muted)]">{INVITE_LABEL[e.invite]}</div>
+                    )}
                   </td>
                   <td className="p-2 align-top text-xs">
                     {e.fee ? `${money(e.fee.amountCents)}${e.fee.paid ? ', paid' : ''}` : ''}

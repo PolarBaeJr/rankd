@@ -534,8 +534,18 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // (00248), so the FK scan finds reviewed_by alone; both are listed.
     playerColumns: ['player_id', 'reviewed_by'],
     disposition: 'project',
-    withheldColumns: ['reviewed_by', 'screenshot_path'],
-    why: 'Every payment receipt you sent the club (e-transfer or Campus Rec): the reference, how it was paid, when you sent it, and whether an exec confirmed or rejected it, with the reason they gave. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
+    // image_sha256 is a fingerprint of the screenshot, which the export already
+    // reduces to whether one is held; the rest is the read's own bookkeeping.
+    withheldColumns: [
+      'reviewed_by',
+      'screenshot_path',
+      'image_sha256',
+      'ocr_attempts',
+      'ocr_attempted_at',
+      'ocr_state',
+      'reference_key',
+    ],
+    why: 'Every payment receipt you sent the club (e-transfer or Campus Rec): the reference, how it was paid, when you sent it, and whether it was confirmed or rejected, with the reason given. A receipt the site read and confirmed automatically says so, and one it held for an exec says why. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
   },
   club_ledger: {
     playerColumns: ['paid_by', 'marked_by', 'reimbursed_by'],
@@ -911,6 +921,8 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   tournament_courts: 'The courts of a tournament (00273). A venue object, with no player reference.',
   registration_import_receipts:
     'The download state of a file a Google Form response uploaded (00288): a Drive file id, a storage path, a status and a retry count. It holds no player column; it is keyed to the response, which is one join from a member\'s own registration_imports row. A receipt it files reaches that member\'s export as their fee_submissions row, with screenshot_held; one that never filed (too large, the wrong type, no fee to match) is not in the export.',
+  managed_registration_forms:
+    'The Google Forms the console made for an event or tournament (00296): a Form id, its links and whether it takes responses. No player column; who made one is in the audit log.',
   match_games:
     'Game scores hanging off a match id, with no player reference. Exported as the context for the member\'s own matches.',
   tournament_events:

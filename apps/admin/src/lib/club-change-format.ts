@@ -181,6 +181,7 @@ export const CHANGE_PHRASES: Record<string, Record<string, Phrase>> = {
     sfss_purchase_url: { kind: 'link', label: 'Buy a membership link' },
     // Never the address itself: the line is published.
     etransfer_email: { kind: 'private', label: 'E-transfer email' },
+    etransfer_payee_name: { kind: 'private', label: 'E-transfer payee name' },
   },
 };
 

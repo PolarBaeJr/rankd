@@ -13,12 +13,18 @@
 //
 // One read answers two things: the reference, and whether the screenshot is an
 // e-transfer confirmation or an Campus Rec receipt (receipt-method.ts in shared).
+// An Campus Rec order number ("O-600857") is preferred over the other ids on the
+// same receipt. The server reads the screenshot again on its own (00297).
 //
 // It never throws: a failure, or a read that takes too long, answers nulls and
 // the member types the reference themselves. The worker is terminated either
 // way, since it holds the model in memory.
 
-import { extractEtransferReference, type ExtractedReference } from '@badminton/shared/src/utils/etransfer-reference';
+import {
+  extractEtransferReference,
+  extractSfuRecOrder,
+  type ExtractedReference,
+} from '@badminton/shared/src/utils/etransfer-reference';
 import { classifyReceiptText, type ReceiptMethod } from '@badminton/shared/src/utils/receipt-method';
 
 const OCR_TIMEOUT_MS = 30_000;
@@ -43,9 +49,13 @@ export async function readReceipt(file: Blob): Promise<ReceiptRead> {
       try {
         if (timedOut) return NOTHING;
         const { data } = await worker.recognize(file);
+        const method = classifyReceiptText(data.text);
+        // An Campus Rec receipt carries an order, an invoice and a registration
+        // number; the order is the one the club checks.
+        const order = method === 'sfu_rec' || method === null ? extractSfuRecOrder(data.text) : null;
         return {
-          reference: extractEtransferReference(data.text),
-          method: classifyReceiptText(data.text),
+          reference: order ? { value: order, confidence: 'anchored' as const } : extractEtransferReference(data.text),
+          method,
         };
       } finally {
         worker.terminate().catch(() => undefined);

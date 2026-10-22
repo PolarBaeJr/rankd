@@ -70,6 +70,11 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'fee_submission_rejected',
   'fee_submission_screenshot_erased',
   'fee_payment_reminders_sent',
+  // Written by auto_confirm_fee_submission and undo_auto_confirmed_fee_submission
+  // (00297) inside their own transactions, so they never reach the helpers
+  // here; the first with no actor, since nobody confirmed it.
+  'fee_submission_auto_confirmed',
+  'fee_submission_auto_confirm_undone',
 
   // Permissions.
   'player_permissions_changed',
@@ -179,6 +184,8 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // binding off is when it stopped. Same weight as minting and revoking.
   'registration_form_bound',
   'registration_form_unbound',
+  // A Form the console made for a target (00296): from then on it is read.
+  'registration_form_created',
   // A club event handed to a tournament event (00292): from then on entries
   // there sign people up, and bill them, here.
   'club_event_tournament_linked',

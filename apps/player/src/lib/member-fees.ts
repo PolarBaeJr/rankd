@@ -25,6 +25,8 @@ export type OwnFeeSubmission = {
   reference: string | null;
   reject_reason: string | null;
   submitted_at: string;
+  /** 'pending' while the server is still reading it (00297); NULL on a receipt filed before. */
+  ocr_state?: string | null;
 };
 
 export type OwnFeeRow = {
@@ -43,7 +45,7 @@ export type OwnFeeRow = {
 
 const OWN_FEE_COLUMNS =
   'id, fee_type, season_id, tournament_id, club_event_id, amount_cents, paid_at, method, reference, created_at, ' +
-  'fee_submissions!fee_submissions_club_fee_fkey(id, status, reference, reject_reason, submitted_at)';
+  'fee_submissions!fee_submissions_club_fee_fkey(id, status, reference, reject_reason, submitted_at, ocr_state)';
 
 /** Every fee row of this member's, newest first. Throws on a failed read. */
 export async function readOwnFees(supabase: SupabaseClient, playerId: string): Promise<OwnFeeRow[]> {

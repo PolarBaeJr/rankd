@@ -568,7 +568,8 @@ export const feeSubmissionSchema = z
   .object({
     feeId: z.string().uuid().nullable(),
     duesSeasonId: z.string().uuid().nullable(),
-    reference: z.string().trim().min(4, 'The reference is at least 4 characters').max(32, 'The reference is at most 32 characters'),
+    // 48: an e-transfer number a bank prints with part of it hidden (00297).
+    reference: z.string().trim().min(4, 'The reference is at least 4 characters').max(48, 'The reference is at most 48 characters'),
     screenshotPath: z.string().min(1, 'Attach a screenshot of your receipt').max(300),
     detectedMethod: z.enum(['e_transfer', 'sfu_rec']).nullable().optional(),
   })
