@@ -6,6 +6,8 @@ import {
   Badge,
   Button,
   Card,
+  DetailList,
+  DetailRow,
   Dialog,
   EmptyState,
   Input,
@@ -487,6 +489,13 @@ export function PermissionEditor({
    */
   const [batchReason, setBatchReason] = useState('');
   const [expanded, setExpanded] = useState<string[]>([]);
+  // SAVED ACCESS READS AS TEXT FIRST, and the tree opens on Edit. One flag for
+  // the whole editor rather than one per person: the queue spans people, so
+  // picking somebody else while editing keeps the editor open for them too.
+  const [editingTree, setEditingTree] = useState(false);
+  // The console-access box has its own Edit: a level is applied on its own, the
+  // moment Apply is pressed, and is no part of the queue above.
+  const [editingAccess, setEditingAccess] = useState(false);
   // The capability awaiting a typed confirmation, and what has been typed.
   const [dangerous, setDangerous] = useState<Capability | null>(null);
   const [typed, setTyped] = useState('');
@@ -625,6 +634,7 @@ export function PermissionEditor({
     setAccess(accessForLevel(person.level));
     setAccessReason('');
     setAccessBaseline('');
+    setEditingAccess(false);
     setCapabilitySearch('');
     setMode('all');
     setExpanded([]);
@@ -1033,6 +1043,7 @@ export function PermissionEditor({
       // they already gave for the very same act.
       setBatchReason('');
       setPickedId(null);
+      setEditingTree(false);
     });
   }
 
@@ -1064,6 +1075,29 @@ export function PermissionEditor({
     setPending({});
     // The reason described the queue, and the queue is gone.
     setBatchReason('');
+  }
+
+  /**
+   * Back to the read view, throwing the queue away. Confirmed whenever anything
+   * is queued, one person or several: Cancel is the button beside the tree, and
+   * a stray click there should not cost somebody the work in the save bar.
+   */
+  async function cancelEditing() {
+    if (entries.length > 0) {
+      const lone = entries.length === 1 ? entries[0] : undefined;
+      const ok = await confirm({
+        title: lone
+          ? `Discard your changes to ${lone.person.name}?`
+          : `Discard the changes to ${entries.length} people?`,
+        message: 'They have not been saved. Cancelling throws them away.',
+        confirmLabel: 'Discard changes',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setPending({});
+    setBatchReason('');
+    setEditingTree(false);
   }
 
   // LEAVING WITH A QUEUE STILL IN IT. Two cases and two mechanisms: the browser
@@ -1163,11 +1197,21 @@ export function PermissionEditor({
         // The same argument, and with more force: the job has been applied, so a
         // picker still naming it would invite applying it twice.
         setAccessBaseline('');
+        setEditingAccess(false);
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to change console access', 'error');
       }
     });
+  }
+
+  // Cancel on the console-access box: the controls go back to the stored level,
+  // and a reason typed for a change nobody made is not kept for the next one.
+  function cancelAccess() {
+    setAccess(accessForLevel(selectedLevel));
+    setAccessReason('');
+    setAccessBaseline('');
+    setEditingAccess(false);
   }
 
   const segments = (leaf: Leaf, state: CellState) => (
@@ -1406,6 +1450,45 @@ export function PermissionEditor({
     <p className="px-3 py-3 text-[11px] text-[var(--mute)]">{text}</p>
   );
 
+  // THE READ VIEW, from the row as it is STORED and never from the draft: it
+  // answers "what did we give them", and a queued edit is not that yet.
+  const storedBaselineName =
+    selected?.baselineId ? baselineNames.get(selected.baselineId) : undefined;
+  // `?.` and the fallback are for a stored capability this build no longer
+  // knows, the same rows the note on `pending` warns about.
+  const labelOf = (capability: string) =>
+    CAPABILITY_GATES[capability as Capability]?.label ?? capability;
+  const storedStart =
+    selectedLevel === null
+      ? null
+      : seededRole === null
+        ? LEVEL_ACCESS_LABELS[selectedLevel]
+        : (storedBaselineName ?? PERMISSION_ROLE_LABELS[seededRole]);
+  // WHAT DIFFERS FROM THE ROLE. A hand-picked set has no role underneath to
+  // differ from, so it is counted rather than listed: sixty labels in a row is
+  // not a summary.
+  const storedDiff =
+    selected === null || selectedLevel === null
+      ? null
+      : seededRole === null
+        ? 'Nothing stored, so they hold exactly what their level gives.'
+        : storedBaselineName
+          ? `Copied from the baseline: ${selected.grants.length} ${selected.grants.length === 1 ? 'capability' : 'capabilities'}. Editing the baseline changes them with it.`
+          : seededRole === 'custom'
+            ? `Hand-picked: ${selected.grants.length} ${selected.grants.length === 1 ? 'capability' : 'capabilities'} chosen one at a time.`
+            : selected.grants.length === 0 && selected.revokes.length === 0
+              ? 'Same as the role.'
+              : (
+                <span className="flex flex-col gap-1">
+                  {selected.grants.length > 0 && (
+                    <span>Added: {selected.grants.map(labelOf).join(' · ')}</span>
+                  )}
+                  {selected.revokes.length > 0 && (
+                    <span>Taken away: {selected.revokes.map(labelOf).join(' · ')}</span>
+                  )}
+                </span>
+              );
+
   // The one queued edit, when there is exactly one. What the save bar reads to
   // decide whether it is describing a person or a batch.
   const only = entries.length === 1 ? entries[0] : null;
@@ -1535,7 +1618,7 @@ export function PermissionEditor({
                   </div>
 
                   <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
-                    {selectedLevel !== null && composable && (
+                    {selectedLevel !== null && composable && editingTree && (
                       <div className="w-[200px]">
                         <Select
                           label="Starts from"
@@ -1562,10 +1645,23 @@ export function PermissionEditor({
                         </p>
                       </div>
                     )}
+                    {/* Cancel for whoever is picked, since the flag spans the
+                        queue; Edit only where there is a tree to open. */}
+                    {editingTree ? (
+                      <Button variant="secondary" size="sm" onClick={() => void cancelEditing()} disabled={saving}>
+                        Cancel
+                      </Button>
+                    ) : (
+                      selectedLevel !== null && composable && (
+                        <Button variant="secondary" size="sm" onClick={() => setEditingTree(true)}>
+                          Edit permissions
+                        </Button>
+                      )
+                    )}
                   </div>
                 </div>
 
-                {selectedLevel !== null && composable && (
+                {selectedLevel !== null && composable && editingTree && (
                   <p className="mt-3 text-[11px] leading-relaxed text-[var(--mute)]">
                     {role === null
                       ? `${LEVEL_ACCESS_LABELS[selectedLevel]} — ${BASELINE_PHRASE[selectedLevel]}. Nothing is stored; move anything below off Inherit and they become a hand-picked set starting from exactly this.`
@@ -1596,7 +1692,16 @@ export function PermissionEditor({
                     too — this only decides what is drawn. */}
                 {viewerCanGrantConsole && (
                   <div className="rounded-md border border-[var(--line)] p-3 space-y-3">
-                    <p className={cn(MICRO, 'text-[var(--mute)]')}>Console access</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className={cn(MICRO, 'text-[var(--mute)]')}>Console access</p>
+                      {!editingAccess
+                        && selected.id !== viewerId
+                        && !(selected.level === 'admin' && !viewerIsAdmin) && (
+                        <Button variant="secondary" size="sm" onClick={() => setEditingAccess(true)}>
+                          Edit
+                        </Button>
+                      )}
+                    </div>
                     {selected.id === viewerId ? (
                       <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
                         You cannot change your own — in either direction. Taking it away here loses you
@@ -1613,6 +1718,18 @@ export function PermissionEditor({
                       </p>
                     ) : (
                       <>
+                        {!editingAccess ? (
+                          <DetailList>
+                            <DetailRow
+                              label="Level"
+                              value={selectedLevel ? LEVEL_LABELS[selectedLevel] : 'No console access'}
+                              mono={false}
+                            />
+                            {storedBaselineName && (
+                              <DetailRow label="Baseline" value={storedBaselineName} mono={false} />
+                            )}
+                          </DetailList>
+                        ) : (
                         <Select
                           label="Level"
                           // ADMIN IS OFFERED TO ADMINS ONLY. Filtered rather
@@ -1629,6 +1746,7 @@ export function PermissionEditor({
                           onChange={(e) => setAccess(e.target.value as ExecRole)}
                           className="max-w-sm"
                         />
+                        )}
                         {selectedLevel !== null && !selected.canSignIn && (
                           <p className="text-[11px] text-[var(--red)]">
                             They hold this level but cannot sign in — banned, suspended, awaiting
@@ -1636,7 +1754,7 @@ export function PermissionEditor({
                             does.
                           </p>
                         )}
-                        {access !== accessForLevel(selected.level) && (
+                        {editingAccess && access !== accessForLevel(selected.level) && (
                           <>
                             <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
                               {access === 'none'
@@ -1706,7 +1824,14 @@ export function PermissionEditor({
                               onChange={(e) => setAccessReason(e.target.value)}
                               placeholder="Why is this changing?"
                             />
-                            <div className="flex justify-end">
+                          </>
+                        )}
+                        {editingAccess && (
+                          <div className="flex justify-end gap-2">
+                            <Button variant="secondary" onClick={cancelAccess} disabled={savingAccess}>
+                              Cancel
+                            </Button>
+                            {access !== accessForLevel(selected.level) && (
                               <Button
                                 onClick={applyAccess}
                                 loading={savingAccess}
@@ -1720,8 +1845,8 @@ export function PermissionEditor({
                               >
                                 Apply console access
                               </Button>
-                            </div>
-                          </>
+                            )}
+                          </div>
                         )}
                       </>
                     )}
@@ -1785,7 +1910,14 @@ export function PermissionEditor({
                         are not the same question and only the second one is a
                         warning. See the note on `losing` above for why a trainer
                         needs it more sharply than an exec does. */}
-                    {composable && losing.length > 0 && (
+                    {!(composable && editingTree) && selectedLevel !== 'admin' && (
+                      <DetailList>
+                        <DetailRow label="Starts from" value={storedStart} mono={false} />
+                        <DetailRow label="Differs from the role" value={storedDiff} mono={false} wide />
+                      </DetailList>
+                    )}
+
+                    {composable && editingTree && losing.length > 0 && (
                       <div className="rounded-md border border-[var(--red-border)] bg-[var(--red-wash)] p-3">
                         <p className={cn(MICRO, 'text-[var(--red)]')}>
                           Saving takes away {losing.length}{' '}
@@ -1803,7 +1935,7 @@ export function PermissionEditor({
                         and deleting it now would be a silent future re-grant nobody
                         chose. Surfaced instead, with a one-click clear, so that "inert"
                         is a state somebody can see rather than one they discover. */}
-                    {composable && orphanRevokes.length > 0 && (
+                    {composable && editingTree && orphanRevokes.length > 0 && (
                       <div className="rounded-md border border-[var(--line)] p-3">
                         <p className={cn(MICRO, 'text-[var(--ink)]')}>
                           {orphanRevokes.length} revoke{orphanRevokes.length === 1 ? '' : 's'} the{' '}
@@ -1850,16 +1982,15 @@ export function PermissionEditor({
                 )}
               </div>
 
-              {/* THE TREE IS ALWAYS HERE, and that is what changed when trainers
-                  became composable. It used to be hidden for anybody on their
-                  level default, on the grounds that every cell would read "off"
-                  beside a panel saying 71 of 116 — two true statements that look
-                  like a contradiction. The contradiction was real; hiding the
-                  tree was the wrong end of it. Showing the level's own
-                  capabilities in their own state fixes the disagreement instead,
-                  and leaves the common case — which is everybody, on day one —
-                  looking like something you can edit. */}
-              {composable && (
+              {/* THE TREE OPENS ON EDIT. The club owner asked that every saved
+                  record in the console read as text first, with an Edit button
+                  that swaps in its controls, so the summary above is what a
+                  person is shown and the 116 segments wait behind "Edit
+                  permissions". It is still drawn for anybody composable,
+                  including somebody on their level default: the level's own
+                  capabilities show in their own state, so every cell reading
+                  "off" beside a panel saying 71 of 116 cannot come back. */}
+              {composable && editingTree && (
                 <>
                   {/* --console-header-h (globals.css) is the console header's height
                       (sidebar.tsx): one row since the nav became dropdowns. It was 120px
