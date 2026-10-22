@@ -216,6 +216,10 @@ export function RatingsForm({
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [active, setActive] = useState(RATINGS_SECTIONS[0]!.id);
+  // One Edit for the whole page, never one per row: the edits batch under one
+  // reason and one Save. Until it is pressed every setting reads as a figure.
+  const [editing, setEditing] = useState(false);
+  const writable = canWrite && editing;
   const { toast } = useToast();
 
   const byKey = useMemo(() => {
@@ -359,6 +363,7 @@ export function RatingsForm({
       await updatePlatformSettings(updates, reason);
       toast('Rating settings saved', 'success');
       discard();
+      setEditing(false);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to save settings', 'error');
     }
@@ -401,8 +406,26 @@ export function RatingsForm({
     );
   }
 
+  /** The saved value as text, for the read view: On/Off, or "Not set" for nothing. */
+  function readValue(key: string, field: string): string {
+    const meta = FIELD_META[key]?.[field];
+    const raw = byKey.get(key)?.value[field];
+    if (meta ? meta.type === 'boolean' : typeof raw === 'boolean') return raw === true ? 'On' : 'Off';
+    return raw == null || raw === '' ? 'Not set' : String(raw);
+  }
+
   function renderFieldRow(key: string, field: string) {
     const meta = FIELD_META[key]?.[field];
+    if (!writable) {
+      return (
+        <ReferenceRow
+          key={`${key}.${field}`}
+          name={meta?.label ?? `${key}.${field}`}
+          hint={meta?.hint}
+          value={readValue(key, field)}
+        />
+      );
+    }
     return (
       <SettingRow
         key={`${key}.${field}`}
@@ -425,6 +448,16 @@ export function RatingsForm({
             <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-[13px] text-[var(--mute)]">
               You can read these settings but not change them.
             </p>
+          )}
+          {canWrite && !editing && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+              <p className="text-[13px] text-[var(--mute)]">
+                Every change is logged with your name and a reason.
+              </p>
+              <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            </div>
           )}
 
           {sections.map((section) => (
@@ -465,16 +498,21 @@ export function RatingsForm({
                 const current = jsonEdits[key] ?? JSON.stringify(row.value, null, 2);
                 return (
                   <SettingRow key={key} name={key} edited={key in jsonEdits}>
-                    <Textarea
-                      value={current}
-                      disabled={!canWrite}
-                      aria-label={key}
-                      onChange={(e) =>
-                        setJsonEdits((prev) => ({ ...prev, [key]: e.target.value }))
-                      }
-                      rows={Math.min(Object.keys(row.value).length + 2, 8)}
-                      className="font-mono text-xs"
-                    />
+                    {!writable ? (
+                      <pre className="whitespace-pre-wrap break-words font-mono text-xs text-[var(--ink)]">
+                        {current}
+                      </pre>
+                    ) : (
+                      <Textarea
+                        value={current}
+                        aria-label={key}
+                        onChange={(e) =>
+                          setJsonEdits((prev) => ({ ...prev, [key]: e.target.value }))
+                        }
+                        rows={Math.min(Object.keys(row.value).length + 2, 8)}
+                        className="font-mono text-xs"
+                      />
+                    )}
                   </SettingRow>
                 );
               })}
@@ -485,7 +523,7 @@ export function RatingsForm({
         <div className="min-w-0 md:col-span-2 xl:col-span-1">{aside}</div>
       </div>
 
-      {canWrite && (
+      {writable && (
         // Bleeds to the shell's edges. The width has to pay for the bleed as
         // well as the margin, or the bar sits a gutter short on the right.
         <div className="sticky bottom-0 z-30 -mx-6 w-[calc(100%+3rem)] border-t border-[var(--line)] bg-[var(--surface-2)] px-6 py-4 lg:-mx-8 lg:w-[calc(100%+4rem)] lg:px-8">
@@ -509,10 +547,13 @@ export function RatingsForm({
             <Button
               variant="ghost"
               className={TOUCH}
-              disabled={!hasChanges && reason === ''}
-              onClick={discard}
+              disabled={saving}
+              onClick={() => {
+                discard();
+                setEditing(false);
+              }}
             >
-              Discard
+              Cancel
             </Button>
             {/* "Save and recalculate" was the design's label. Nothing in this
                 product recalculates a rating, so the button says what it does.

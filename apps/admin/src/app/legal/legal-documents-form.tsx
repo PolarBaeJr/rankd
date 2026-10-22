@@ -90,6 +90,9 @@ export function LegalConsole({
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  // The text reads as the live document until Edit is pressed. Leaving edit
+  // mode, by Cancel, a publish or another document, drops the draft.
+  const [editing, setEditing] = useState(false);
   const { toast } = useToast();
   const confirm = useConfirm();
 
@@ -110,7 +113,26 @@ export function LegalConsole({
   // guessing a number.
   const population = activeMemberCount === null ? 'EVERY ACTIVE MEMBER' : `ALL ${activeMemberCount} ACTIVE MEMBERS`;
 
-  function switchTo(key: string) {
+  function closeEditor() {
+    setEdits({});
+    setEditing(false);
+    // The reason was written for the edit. Left in the box it would be sent
+    // with a re-signature instead.
+    setReason('');
+  }
+
+  async function switchTo(key: string) {
+    if (key === selected!.document) return;
+    if (isEdited) {
+      const discard = await confirm({
+        title: `Discard your changes to ${label}?`,
+        message: 'They are in this browser only and are lost if you open another document.',
+        confirmLabel: 'Discard changes',
+        danger: true,
+      });
+      if (!discard) return;
+    }
+    closeEditor();
     setSelectedKey(key);
     // The reason describes the change being made to ONE document. Carrying it
     // across would attach one document's justification to another's audit row.
@@ -161,11 +183,7 @@ export function LegalConsole({
           : `${label} published — the version and existing signatures are unchanged`,
         'success'
       );
-      setEdits((prev) => {
-        const next = { ...prev };
-        delete next[selected!.document];
-        return next;
-      });
+      closeEditor();
       setReason('');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to publish document', 'error');
@@ -252,7 +270,7 @@ export function LegalConsole({
               <button
                 key={doc.document}
                 type="button"
-                onClick={() => switchTo(doc.document)}
+                onClick={() => void switchTo(doc.document)}
                 aria-current={isSelected ? 'true' : undefined}
                 className="block w-full border-t border-[var(--line)] px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)]"
                 style={{
@@ -286,21 +304,28 @@ export function LegalConsole({
               className="font-mono uppercase text-[var(--mute)]"
               style={{ fontSize: 10, letterSpacing: '.16em' }}
             >
-              {canEdit ? 'Edit' : 'Read'} · {label}
+              {editing ? 'Edit' : 'Read'} · {label}
             </span>
-            {/* Never a DRAFT badge: nothing here is a draft once saved, and
-                nothing is stored before it. The badge states the live version,
-                and turns warning-toned only while unsaved edits exist. */}
-            <Badge variant={isEdited ? 'warning' : 'neutral'} className="font-mono whitespace-nowrap">
-              {isEdited ? 'UNSAVED' : 'LIVE'} v{selected.version}
-            </Badge>
+            <div className="flex items-center gap-2">
+              {/* Never a DRAFT badge: nothing here is a draft once saved, and
+                  nothing is stored before it. The badge states the live version,
+                  and turns warning-toned only while unsaved edits exist. */}
+              <Badge variant={isEdited ? 'warning' : 'neutral'} className="font-mono whitespace-nowrap">
+                {isEdited ? 'UNSAVED' : 'LIVE'} v{selected.version}
+              </Badge>
+              {canEdit && !editing && (
+                <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+              )}
+            </div>
           </div>
 
           <p className="settings-row-hint mb-3">
             {DOC_DESCRIPTIONS[selected.document] || ''} Markdown: ## headings, - lists, **bold**.
           </p>
 
-          {canEdit ? (
+          {canEdit && editing ? (
             /* AutoGrowTextarea, not the plain UI Textarea: it sizes the box to
                the whole document on mount and on every keystroke, so the page
                scrolls rather than the editor. min-h is only a floor. */
@@ -314,7 +339,7 @@ export function LegalConsole({
               className="min-h-[320px] font-mono text-xs"
             />
           ) : (
-            /* Read-only for execs. A disabled Textarea would look like an editor
+            /* Read-only for execs, and for an admin until Edit. A disabled Textarea would look like an editor
                that is merely switched off; a pre block reads as the document it
                is. Same monospace so the two views match. */
             <pre className="whitespace-pre-wrap break-words rounded-lg border border-[var(--line)] bg-[var(--bg-elevated)] p-3 font-mono text-xs text-[var(--text-secondary)]">
@@ -322,7 +347,9 @@ export function LegalConsole({
             </pre>
           )}
 
-          {(canEdit || canRequireReacceptance) && (
+          {/* The reason box stays out of edit mode for the re-signature below:
+              an exec holds that alone, with no Edit to press. */}
+          {((canEdit && editing) || canRequireReacceptance) && (
             <div className="mt-5 border-t border-[var(--line)] pt-4">
               <Textarea
                 label={`Reason (required, ${MIN_REASON_LENGTH}+ characters)`}
@@ -332,22 +359,16 @@ export function LegalConsole({
                 placeholder="What changed and why. This is stored on the audit record for this change."
               />
 
-              {canEdit && (
+              {canEdit && editing && (
                 <>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
                       variant="ghost"
                       className="h-11"
-                      disabled={!isEdited || busy !== null}
-                      onClick={() =>
-                        setEdits((prev) => {
-                          const next = { ...prev };
-                          delete next[selected.document];
-                          return next;
-                        })
-                      }
+                      disabled={busy !== null}
+                      onClick={closeEditor}
                     >
-                      Discard changes
+                      Cancel
                     </Button>
                     <Button
                       variant="secondary"
@@ -386,7 +407,7 @@ export function LegalConsole({
                     className="mt-4 font-mono uppercase text-[var(--mute)]"
                     style={{ fontSize: 10, lineHeight: 1.7, letterSpacing: '.06em' }}
                   >
-                    Discard changes — drops your edits. Members see nothing either way.
+                    Cancel: drops your edits. Members see nothing either way.
                     <br />
                     Publish quietly — text changes, version stays v{selected.version}. Nobody
                     re-signs, every existing signature stands, and new members sign the new text

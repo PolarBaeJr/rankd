@@ -1,7 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select, DatePicker, Textarea } from '@badminton/ui';
+import {
+  Button,
+  Dialog,
+  Input,
+  Select,
+  DatePicker,
+  Textarea,
+  EditableSectionProvider,
+  EditableSectionContent,
+  EditableSectionToggle,
+  useEditableSection,
+} from '@badminton/ui';
 import { createSeason, setActiveSeason, endSeason, setSeasonHidden, updateSeasonFees, type SeasonEloPolicy } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -215,44 +226,54 @@ export function SeasonFeesPanel({
     );
   }
 
-  if (!canEdit) {
-    // WITHHELD, NOT EMPTY. The amounts are on the season row every holder of
-    // this page can already read; what an exec does not have is the write. Say
-    // that rather than rendering the panel blank or, worse, rendering the form
-    // and rejecting them at Save.
-    return (
-      <div className="px-5 pt-5 pb-5">
+  // WITHHELD, NOT EMPTY. The amounts are on the season row every holder of
+  // this page can already read; what an exec does not have is the write. Say
+  // that rather than rendering the panel blank or, worse, rendering the form
+  // and rejecting them at Save. An editor sees the same amounts, with Edit.
+  const read = (
+    <div className="px-5 pt-5 pb-5">
+      <div className="flex items-center justify-between gap-3">
         <PanelLabel label={`${season.name} · Fees`} />
-        <dl className="mt-3 space-y-2">
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-sm text-[var(--text-secondary)]">Competitive</dt>
-            <dd className="font-mono text-sm text-[var(--text-primary)]">
-              ${toDollars(season.competitive_fee_cents)}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-sm text-[var(--text-secondary)]">Recreational</dt>
-            <dd className="font-mono text-sm text-[var(--text-primary)]">
-              ${toDollars(season.recreational_fee_cents)}
-            </dd>
-          </div>
-        </dl>
+        {canEdit && <EditableSectionToggle />}
+      </div>
+      <dl className="mt-3 space-y-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-sm text-[var(--text-secondary)]">Competitive</dt>
+          <dd className="font-mono text-sm text-[var(--text-primary)]">
+            ${toDollars(season.competitive_fee_cents)}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-sm text-[var(--text-secondary)]">Recreational</dt>
+          <dd className="font-mono text-sm text-[var(--text-primary)]">
+            ${toDollars(season.recreational_fee_cents)}
+          </dd>
+        </div>
+      </dl>
+      {!canEdit && (
         <p className="mt-3 pt-4 border-t border-[var(--border)] text-xs text-[var(--text-muted)]">
           Changing what the club charges is not shown to you. An admin sets the
           fee for each season.
         </p>
-      </div>
-    );
-  }
+      )}
+    </div>
+  );
 
   // Keyed on the amounts, so a fee changed elsewhere (the row dialog, another
   // officer's tab) re-mounts the form rather than leaving the boxes holding the
   // values they had when this component first rendered.
   return (
-    <SeasonFeesForm
-      key={`${season.id}:${season.competitive_fee_cents}:${season.recreational_fee_cents}`}
-      season={season}
-    />
+    <EditableSectionProvider>
+      <EditableSectionContent
+        read={read}
+        form={
+          <SeasonFeesForm
+            key={`${season.id}:${season.competitive_fee_cents}:${season.recreational_fee_cents}`}
+            season={season}
+          />
+        }
+      />
+    </EditableSectionProvider>
   );
 }
 
@@ -262,13 +283,14 @@ function SeasonFeesForm({
   season: { id: string; name: string; competitive_fee_cents: number; recreational_fee_cents: number };
 }) {
   const form = useFeeForm(season.id, season.competitive_fee_cents, season.recreational_fee_cents);
+  const { close } = useEditableSection();
 
   return (
     <form
       className="px-5 pt-5 pb-5 space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
-        void form.save();
+        void form.save(close);
       }}
     >
       <PanelLabel label={`${season.name} · Fees`} />
@@ -280,17 +302,22 @@ function SeasonFeesForm({
         reason={form.reason}
         setReason={form.setReason}
       />
-      <Button
-        type="submit"
-        variant="secondary"
-        loading={form.loading}
-        // The primary red on this screen belongs to New season. A save that
-        // cannot run until a sentence is typed is the console's secondary.
-        disabled={!enoughReason(form.reason)}
-        className="w-full"
-      >
-        Save fees
-      </Button>
+      <div className="flex gap-2">
+        <Button type="button" variant="ghost" onClick={close} disabled={form.loading}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="secondary"
+          loading={form.loading}
+          // The primary red on this screen belongs to New season. A save that
+          // cannot run until a sentence is typed is the console's secondary.
+          disabled={!enoughReason(form.reason)}
+          className="flex-1"
+        >
+          Save fees
+        </Button>
+      </div>
     </form>
   );
 }
