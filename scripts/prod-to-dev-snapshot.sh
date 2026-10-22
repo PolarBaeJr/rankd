@@ -1229,6 +1229,15 @@ BEGIN
     UPDATE public.guest_waiver_invites
        SET email = 'invite.' || substr(md5(id::text), 1, 10) || '@staging.invalid', last_error = NULL;
   END IF;
+  -- THE FORMS THE CONSOLE MADE (00296). A copied row names a real Form on the
+  -- club account, and staging holds a form maker of its own, so its sync job
+  -- would rewrite, close or reopen the real Form. Each row loses its Form id
+  -- and links and is marked failed, so staging never acts on one.
+  IF to_regclass('public.managed_registration_forms') IS NOT NULL THEN
+    UPDATE public.managed_registration_forms
+       SET form_id = NULL, responder_url = NULL, edit_url = NULL,
+           state = 'failed', last_error = 'staging_copy', claimed_at = NULL;
+  END IF;
 
   -- Device records. Passkeys are scoped to the hostname they were enrolled on,
   -- so production's cannot work on staging regardless; push endpoints are

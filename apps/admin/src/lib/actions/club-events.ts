@@ -14,6 +14,12 @@ import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { runAction, type ActionResult } from '../action-result';
+import {
+  managedFormIdsFor,
+  scheduleManagedFormCreate,
+  scheduleManagedFormSync,
+  scheduleManagedFormSyncFor,
+} from '../managed-forms';
 
 // CLUB EVENTS THAT ARE NOT TOURNAMENTS (00244): the console's writes.
 //
@@ -72,6 +78,9 @@ async function createImpl(input: ClubEventInput): Promise<{ id: string }> {
 
   revalidatePath('/events');
   revalidatePath(`/events/${id}`);
+  // The event's Google Form (00296), made after the response when the console
+  // has a form maker and the creator may edit the event.
+  scheduleManagedFormCreate('club_event', id, actor);
   return { id };
 }
 
@@ -128,6 +137,7 @@ async function updateImpl(id: string, input: ClubEventInput): Promise<void> {
 
   revalidatePath('/events');
   revalidatePath(`/events/${id}`);
+  scheduleManagedFormSync('club_event', id);
 }
 
 export async function cancelClubEvent(id: string, reason: string): Promise<ActionResult> {
@@ -183,6 +193,7 @@ async function cancelImpl(id: string, reason: string): Promise<void> {
     body: why || null,
     metadata: { kind: 'club_event_cancelled', event_id: id },
   });
+  scheduleManagedFormSync('club_event', id);
 
   revalidatePath('/events');
   revalidatePath(`/events/${id}`);
@@ -202,6 +213,8 @@ async function deleteImpl(id: string): Promise<void> {
     throw new ExpectedError('People have signed up for this event. Cancel it instead so the people signed up are told.');
   }
 
+  // Read before the delete: the made Form's row loses its event with it (00296).
+  const managedForms = await managedFormIdsFor(adminClient, 'club_event', id);
   const { error } = await adminClient.from('club_events').delete().eq('id', id);
   // 23503: somebody signed up after the count above. The sign-ups FK is
   // RESTRICT (00244), so the database refused rather than dropping them.
@@ -222,6 +235,7 @@ async function deleteImpl(id: string): Promise<void> {
     },
     { eventId: id },
   );
+  scheduleManagedFormSyncFor(managedForms);
 
   revalidatePath('/events');
 }
@@ -262,6 +276,8 @@ async function removeSignupImpl(eventId: string, playerId: string): Promise<void
     },
     { eventId, playerId },
   );
+  // A place freed may reopen a full event's Form.
+  scheduleManagedFormSync('club_event', eventId);
 
   revalidatePath('/events');
   revalidatePath(`/events/${eventId}`);

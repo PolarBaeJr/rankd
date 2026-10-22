@@ -13,6 +13,7 @@ import {
   ExpectedError,
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
+import { scheduleManagedFormSync } from '../managed-forms';
 
 /**
  * Move the "default" flag onto one tier, restoring the old one if it fails.
@@ -140,6 +141,8 @@ export async function createFeeTier(input: FeeTierInput) {
   }, { tournamentId: input.tournament_id });
 
   revalidatePath(`/tournaments/${input.tournament_id}/fees`);
+  // The fee tiers are the payment text on the tournament's made Form (00296).
+  scheduleManagedFormSync('tournament', input.tournament_id);
 }
 
 export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
@@ -190,6 +193,7 @@ export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
   }, { tournamentId: old.tournament_id });
 
   revalidatePath(`/tournaments/${old.tournament_id}/fees`);
+  scheduleManagedFormSync('tournament', old.tournament_id);
 }
 
 export async function deleteFeeTier(id: string) {
@@ -215,6 +219,7 @@ export async function deleteFeeTier(id: string) {
   }, { tournamentId: old.tournament_id });
 
   revalidatePath(`/tournaments/${old.tournament_id}/fees`);
+  scheduleManagedFormSync('tournament', old.tournament_id);
 }
 
 export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {

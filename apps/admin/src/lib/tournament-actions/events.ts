@@ -5,6 +5,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { runAction, type ActionResult } from '../action-result';
+import { scheduleManagedFormSync } from '../managed-forms';
 import {
   CUSTOM_FORMAT_BOUNDS,
   ExpectedError,
@@ -384,6 +385,8 @@ async function createTournamentEventImpl(
   });
 
   revalidatePath(`/tournaments/${tournamentId}`);
+  // A new event is a new choice on the tournament's made Form (00296).
+  scheduleManagedFormSync('tournament', tournamentId);
   return data;
 }
 
@@ -657,6 +660,7 @@ async function updateTournamentEventImpl(
   if ('max_participants' in patch) await fillFromWaitlistAfterFree(adminClient, eventId, admin.id);
 
   revalidateEventPaths(event.tournament_id, eventId);
+  if ('max_participants' in patch) scheduleManagedFormSync('tournament', event.tournament_id);
 }
 
 // Public entry points. The format validation these two now carry is only
@@ -729,6 +733,7 @@ async function setEventWindowsImpl(
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
+  scheduleManagedFormSync('tournament', event.tournament_id);
 }
 
 export async function setEventWindows(
@@ -830,6 +835,7 @@ export async function deleteTournamentEvent(eventId: string) {
   });
 
   revalidatePath(`/tournaments/${event.tournament_id}`);
+  scheduleManagedFormSync('tournament', event.tournament_id);
 }
 
 // EVERY REFUSAL IN HERE IS A SENTENCE THE EXEC HAS TO READ, so this is an Impl
@@ -958,6 +964,7 @@ async function setEventStatusImpl(eventId: string, status: TournamentEventStatus
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
+  scheduleManagedFormSync('tournament', event.tournament_id);
 }
 
 export async function setEventStatus(
