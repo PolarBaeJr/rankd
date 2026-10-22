@@ -35,6 +35,8 @@ export function SubmissionActions({
   memberName,
   line,
   amount,
+  amountCents,
+  receiptAmountCents = null,
   reference,
   proofHref,
   method,
@@ -46,6 +48,10 @@ export function SubmissionActions({
   memberName: string;
   line: string;
   amount: string;
+  /** The fee's own amount; null when none is recorded. */
+  amountCents: number | null;
+  /** What the receipt shows, when the reader held it as amount_mismatch. */
+  receiptAmountCents?: number | null;
   /** Null for a form receipt: the exec types or reads it on confirm. */
   reference: string | null;
   /** Null when the screenshot was removed with a purged account, or erased. */
@@ -64,6 +70,10 @@ export function SubmissionActions({
   const [chosen, setChosen] = useState<ReceiptMethod | null>(null);
   const [typed, setTyped] = useState('');
   const [reading, setReading] = useState(false);
+  // What was paid, prefilled with what the receipt shows when the reader found
+  // it is not the fee (00300).
+  const prefill = receiptAmountCents ?? amountCents;
+  const [paidAmount, setPaidAmount] = useState(prefill != null ? (prefill / 100).toFixed(2) : '');
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
@@ -78,10 +88,20 @@ export function SubmissionActions({
   // A 4 or 5 character number cannot be an e-transfer reference (00253).
   const shortReference = SFU_REC_REFERENCE_PATTERN.test(shownReference) && !ETRANSFER_REFERENCE_PATTERN.test(shownReference);
   const effectiveMethod = method ?? chosen;
+  const paidDollars = parseFloat(paidAmount);
+  const paidCents = Math.round(paidDollars * 100);
+  const amountInvalid = paidAmount.trim() === '' || Number.isNaN(paidDollars) || paidDollars <= 0 || paidDollars > 10000;
+  const paidDifference = amountInvalid || amountCents == null ? 0 : paidCents - amountCents;
 
   function send(picked?: ReceiptMethod) {
     startTransition(async () => {
-      const result = await confirmFeeSubmission(submissionId, picked, reference ? undefined : shownReference || undefined);
+      const result = await confirmFeeSubmission(
+        submissionId,
+        picked,
+        reference ? undefined : shownReference || undefined,
+        // Sent only when it is not the fee's, so an ordinary approval is unchanged.
+        paidCents !== amountCents ? paidCents : undefined,
+      );
       if (!result.ok) {
         toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
         return;
@@ -143,6 +163,7 @@ export function SubmissionActions({
   const typedOk = reference !== null || !shownReference ? true : referenceReady;
   const approveDisabled =
     !effectiveMethod ||
+    amountInvalid ||
     !typedOk ||
     (!reference && !shownReference && !fromForm) ||
     (effectiveMethod === 'e_transfer' && shortReference) ||
@@ -158,7 +179,15 @@ export function SubmissionActions({
           Erase screenshot
         </Button>
       )}
-      <Button variant="ghost" size="sm" onClick={() => setReviewing(true)} disabled={isPending}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          setPaidAmount(prefill != null ? (prefill / 100).toFixed(2) : '');
+          setReviewing(true);
+        }}
+        disabled={isPending}
+      >
         Review
       </Button>
       <Dialog open={reviewing} onClose={close} title={`Review: ${memberName}`} size="wide">
@@ -260,6 +289,23 @@ export function SubmissionActions({
                   {shownReference} is too short for an e-transfer reference, so this can only be an SFU Rec receipt.
                 </p>
               )}
+              <div>
+                <Input
+                  label="Amount paid $"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  max="10000"
+                  value={paidAmount}
+                  onChange={(e) => setPaidAmount(e.target.value)}
+                  placeholder="e.g. 15.00"
+                />
+                {paidDifference !== 0 && (
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    ${(Math.abs(paidDifference) / 100).toFixed(2)} {paidDifference > 0 ? 'more' : 'less'} than the fee.
+                  </p>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Button variant="ghost" onClick={() => setRejecting(true)} disabled={isPending}>
                   Reject

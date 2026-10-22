@@ -94,6 +94,18 @@ export function receiptCheckNote(s: Pick<PendingSubmission, 'checking' | 'flag' 
   return s.flagDetail ? `${s.flagDetail}.` : RECEIPT_FLAG_SENTENCES[s.flag];
 }
 
+/**
+ * The amount on a receipt held as amount_mismatch, in cents, read off the
+ * detail the reader writes (decideAutoConfirm and auto_confirm_fee_submission:
+ * "Receipt shows $10.00, the fee is $5.00"); no column stores it. Null for any
+ * other flag or wording.
+ */
+export function readReceiptAmountCents(flag: ReceiptFlag | null, detail: string | null): number | null {
+  if (flag !== 'amount_mismatch' || !detail) return null;
+  const match = /^Receipt shows \$(\d+)\.(\d{2}),/.exec(detail);
+  return match ? Number(match[1]) * 100 + Number(match[2]) : null;
+}
+
 function receiptFlag(value: string | null): ReceiptFlag | null {
   return value && (RECEIPT_FLAGS as readonly string[]).includes(value) ? (value as ReceiptFlag) : null;
 }
@@ -127,6 +139,8 @@ export type PendingSubmission = {
   flag: ReceiptFlag | null;
   /** A sentence beside the flag, never a name: "Receipt shows $20.00, the fee is $25.00". */
   flagDetail: string | null;
+  /** The amount the receipt shows, when the server held it as amount_mismatch. */
+  receiptAmountCents: number | null;
   /** What the server read, when it read one. */
   ocrReference: string | null;
   /** When the server confirmed it by itself; set only on the 'autoConfirmed' list. */
@@ -296,6 +310,7 @@ export async function loadPendingSubmissions(
       checking: s.ocr_state === 'pending',
       flag: receiptFlag(s.ocr_flag),
       flagDetail: s.ocr_flag_detail,
+      receiptAmountCents: readReceiptAmountCents(receiptFlag(s.ocr_flag), s.ocr_flag_detail),
       ocrReference: s.ocr_reference,
       autoConfirmedAt: s.auto_confirmed_at,
     };

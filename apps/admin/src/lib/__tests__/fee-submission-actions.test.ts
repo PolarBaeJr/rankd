@@ -180,6 +180,51 @@ describe('confirming a form receipt', () => {
   });
 });
 
+describe('recording the amount paid on confirm (00300)', () => {
+  it('leaves the amount out of the call when none is given', async () => {
+    const result = await confirmFeeSubmission(MEMBER_SUB);
+    expect(result.ok).toBe(true);
+    expect(store.rpcs[0]?.args).not.toHaveProperty('p_amount_cents');
+    expect(store.audits[0]).toMatchObject({ new_value: expect.objectContaining({ amount_cents: 2000 }) });
+  });
+
+  it('passes the amount the exec gave, and audits it', async () => {
+    const result = await confirmFeeSubmission(SUB, undefined, undefined, 1000);
+    expect(result.ok).toBe(true);
+    expect(store.rpcs[0]?.args).toMatchObject({ p_submission_id: SUB, p_amount_cents: 1000 });
+    expect(store.audits[0]).toMatchObject({ new_value: expect.objectContaining({ amount_cents: 1000 }) });
+  });
+
+  it('accepts the most it allows, $10,000.00', async () => {
+    const result = await confirmFeeSubmission(MEMBER_SUB, undefined, undefined, 1_000_000);
+    expect(result.ok).toBe(true);
+    expect(store.rpcs[0]?.args).toMatchObject({ p_amount_cents: 1_000_000 });
+  });
+
+  it.each([
+    ['negative', -500],
+    ['zero', 0],
+    ['fractional cents', 12.5],
+    ['over $10,000.00', 1_000_001],
+    ['not a finite number', Number.POSITIVE_INFINITY],
+    ['a string', '500' as unknown as number],
+  ])('refuses an amount that is %s before reading anything', async (_label, amount) => {
+    const result = await confirmFeeSubmission(MEMBER_SUB, undefined, undefined, amount);
+    expect(result.ok).toBe(false);
+    expect(store.gate).toEqual([]);
+    expect(store.rpcs).toEqual([]);
+  });
+
+  it("says why the database refused an amount, in the console's words", async () => {
+    store.rpcAnswer = 'bad_amount';
+    const result = await confirmFeeSubmission(MEMBER_SUB, undefined, undefined, 1000);
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'The amount paid must be more than $0.00 and at most $10,000.00, in whole cents.',
+    });
+  });
+});
+
 describe('rejecting a form receipt', () => {
   it('notifies nobody when no member sent it', async () => {
     const result = await rejectFeeSubmission(SUB, 'Wrong amount');
