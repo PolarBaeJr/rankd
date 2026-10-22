@@ -44,6 +44,17 @@ export const formMappingSchema = z
     // so the hash both roads agree on is untouched. Empty: no receipt is read.
     // Defaulted so a mapping saved before it existed still parses.
     RECEIPT_QUESTION: title.default(''),
+    // The Form's waiver (00295). Console-only like the receipt: none of these
+    // enters the payload. WAIVER_QUESTION is the "I agree" question; empty
+    // reads no waiver. WAIVER_VERSION is the version the Form's waiver text
+    // carries, and a Form signs nobody unless it is the live one; saving a
+    // mapping with it empty stamps the live version.
+    WAIVER_QUESTION: title.default(''),
+    WAIVER_VERSION: z.string().trim().max(40).default(''),
+    SIGNATURE_QUESTION: title.default(''),
+    MEDIA_QUESTION: title.default(''),
+    // The choice of MEDIA_QUESTION that allows photos; any other answer is a no.
+    MEDIA_ALLOW_ANSWER: title.default(''),
   })
   .strict();
 
@@ -286,6 +297,24 @@ export function receiptFileFor(
   return found;
 }
 
+/** What a response said on the Form's waiver, or null when it did not agree (or the mapping reads no waiver). */
+export interface FormWaiverAnswer {
+  signature: string;
+  mediaConsent: boolean;
+}
+
+export function formWaiverFor(mapping: FormMapping, answers: Record<string, string[]>): FormWaiverAnswer | null {
+  if (!mapping.WAIVER_QUESTION) return null;
+  const agreed = single(answers[mapping.WAIVER_QUESTION]);
+  if (!agreed) return null;
+  const media = mapping.MEDIA_QUESTION ? single(answers[mapping.MEDIA_QUESTION]) : '';
+  return {
+    signature: mapping.SIGNATURE_QUESTION ? single(answers[mapping.SIGNATURE_QUESTION]) : '',
+    mediaConsent:
+      !!mapping.MEDIA_ALLOW_ANSWER && media.toLowerCase() === mapping.MEDIA_ALLOW_ANSWER.trim().toLowerCase(),
+  };
+}
+
 /** The questions a mapping needs to find on the form for any response to import. */
 export function requiredQuestions(mapping: FormMapping): string[] {
   return [mapping.EMAIL_QUESTION, mapping.NAME_QUESTION];
@@ -299,6 +328,12 @@ export const DEFAULT_NAME_QUESTION = 'Full name';
 export const DEFAULT_EVENT_QUESTION = 'Which events are you entering?';
 /** The Chaos Cards form's upload question. Offered for a NEW mapping only; a saved one keeps what it has. */
 export const DEFAULT_RECEIPT_QUESTION = 'E-transfer screenshot';
+/** The Chaos Cards form's waiver questions, offered the same way. */
+export const DEFAULT_WAIVER_QUESTION = 'I have read and agree to the participation waiver above.';
+export const DEFAULT_SIGNATURE_QUESTION = 'Signature: type your full name to sign the waiver';
+export const DEFAULT_MEDIA_QUESTION =
+  'May the club use photos or video of you from club activities on its website and social media?';
+export const DEFAULT_MEDIA_ALLOW_ANSWER = 'Allow';
 
 export function defaultPartnerQuestions(choice: string) {
   return {

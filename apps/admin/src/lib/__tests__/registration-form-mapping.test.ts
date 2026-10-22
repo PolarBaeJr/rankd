@@ -47,6 +47,11 @@ const TOURNAMENT_MAPPING: FormMapping = {
     },
   },
   RECEIPT_QUESTION: '',
+  WAIVER_QUESTION: '',
+  WAIVER_VERSION: '',
+  SIGNATURE_QUESTION: '',
+  MEDIA_QUESTION: '',
+  MEDIA_ALLOW_ANSWER: '',
 };
 
 const CLUB_MAPPING: FormMapping = {
@@ -57,6 +62,11 @@ const CLUB_MAPPING: FormMapping = {
   DEFAULT_EVENT_ID: CLUB,
   PARTNERS: {},
   RECEIPT_QUESTION: '',
+  WAIVER_QUESTION: '',
+  WAIVER_VERSION: '',
+  SIGNATURE_QUESTION: '',
+  MEDIA_QUESTION: '',
+  MEDIA_ALLOW_ANSWER: '',
 };
 
 /** What the card builds for a season's dues form (00290): no event, a screenshot. */
@@ -68,6 +78,11 @@ const SEASON_MAPPING: FormMapping = {
   DEFAULT_EVENT_ID: '',
   PARTNERS: {},
   RECEIPT_QUESTION: 'E-transfer screenshot',
+  WAIVER_QUESTION: '',
+  WAIVER_VERSION: '',
+  SIGNATURE_QUESTION: '',
+  MEDIA_QUESTION: '',
+  MEDIA_ALLOW_ANSWER: '',
 };
 
 /** A response as the two roads see it: titles with Apps Script values, and API answers by question id. */

@@ -386,7 +386,9 @@ export function FormImportCard({
                       : e.waiver?.signed
                         ? 'Signed'
                         : 'Not signed'}
-                    {e.invite && <div className="text-[var(--text-muted)]">{INVITE_LABEL[e.invite]}</div>}
+                    {e.invite && !e.waiver?.signed && (
+                      <div className="text-[var(--text-muted)]">{INVITE_LABEL[e.invite]}</div>
+                    )}
                   </td>
                   <td className="p-2 align-top text-xs">
                     {e.fee ? `${money(e.fee.amountCents)}${e.fee.paid ? ', paid' : ''}` : ''}
