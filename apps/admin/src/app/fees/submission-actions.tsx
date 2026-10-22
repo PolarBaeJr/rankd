@@ -9,7 +9,7 @@ import {
   normaliseReference,
   type ReceiptMethod,
 } from '@badminton/shared';
-import { Badge, Button, Dialog, Input, Textarea, useConfirm } from '@badminton/ui';
+import { Button, Dialog, Input, Textarea, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { withBase } from '@/lib/base-path';
 import {
@@ -147,30 +147,39 @@ export function SubmissionActions({
 
   return (
     <>
-      {proofHref ? (
-        <a
-          href={withBase(proofHref)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-[var(--color-accent)] font-medium px-2"
-        >
-          View screenshot
-        </a>
-      ) : (
-        <span className="text-xs text-[var(--text-muted)] px-2">No screenshot</span>
-      )}
-      {fromForm && <Badge variant="info">From the form</Badge>}
+      {/* One line: the screenshot (with Erase under it for a Form receipt,
+          whose file the club keeps), then the two decisions. Where a receipt
+          came from shows in the Paid by column, not here. */}
+      <div className="flex flex-col items-end px-2 leading-tight">
+        {proofHref ? (
+          <a
+            href={withBase(proofHref)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-[var(--color-accent)] font-medium"
+          >
+            View screenshot
+          </a>
+        ) : (
+          <span className="text-xs text-[var(--text-muted)]">No screenshot</span>
+        )}
+        {fromForm && proofHref && (
+          <button
+            type="button"
+            onClick={handleErase}
+            disabled={isPending}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
+          >
+            Erase screenshot
+          </button>
+        )}
+      </div>
       <Button variant="ghost" size="sm" onClick={handleConfirm} loading={isPending}>
         Confirm
       </Button>
       <Button variant="ghost" size="sm" onClick={() => setRejecting(true)} disabled={isPending}>
         Reject
       </Button>
-      {fromForm && proofHref && (
-        <Button variant="ghost" size="sm" onClick={handleErase} disabled={isPending}>
-          Erase screenshot
-        </Button>
-      )}
       <Dialog open={rejecting} onClose={() => setRejecting(false)} title={`Reject receipt: ${memberName}`}>
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">

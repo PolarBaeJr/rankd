@@ -111,7 +111,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
           value={<Atomic>{money(s.amountCents)}</Atomic>}
           badges={s.withdrawn ? <Badge variant="warning">Withdrawn</Badge> : undefined}
           fields={[
-            { label: 'Paid by', value: paidBy(s.method) },
+            { label: 'Paid by', value: s.fromForm ? `${paidBy(s.method)}, from the Google Form` : paidBy(s.method) },
             { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic> },
             { label: 'Sent', value: new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) },
           ]}
@@ -174,7 +174,10 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               <td className="px-4 py-3 text-right">
                 <Atomic className="font-mono text-[var(--text-primary)]">{money(s.amountCents)}</Atomic>
               </td>
-              <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{paidBy(s.method)}</td>
+              <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
+                {paidBy(s.method)}
+                {s.fromForm && <p className="text-xs text-[var(--text-muted)]">From the Google Form</p>}
+              </td>
               <td className="px-4 py-3">
                 <Atomic className="font-mono text-xs">{s.reference ?? 'None sent'}</Atomic>
               </td>
@@ -182,8 +185,7 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
                 {new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' })}
               </td>
               <td className="px-4 py-3">
-                {/* A form receipt carries five controls; they wrap rather than scroll the table. */}
-                <div className="flex flex-wrap items-center justify-end gap-y-1">
+                <div className="flex items-center justify-end">
                   <SubmissionActions
                     submissionId={s.id}
                     memberName={s.playerName}
