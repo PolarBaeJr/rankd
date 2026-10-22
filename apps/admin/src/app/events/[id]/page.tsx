@@ -13,9 +13,10 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { ClubEventControls, ClubEventForm, type ClubEventFormValues } from '../event-form';
 import { ClubEventSignupsTable, type ClubEventSignupRow } from '../signups-table';
-import { loadRegistrationImports } from '@/lib/registration-imports';
+import { loadManagedForm, loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
+import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
 import type { CheckInRow } from '@/components/checkin-list';
 
@@ -88,6 +89,9 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         guestWaiversOn: (await readFeatureFlags(adminClient)).guest_waivers === true,
       })
     : null;
+  // The Form the console made for this event (00296), behind the same gate.
+  const managedForm = formImports ? await loadManagedForm(adminClient, 'club_event', id) : null;
+  const boundByHand = (formImports?.bindings ?? []).some((b) => b.id !== managedForm?.row?.bindingId);
 
   // The service-role client, so the players embed is not narrowed by the
   // column grants members are held to.
@@ -328,6 +332,14 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             >
               Google Form
             </h2>
+            <ManagedFormPanel
+              view={managedForm}
+              targetKind="club_event"
+              targetId={event.id}
+              canCreate={canEdit && !cancelled && !boundByHand}
+              canEdit={canEdit}
+              className="mb-4"
+            />
             <FormImportCard
               targetKind="club_event"
               targetId={event.id}

@@ -12,9 +12,10 @@ import { TournamentStatusControls } from './tournament-status-controls';
 import { LiveTournament } from '../live-tournament';
 import { CourtsEditor } from './courts-editor';
 import { COURTS_MIGRATION_MISSING, readTournamentCourts, readUsedCourtLabels } from '@/lib/tournament-courts';
-import { loadRegistrationImports } from '@/lib/registration-imports';
+import { loadManagedForm, loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
+import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -76,6 +77,9 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           .in('tournament_event_id', events.map((ev) => ev.id))
       : { data: null };
   const linkedClubEvent = (linkedClubEvents ?? [])[0] as { id: string; title: string } | undefined;
+  // The Form the console made for this tournament (00296), behind the same gate.
+  const managedForm = formImports ? await loadManagedForm(supabase, 'tournament', id) : null;
+  const boundByHand = (formImports?.bindings ?? []).some((b) => b.id !== managedForm?.row?.bindingId);
 
   // Get participant counts per event (batch queries instead of N+1)
   const eventCounts: Record<string, number> = {};
@@ -326,6 +330,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             )}
           </h2>
         </div>
+        <ManagedFormPanel
+          view={managedForm}
+          targetKind="tournament"
+          targetId={id}
+          canCreate={canEditCourts && !linkedClubEvent && !boundByHand}
+          canEdit={canEditCourts}
+        />
         {linkedClubEvent && (formImports.bindings ?? []).length === 0 ? (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 text-sm text-[var(--text-muted)]">
             This tournament runs the club event{' '}
