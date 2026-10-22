@@ -46,7 +46,10 @@ async function readSmaller(
   for (const scale of SMALLER_SCALES) {
     const smaller = await sharp(Buffer.from(bytes)).resize(Math.max(64, Math.round(width * scale))).png().toBuffer();
     const { data } = await worker.recognize(smaller);
-    if (MONEY_SEEN.test(data.text)) return data.text;
+    // Only the lines with the amount: the rest of a shrunken read is worse
+    // than the full-size one, and a garbled second copy of the payee's
+    // address would make the address look ambiguous.
+    if (MONEY_SEEN.test(data.text)) return data.text.split('\n').filter((line) => MONEY_SEEN.test(line)).join('\n');
   }
   return null;
 }
