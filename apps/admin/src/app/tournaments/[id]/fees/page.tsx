@@ -161,6 +161,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
           memberName={playerName}
           line={`${tournament.name} entry`}
           amount={money(s.amountCents)}
+          amountCents={s.amountCents}
+          receiptAmountCents={s.receiptAmountCents}
           reference={s.reference}
           proofHref={s.hasScreenshot ? `/tournaments/${id}/fees/proof/${s.id}` : null}
           method={s.method}

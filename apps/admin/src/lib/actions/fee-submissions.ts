@@ -63,6 +63,7 @@ const REVIEW_REFUSALS: Record<string, string> = {
   not_pending: 'That receipt has already been reviewed.',
   already_paid: 'That fee is already settled. The receipt was left as it is.',
   no_amount: 'That fee has no amount recorded. Record one before confirming.',
+  bad_amount: 'The amount paid must be more than $0.00 and at most $10,000.00, in whole cents.',
   bad_reason: 'Give a reason of 3 to 500 characters.',
   needs_method: 'Say how this was paid before confirming.',
   bad_method: 'That is not how this fee can be paid. Only membership dues are sold on the SFU Rec website.',
@@ -112,12 +113,28 @@ function revalidate(fee: FeeRow) {
   if (fee.tournament_id) revalidatePath(`/tournaments/${fee.tournament_id}/fees`);
 }
 
-export async function confirmFeeSubmission(id: string, method?: string, reference?: string): Promise<ActionResult> {
-  return runAction(() => confirmImpl(id, method, reference));
+export async function confirmFeeSubmission(
+  id: string,
+  method?: string,
+  reference?: string,
+  amountCents?: number,
+): Promise<ActionResult> {
+  return runAction(() => confirmImpl(id, method, reference, amountCents));
 }
 
-async function confirmImpl(id: string, method?: string, reference?: string): Promise<void> {
+async function confirmImpl(id: string, method?: string, reference?: string, amountCents?: number): Promise<void> {
   const picked = parseOrThrow(z.enum(RECEIPT_METHODS).optional(), method);
+  // What the exec says was paid, when it is not the fee (00300). Omitted keeps
+  // the fee's own amount.
+  const paid = parseOrThrow(
+    z
+      .number()
+      .int(REVIEW_REFUSALS.bad_amount!)
+      .positive(REVIEW_REFUSALS.bad_amount!)
+      .max(1_000_000, REVIEW_REFUSALS.bad_amount!)
+      .optional(),
+    amountCents,
+  );
   const typed = parseOrThrow(
     z
       .string()
@@ -152,6 +169,8 @@ async function confirmImpl(id: string, method?: string, reference?: string): Pro
     p_actor: actor.id,
     p_method: effective,
     p_reference: sub.reference ? null : effectiveReference,
+    // Only when given, so an ordinary approval is the call it always was.
+    ...(paid !== undefined ? { p_amount_cents: paid } : {}),
   });
   if (error) throw new Error(`The receipt was not confirmed: ${error.message}`);
   if (data !== 'ok') throw new ExpectedError(REVIEW_REFUSALS[data as string] ?? 'The receipt was not confirmed.');
@@ -164,7 +183,7 @@ async function confirmImpl(id: string, method?: string, reference?: string): Pro
       target_type: 'club_fee',
       target_id: fee.id,
       old_value: { paid: false },
-      new_value: { paid: true, method: effective, fee_submission_id: sub.id, amount_cents: fee.amount_cents },
+      new_value: { paid: true, method: effective, fee_submission_id: sub.id, amount_cents: paid ?? fee.amount_cents },
       reason: `Receipt confirmed (${formatPaymentMethod(effective)})`,
     },
     { submissionId: sub.id },

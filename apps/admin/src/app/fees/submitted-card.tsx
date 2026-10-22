@@ -3,7 +3,7 @@ import { Badge, Card, EmptyState, ResponsiveTable, TableCard, Atomic } from '@ba
 import { createAdminClient } from '@/lib/supabase-server';
 import { loadPendingSubmissions, receiptCheckNote, type PendingSubmission } from '@/lib/fee-submissions';
 import { CardHeading } from './card-heading';
-import { AutoConfirmedActions, KeptScreenshotActions, SubmissionActions } from './submission-actions';
+import { KeptScreenshotActions, SubmissionActions } from './submission-actions';
 
 // PAYMENT RECEIPTS WAITING FOR AN EXEC (00248, 00253): dues and club events,
 // oldest first. "Paid by" is what the member's browser read off the receipt;
@@ -12,8 +12,8 @@ import { AutoConfirmedActions, KeptScreenshotActions, SubmissionActions } from '
 //
 // The server reads each new receipt itself (00297) and confirms the routine
 // ones. A row waiting here says "Checking..." while that read runs, or why it
-// was held. The ones it confirmed are listed under the waiting ones, each with
-// Undo, so an exec can still check them against the bank and SFU Rec.
+// was held. The ones it confirmed are not listed: the owner found the list
+// noise, and a confirmed fee is undone from the member's fee like any other.
 
 const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
 
@@ -30,15 +30,11 @@ const RECEIPT_GROUPS: { method: PendingSubmission['method']; title: string; sub:
 const paidBy = (method: string | null) =>
   method ? formatPaymentMethod(method) : <Badge variant="warning">Unclear</Badge>;
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString('en-CA', { timeZone: 'America/Vancouver', dateStyle: 'medium', timeStyle: 'short' });
-
 export async function SubmittedCard() {
   const admin = createAdminClient();
-  const [submissions, kept, auto] = await Promise.all([
+  const [submissions, kept] = await Promise.all([
     loadPendingSubmissions(admin, 'club'),
     loadPendingSubmissions(admin, 'club', 'keptFromForm'),
-    loadPendingSubmissions(admin, 'club', 'autoConfirmed'),
   ]);
 
   return (
@@ -66,50 +62,8 @@ export async function SubmittedCard() {
           );
         })
       )}
-      {auto.length > 0 && <AutoConfirmed auto={auto} />}
       {kept.length > 0 && <KeptScreenshots kept={kept} />}
     </Card>
-  );
-}
-
-// Receipts the server read and confirmed by itself (00297) in the last 60
-// days. The fee is paid; Undo puts the receipt back to waiting and the fee
-// back to unpaid, until somebody marks the fee another way.
-function AutoConfirmed({ auto }: { auto: PendingSubmission[] }) {
-  return (
-    <section className="border-t border-[var(--border)]">
-      <div className="px-4 pt-4 pb-2">
-        <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-          Auto-confirmed <span className="font-normal text-[var(--text-muted)]">({auto.length})</span>
-        </h3>
-        <p className="text-xs text-[var(--text-muted)]">
-          Read and confirmed by the site in the last 60 days. Check them against the club&apos;s bank and SFU Rec, and undo one that is wrong.
-        </p>
-      </div>
-      <ul className="divide-y divide-[var(--border)]">
-        {auto.map((s) => (
-          <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-[var(--text-primary)]">{s.playerName}</p>
-              <p className="text-xs text-[var(--text-muted)]">
-                {[s.line, money(s.amountCents), s.method ? formatPaymentMethod(s.method) : null, s.autoConfirmedAt ? when(s.autoConfirmedAt) : null]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-              <Atomic className="font-mono text-xs">{s.reference ?? 'No reference'}</Atomic>
-            </div>
-            <div className="flex items-center whitespace-nowrap">
-              <AutoConfirmedActions
-                submissionId={s.id}
-                memberName={s.playerName}
-                reference={s.reference}
-                proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
-              />
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }
 
@@ -173,6 +127,8 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
               memberName={s.playerName}
               line={s.line}
               amount={money(s.amountCents)}
+              amountCents={s.amountCents}
+              receiptAmountCents={s.receiptAmountCents}
               reference={s.reference}
               proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
               method={s.method}
@@ -244,6 +200,8 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
                     memberName={s.playerName}
                     line={s.line}
                     amount={money(s.amountCents)}
+                    amountCents={s.amountCents}
+                    receiptAmountCents={s.receiptAmountCents}
                     reference={s.reference}
                     proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
                     method={s.method}
