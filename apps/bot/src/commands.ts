@@ -866,19 +866,19 @@ export const COMMAND_DEFINITIONS = [
           })),
         ],
       },
+      // A tournament's times and location are not here: each tournament keeps
+      // its own (00304), set in the console or with /tourney details. The ping
+      // lead time was the one other option on that subcommand, so it moved.
       {
         type: 1,
-        name: 'tournament',
-        description: 'Times and location for the Discord events I create for tournaments',
+        name: 'ping_lead',
+        description: 'How long before a session the ping goes out',
         options: [
-          { type: 3, name: 'start_time', description: 'Start time, 24-hour HH:MM (default 09:00)', required: false },
-          { type: 3, name: 'end_time', description: 'End time, 24-hour HH:MM (default 18:00)', required: false },
-          { type: 3, name: 'location', description: 'Where tournaments are held', required: false },
           {
             type: 4, // INTEGER
             name: 'ping_lead_minutes',
-            description: 'How long before a session to ping (default 60)',
-            required: false,
+            description: 'Minutes before a session (default 60)',
+            required: true,
             min_value: 5,
             max_value: 1440,
           },
@@ -1328,6 +1328,25 @@ export const COMMAND_DEFINITIONS = [
         ],
       },
       {
+        // Modelled on /session edit: only the options filled in change, and a
+        // reason is required because it goes in the club audit log. A published
+        // event's Discord copy follows the row on the next sync.
+        type: 1,
+        name: 'edit',
+        description: 'Change an event. Only the options you fill in change.',
+        options: [
+          { type: 3, name: 'event', description: 'The event', required: true, autocomplete: true },
+          { type: 3, name: 'reason', description: 'Why (goes in the club audit log)', required: true, min_length: 5, max_length: 500 },
+          { type: 3, name: 'title', description: 'New title', required: false, max_length: 120 },
+          { type: 3, name: 'starts', description: 'New start, YYYY-MM-DD HH:MM (24-hour, club time)', required: false, min_length: 16, max_length: 16 },
+          { type: 3, name: 'ends', description: 'New end, YYYY-MM-DD HH:MM', required: false, min_length: 16, max_length: 16 },
+          { type: 3, name: 'location', description: 'New location', required: false, max_length: 200 },
+          { type: 4, name: 'capacity', description: 'New number of places', required: false, min_value: 1 },
+          { type: 10, name: 'cost', description: 'New cost in dollars, for display only', required: false, min_value: 0, max_value: 1000 },
+          { type: 3, name: 'description', description: 'New description members see', required: false, max_length: 1000 },
+        ],
+      },
+      {
         type: 1,
         name: 'publish',
         description: 'Publish a draft event',
@@ -1464,6 +1483,19 @@ export const COMMAND_DEFINITIONS = [
               { name: 'Archived', value: 'archived' },
             ],
           },
+        ],
+      },
+      {
+        // The tournament's own times and venue (00304), which its page and its
+        // Discord event both show. Only the options filled in change.
+        type: 1,
+        name: 'details',
+        description: "Set a tournament's daily times and location. Only the options you fill in change.",
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          { type: 3, name: 'start', description: 'Start time each day, 24-hour HH:MM', required: false, max_length: 5 },
+          { type: 3, name: 'end', description: 'End time each day, 24-hour HH:MM', required: false, max_length: 5 },
+          { type: 3, name: 'location', description: 'Where it is held', required: false, max_length: 200 },
         ],
       },
       {
@@ -4784,10 +4816,13 @@ async function handleConfig(
       // surprises people: tournaments are the exception. That relay makes
       // Discord scheduled events rather than posting messages, so it has no
       // channel to set and runs whether or not anything above is filled in.
+      // Their times and place are each tournament's own (00304), so they are
+      // pointed at rather than listed.
       footer: {
         text:
-          'Tournaments become Discord events, not messages — that relay runs with no channel. ' +
-          'Change any of these with /config channels, /config ping_roles, /config tournament, ' +
+          'Tournaments and club events become Discord events, not messages, so that relay runs with no channel. ' +
+          "A tournament's times and location are its own: set them on the website or with /tourney details. " +
+          'Change these with /config channels, /config ping_roles, /config ping_lead, ' +
           '/config server_log or /config automod.',
       },
     });
@@ -4859,7 +4894,7 @@ async function handleConfig(
     );
   }
 
-  if (sub === 'tournament') {
+  if (sub === 'ping_lead') {
     const write: Record<string, string> = {};
     for (const spec of VALUE_SETTINGS) {
       const raw = option(args, spec.option);
@@ -4869,34 +4904,11 @@ async function handleConfig(
       if (problem) return ephemeral(problem);
       write[spec.key] = value;
     }
-
     if (Object.keys(write).length === 0) {
       return ephemeral('Nothing to change. Run **/config show** to see what is set.');
     }
-
-    // A tournament event Discord will accept needs the end after the start, and
-    // checking it here rather than at send time is the difference between one
-    // wrong answer now and a relay that skips every tournament with
-    // `end_before_start` where nobody is reading.
-    const { settings } = await fetchDiscordSettings();
-    const start = write.tournament_event_start_time ?? settings.tournament_event_start_time ?? '09:00';
-    const end = write.tournament_event_end_time ?? settings.tournament_event_end_time ?? '18:00';
-    // COMPARED AS STRINGS, which is only correct because both went through a
-    // zero-padded HH:MM check -- CLOCK in settings.ts for what arrived here,
-    // and the app's identical one for what came back from it. '9:00' would
-    // sort after '18:00' and this would pass a backwards pair.
-    if (end <= start) {
-      return ephemeral(
-        `A tournament cannot end at **${end}** having started at **${start}** — ` +
-          'Discord rejects an event that ends before it begins, so nothing would be created.'
-      );
-    }
-
     await writeDiscordSettings(write, manager);
-    return ephemeral(
-      `Saved. Tournament events run **${start}–${end}**` +
-        `${settings.tournament_event_location || write.tournament_event_location ? '' : ' with no location set'}.`
-    );
+    return ephemeral(`Saved. Session pings go out **${write.session_ping_lead_minutes}** minutes ahead.`);
   }
 
   if (sub === 'clear') {
@@ -4910,7 +4922,7 @@ async function handleConfig(
   }
 
   return ephemeral(
-    'Use **/config show**, **/config channels**, **/config ping_roles**, **/config tournament** or **/config clear**.'
+    'Use **/config show**, **/config channels**, **/config ping_roles**, **/config ping_lead** or **/config clear**.'
   );
 }
 
@@ -7174,6 +7186,8 @@ export function handleEventAdmin(
       });
     case 'create':
       return eventCreate(chosen.options, callerId);
+    case 'edit':
+      return eventEdit(chosen.options, callerId, eventId as string);
     case 'publish':
       return consoleFinish(async () => {
         const current = await adminGet<{ events: ConsoleEvent[] }>(
@@ -7256,6 +7270,58 @@ function eventCreate(options: CommandOption[] | undefined, callerId: string): Bo
     return publish
       ? `Published: ${title}. Members can sign up now.`
       : `Saved as a draft: ${title}. Publish it with /event publish when it is ready.`;
+  });
+}
+
+function eventEdit(options: CommandOption[] | undefined, callerId: string, eventId: string): BotResponse {
+  const reason = stringOption(options, 'reason') ?? '';
+  if (reason.length < REASON_MIN) return consoleLine(`The reason needs at least ${REASON_MIN} characters.`);
+  const startsText = stringOption(options, 'starts');
+  const endsText = stringOption(options, 'ends');
+  const starts = startsText ? WALL_CLOCK_PATTERN.exec(startsText) : null;
+  const ends = endsText ? WALL_CLOCK_PATTERN.exec(endsText) : null;
+  if (startsText && !starts) return consoleLine('starts has to be YYYY-MM-DD HH:MM, in club time.');
+  if (endsText && !ends) return consoleLine('ends has to be YYYY-MM-DD HH:MM, in club time.');
+
+  const overlay: Record<string, unknown> = {};
+  for (const name of ['title', 'location', 'description']) {
+    const value = stringOption(options, name);
+    if (value) overlay[name] = value;
+  }
+  if (starts) overlay.starts_at = `${starts[1]}T${starts[2]}`;
+  if (ends) overlay.ends_at = `${ends[1]}T${ends[2]}`;
+  const capacity = option(options, 'capacity');
+  const cost = option(options, 'cost');
+  if (typeof capacity === 'number') overlay.capacity = capacity;
+  if (typeof cost === 'number') overlay.cost_dollars = cost;
+  if (Object.keys(overlay).length === 0) return consoleLine('Fill in at least one thing to change.');
+
+  return consoleFinish(async () => {
+    // The console hands back the event as the exact input updateClubEvent
+    // takes, publish flag included, so only what the exec typed is overlaid:
+    // nothing is blanked, and a published event stays published.
+    const current = await adminGet<{ events: ConsoleEvent[] }>(`/api/discord/reads/events?id=${eventId}`, callerId);
+    if (!current.ok) return consoleRefusalText(current);
+    const row = current.data.events[0];
+    if (!row) return 'That event no longer exists.';
+    if (row.status === 'cancelled') return 'A cancelled event cannot be edited.';
+    const input = { ...row.editInput, ...overlay };
+    // Said here because the console's own refusal arrives uncoded, and so as
+    // "something went wrong". Zero-padded wall-clock strings compare as text.
+    if (typeof input.ends_at === 'string' && input.ends_at <= String(input.starts_at ?? '')) {
+      return 'The end has to be after the start.';
+    }
+    const reply = await adminSend<void>(actionPath('editClubEvent'), {
+      discordUserId: callerId,
+      args: [eventId, input, reason],
+    });
+    if (!reply.ok) return consoleRefusalText(reply);
+    const title = String(input.title ?? row.label);
+    // The Discord copy is the club-events sync's job: it compares the row with
+    // what it last pushed on every tick, so editing the row is enough.
+    return row.status === 'published'
+      ? `Updated: ${title}. Its Discord event follows within a few minutes.`
+      : `Updated: ${title}. It is still a draft.`;
   });
 }
 
@@ -7527,6 +7593,8 @@ export function handleTourney(options: CommandOption[] | undefined, context: Int
       });
     case 'resume':
       return send('resumeTournament', [tournamentId], 'Play resumed.');
+    case 'details':
+      return tourneyDetails(chosen.options, callerId, tournamentId);
     case 'fee': {
       const playerId = stringOption(chosen.options, 'player');
       if (!playerId || !UUID_PATTERN.test(playerId)) return consoleLine('Pick a player from the list.');
@@ -7562,6 +7630,51 @@ export function handleTourney(options: CommandOption[] | undefined, context: Int
     default:
       return consoleLine('Unknown subcommand.');
   }
+}
+
+/** The times as a reply says them, matching describeTournamentTimes in the app. */
+function tourneyTimesText(starts: string | null, ends: string | null): string {
+  if (starts && ends) return `${starts} to ${ends}`;
+  if (starts) return `from ${starts}`;
+  if (ends) return `until ${ends}`;
+  return 'no times set';
+}
+
+/** /tourney details: the tournament's own times and venue (00304). */
+function tourneyDetails(options: CommandOption[] | undefined, callerId: string, tournamentId: string): BotResponse {
+  const startText = stringOption(options, 'start');
+  const endText = stringOption(options, 'end');
+  const location = stringOption(options, 'location')?.trim();
+  const start = startText ? clockTime(startText) : null;
+  const end = endText ? clockTime(endText) : null;
+  if ((startText && !start) || (endText && !end)) {
+    return consoleLine('Start and end have to be 24-hour times, like 09:00.');
+  }
+  // Only checkable here when both arrived. One alone is checked by the console
+  // against the time already saved.
+  if (start && end && end <= start) return consoleLine('The end time has to be after the start time.');
+  const input = {
+    ...(start ? { starts_time: start } : {}),
+    ...(end ? { ends_time: end } : {}),
+    ...(location ? { location } : {}),
+  };
+  if (Object.keys(input).length === 0) return consoleLine('Fill in at least one of start, end or location.');
+
+  return consoleFinish(async () => {
+    const reply = await adminSend<{
+      name: string;
+      starts_time: string | null;
+      ends_time: string | null;
+      location: string | null;
+    }>(actionPath('updateTournamentDetails'), { discordUserId: callerId, args: [tournamentId, input] });
+    if (!reply.ok) return consoleRefusalText(reply);
+    const saved = reply.data;
+    return (
+      `Updated: ${saved.name}, ${tourneyTimesText(saved.starts_time, saved.ends_time)}` +
+      `${saved.location ? ` at ${saved.location}` : ', no location set'}. ` +
+      'Its page shows this now, and its Discord event follows within a few minutes.'
+    ).slice(0, 1900);
+  });
 }
 
 function tourneyMatchCommand(

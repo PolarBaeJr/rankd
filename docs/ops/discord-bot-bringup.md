@@ -55,6 +55,14 @@ In the Discord Developer Portal:
    can be repaired without re-inviting: **Server Settings -> Roles -> (the bot's
    role) -> Manage Events**.
 
+   The event takes the tournament's own daily times and location (00304), set
+   on the tournament's form in the console or with `/tourney details`. A
+   tournament with none set falls back to the old club-wide
+   `tournament_event_*` keys in `discord_settings`, then to 09:00 to 18:00 with
+   no location. Those keys are no longer settable from `/config`; the lead time
+   of the session pings moved to `/config ping_lead`. A club event is edited
+   with `/event edit`, and its Discord event follows the row on the next sync.
+
 ## 2. Migrations
 
 Do these before `/setup` — it writes to tables that have to exist first. Run, in

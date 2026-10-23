@@ -80,33 +80,15 @@ export const CHANNEL_SETTINGS: readonly SettingSpec[] = [
 ] as const;
 
 /**
- * The three fields a Discord scheduled event needs that `tournaments` has not
- * got, plus the ping lead time.
+ * Settings that are a value rather than a channel or a role: today, only the
+ * session ping lead time.
  *
- * Not channels, and they behave differently from them in a way worth stating:
- * the tournament relay has NO channel setting at all, because it creates
- * scheduled events rather than posting messages. It is the one relay that runs
- * whether or not anything here is set — these only change what it sends.
+ * The tournament start time, end time and location used to live here, as
+ * club-wide values every tournament shared. Since 00304 each tournament keeps
+ * its own, set in the console or with /tourney details, so /config no longer
+ * offers them. The app still reads an old club-wide value as a fallback.
  */
 export const VALUE_SETTINGS: readonly SettingSpec[] = [
-  {
-    key: 'tournament_event_start_time',
-    option: 'start_time',
-    label: 'Tournament start time',
-    whenUnset: 'events start at 09:00',
-  },
-  {
-    key: 'tournament_event_end_time',
-    option: 'end_time',
-    label: 'Tournament end time',
-    whenUnset: 'events end at 18:00',
-  },
-  {
-    key: 'tournament_event_location',
-    option: 'location',
-    label: 'Tournament location',
-    whenUnset: 'events carry no location',
-  },
   {
     key: 'session_ping_lead_minutes',
     option: 'ping_lead_minutes',
@@ -158,26 +140,17 @@ export function specByOption(option: string): SettingSpec | undefined {
   return ALL_SETTINGS.find((s) => s.option === option);
 }
 
-const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
-
 /**
  * Check a value the member typed, BEFORE it is sent to the app.
  *
- * The app validates these again and is the authority — this exists so a typo
- * comes back as "07:00, not 7pm" instead of the app's 400, which reaches the
- * member as a generic "couldn't reach the club app". Channels are absent from
- * this list on purpose: Discord's own picker produces those, so there is
- * nothing for a human to get wrong.
+ * The app validates these again and is the authority. This exists so a bad
+ * value comes back as a sentence instead of the app's 400, which reaches the
+ * member as a generic "couldn't reach the club app". Channels and roles are
+ * absent on purpose: Discord's own picker produces those, so there is nothing
+ * for a human to get wrong.
  */
 export function validateValue(option: string, value: string): string | null {
   switch (option) {
-    case 'start_time':
-    case 'end_time':
-      return CLOCK.test(value) ? null : `**${value}** is not a time — use 24-hour HH:MM, like 09:00.`;
-    case 'location':
-      return value.length >= 1 && value.length <= 100
-        ? null
-        : 'The location needs to be between 1 and 100 characters.';
     case 'ping_lead_minutes': {
       const n = Number(value);
       // The floor tracks the cron schedule, not taste: the ping job runs every

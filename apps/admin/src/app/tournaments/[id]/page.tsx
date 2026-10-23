@@ -2,10 +2,10 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags, isDoublesEvent } from '@badminton/shared';
+import { formatDate, describeTournamentTimes, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags, isDoublesEvent } from '@badminton/shared';
 import type { TournamentEventFormat, TournamentEventType } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign, MapPin } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Clock, Zap, Crown, Plus, Swords, DollarSign, MapPin } from 'lucide-react';
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
@@ -45,6 +45,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
+  const tournamentTimes = describeTournamentTimes(tournament.starts_time, tournament.ends_time);
 
   // Fetch events with participant counts
   const { data: events } = await supabase
@@ -182,6 +183,21 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           sub={
             <span className="flex items-center gap-3">
               <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatDate(tournament.start_date)}</span>
+              {/* Its own times and venue (00304), when set. The Discord event
+                  falls back to 09:00 to 18:00, but the page says only what the
+                  tournament itself says. */}
+              {tournamentTimes && (
+                <>
+                  <span>&middot;</span>
+                  <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{tournamentTimes}</span>
+                </>
+              )}
+              {tournament.location && (
+                <>
+                  <span>&middot;</span>
+                  <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{tournament.location}</span>
+                </>
+              )}
               <span>&middot;</span>
               <span>&middot;</span>
               <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x default</span>
