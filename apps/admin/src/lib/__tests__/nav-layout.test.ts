@@ -71,16 +71,18 @@ describe('the console top bar layout', () => {
     expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events'] });
   });
 
-  // The same fourteen links nav-drift.test.ts pins for an unrestricted exec, now in
-  // menus. System holds only admin-only sections, so it is gone entirely.
+  // The same links nav-drift.test.ts pins for an unrestricted exec, now in
+  // menus. Since 2026-10-23 the floor reads everything outside the admin areas,
+  // so /events joins Events and System keeps only /club-changes.
   it('shows an unrestricted exec these menus', () => {
     const visible = visibleFor('exec', UNRESTRICTED);
     expect(shape(visible)).toEqual([
       '/dashboard',
       { play: ['/sessions', '/matches', '/seasons'] },
-      { events: ['/tournaments'] },
+      { events: ['/tournaments', '/events'] },
       { members: ['/players'] },
       { club: ['/announcements', '/fees', '/finances', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'] },
+      { system: ['/club-changes'] },
       '/settings',
     ]);
     expect(flattenEntries(visible).map((item) => item.href).sort()).toEqual(
@@ -101,12 +103,10 @@ describe('the console top bar layout', () => {
   // A narrowed exec. A role alone no longer narrows (the level's baseline is a
   // floor under it, see dashboard-landing.test.ts), so this is the Finance role
   // with every other section page revoked by hand: Club becomes a menu of one
-  // and every other group is gone.
+  // and every other group is gone. The revokes are every floor page but the
+  // Finances one, derived so a section the floor opens later is closed too.
   it('narrows a hand-revoked exec to the one menu they can still open', () => {
-    const revokes = [
-      'announcements.page', 'legal.page', 'matches.page', 'players.page',
-      'seasons.page', 'sessions.page', 'tournaments.page',
-    ];
+    const revokes = EXEC_BASELINE.filter((c) => c.endsWith('.page') && c !== 'fees.page');
     expect(shape(visibleFor('exec', resolvePermissions('exec', 'finance', [], revokes)))).toEqual([
       '/dashboard',
       { club: ['/fees', '/finances'] },
@@ -149,7 +149,8 @@ describe('the console top bar with a feature switched off', () => {
     expect(flattenEntries(visibleWith(off('tournaments'))).map((i) => i.href)).not.toContain('/tournaments');
   });
 
-  // /events is admin-only, so an exec never had it to lose.
+  // An exec reads /events by level since 2026-10-23, but holds no key, so the
+  // switch takes /events away and leaves Tournaments standing.
   it('leaves an exec their Events menu when club events are off', () => {
     expect(shape(visibleWith(off('events')))).toContainEqual({ events: ['/tournaments'] });
   });
@@ -182,7 +183,8 @@ describe('the console top bar with a feature switched off', () => {
   it('keeps exactly the feature whose key an exec was granted', () => {
     const granted = resolvePermissions('exec', 'custom', [...EXEC_BASELINE, 'page.access.tournaments'], []);
     const visible = shape(visibleWith(off('tournaments', 'sessions'), 'exec', granted));
-    expect(visible).toContainEqual({ events: ['/tournaments'] });
+    // Club events is still on, so /events stays beside the kept Tournaments.
+    expect(visible).toContainEqual({ events: ['/tournaments', '/events'] });
     expect(visible).toContainEqual({ play: ['/matches', '/seasons'] });
   });
 });

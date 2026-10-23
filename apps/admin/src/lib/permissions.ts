@@ -12,10 +12,11 @@
 //  - admin    role = 'admin'. Superuser BY LEVEL: permits() short-circuits
 //             before any set is consulted, so a capability added next year is
 //             automatically theirs.
-//  - exec     is_exec. EXEC_BASELINE — eight section pages and four reads, and
-//             NOT ONE WRITE. An officer with no permission_role can see the
-//             club's business and change none of it; the writes they used to
-//             hold by level are in EXEC_ASSIGNABLE and arrive by assignment.
+//  - exec     is_exec. EXEC_BASELINE: every read and page outside the admin
+//             areas (EXEC_READS, derived) and one write, filing an expense. An
+//             officer with no permission_role can see the club's business and
+//             change almost none of it; every other write arrives by a role
+//             or a grant.
 //  - trainer  is_trainer. TRAINER_BASELINE — reading the roster and writing
 //             varsity notes, and that is the whole level. See
 //             ./player-field-access.ts, where their writable field set is EMPTY.

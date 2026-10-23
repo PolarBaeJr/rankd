@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { openableSections } from '../../components/nav-sections';
-import { permits, resolvePermissions, UNRESTRICTED, type AccessLevel, type Capability } from '../permissions';
+import {
+  permits,
+  resolvePermissions,
+  EXEC_BASELINE,
+  UNRESTRICTED,
+  type AccessLevel,
+  type Capability,
+} from '../permissions';
 
 // WHO LANDS ON A BARE DASHBOARD, and what they are shown instead.
 //
@@ -57,11 +64,13 @@ const signpost = (level: AccessLevel, role: string | null, revokes: string[] = [
     .map((item) => item.href)
     .filter((href) => href !== '/dashboard');
 
-/** Every section page, which is how an admin closes a section that the floor opens. */
-const ALL_PAGES = [
-  'announcements.page', 'fees.page', 'legal.page', 'matches.page',
-  'players.page', 'seasons.page', 'sessions.page', 'tournaments.page',
-];
+/**
+ * Every section page the floor opens, which is how an admin closes a section.
+ * Derived from the floor since 2026-10-23, when it became every read and page
+ * outside the admin areas: a section added later is closed here with nothing to
+ * remember.
+ */
+const ALL_PAGES: string[] = EXEC_BASELINE.filter((capability) => capability.endsWith('.page'));
 
 describe('the narrowed dashboard', () => {
   // THE DEPLOY-DAY GUARANTEE for this page: nothing new renders for anybody who
@@ -141,17 +150,23 @@ describe('the narrowed dashboard', () => {
   });
 
   // THE SIGNPOST USED TO BE THE INTERESTING PART OF A ROLE and is now the same
-  // list for every one of them: the floor opens all eight sections, so which job
-  // somebody holds changes what they can DO there and not what they can reach.
-  // Pinned as one assertion across every role rather than three role-shaped ones
-  // that would each look like a decision about that role.
+  // list for every one of them: the floor opens every section outside the admin
+  // areas (since 2026-10-23 that includes /events and /club-changes), so which
+  // job somebody holds changes what they can DO there and not what they can
+  // reach. Pinned as one assertion across every role rather than three
+  // role-shaped ones that would each look like a decision about that role.
   it('opens every section for an officer, whichever role they hold', () => {
     const everything = [
-      '/matches', '/tournaments', '/sessions', '/announcements',
-      '/seasons', '/fees', '/finances', '/players', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent', '/settings',
+      '/matches', '/tournaments', '/events', '/sessions', '/announcements',
+      '/seasons', '/fees', '/finances', '/players', '/club-changes',
+      '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent', '/settings',
     ];
     for (const role of ['finance', 'external', 'tournaments', 'internal', 'custom', null]) {
       expect(signpost('exec', role), String(role)).toEqual(everything);
+      // And none of the admin areas, whichever role.
+      for (const href of ['/permissions', '/audit', '/ratings', '/accounts']) {
+        expect(signpost('exec', role), `${String(role)} ${href}`).not.toContain(href);
+      }
     }
   });
 

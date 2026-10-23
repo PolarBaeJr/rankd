@@ -47,7 +47,11 @@ describe('the exec tour steps', () => {
   it('gives an exec on the baseline only what the baseline opens', () => {
     const steps = stepsFor('exec', UNRESTRICTED);
     expect(effectiveCapabilities('exec', UNRESTRICTED)).toEqual(new Set(EXEC_BASELINE));
-    expect(ids(steps)).toEqual(['welcome', 'sessions', 'door', 'members', 'announcements', 'settings', 'done']);
+    // Club events reads by level since 2026-10-23, so its step shows; the steps
+    // that need a write or an admin area (approvals, feature switches) do not.
+    expect(ids(steps)).toEqual([
+      'welcome', 'sessions', 'door', 'members', 'club-events', 'announcements', 'settings', 'done',
+    ]);
     const body = (id: string) => steps.find((s) => s.id === id)!.body;
     // The baseline writes nothing in sessions or announcements, so neither
     // optional sentence is offered.
@@ -73,7 +77,9 @@ describe('the exec tour steps', () => {
 
   it('drops a step whose feature is off, unless its key is held', () => {
     const off = { ...ALL_FEATURES_ENABLED, sessions: false, announcements: false };
-    expect(ids(stepsFor('exec', UNRESTRICTED, off))).toEqual(['welcome', 'members', 'settings', 'done']);
+    expect(ids(stepsFor('exec', UNRESTRICTED, off))).toEqual([
+      'welcome', 'members', 'club-events', 'settings', 'done',
+    ]);
     // An admin holds every page.access key by level.
     expect(ids(stepsFor('admin', UNRESTRICTED, off))).toContain('sessions');
   });
