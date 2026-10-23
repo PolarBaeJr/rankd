@@ -270,6 +270,16 @@ describe('/event picker', () => {
     const answer = await handleEventAutocomplete(sub('publish', [{ name: 'event', value: 'pub', focused: true }]), CONTEXT);
     expect((answer.data as { choices: unknown[] }).choices).toEqual([{ name: 'Pub night', value: EVENT_ID }]);
   });
+  it('says why when the console refuses, instead of showing an empty list', async () => {
+    fetchSpy.mockResolvedValueOnce(json({ ok: false, refusal: 'passkey_required' }));
+    const answer = await handleEventAutocomplete(sub('signups', [{ name: 'event', value: '', focused: true }]), CONTEXT);
+    expect((answer.data as { choices: { name: string }[] }).choices).toEqual([
+      { name: "Add a console passkey in the console's Settings first", value: 'refused' },
+    ]);
+    fetchSpy.mockResolvedValueOnce(json({ ok: false, error: 'boom' }, 500));
+    const failed = await handleEventAutocomplete(sub('signups', [{ name: 'event', value: '', focused: true }]), CONTEXT);
+    expect((failed.data as { choices: unknown[] }).choices).toEqual([]);
+  });
 });
 
 describe('/event signups', () => {
