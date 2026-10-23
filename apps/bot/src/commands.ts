@@ -6930,6 +6930,23 @@ export function consoleRefusalText(reply: Exclude<ConsoleReply<unknown>, { ok: t
   return `Something went wrong running that in the console${ref}.`;
 }
 
+/** What a picker shows when the console refuses the caller: one choice that says why. */
+const PICKER_REFUSAL_TEXT: Record<'not_linked' | 'passkey_required', string> = {
+  not_linked: 'Run /link on your own account first',
+  passkey_required: "Add a console passkey in the console's Settings first",
+};
+
+/**
+ * An empty picker reads as "there is nothing", which is wrong when the console
+ * refused: the list is there, the caller just cannot see it yet. The reason is
+ * shown as the only choice; picking it gets "Pick ... from the list", since
+ * its value is no id. Other failures stay an empty list.
+ */
+export function pickerRefusal(reply: Exclude<ConsoleReply<unknown>, { ok: true }>): BotResponse {
+  const text = reply.refusal ? PICKER_REFUSAL_TEXT[reply.refusal] : null;
+  return { type: 8, data: { choices: text ? [{ name: text, value: 'refused' }] : [] } };
+}
+
 /** finish() for a console subcommand: never throws, always answers. */
 function consoleFinish(work: () => Promise<string>): BotResponse {
   return consoleFinishResponse(async () => consoleLine(await work()));
@@ -7571,7 +7588,7 @@ export async function handleSessionAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return {
         type: 8,
         data: {
@@ -7587,7 +7604,7 @@ export async function handleSessionAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return {
         type: 8,
         data: {
@@ -7620,7 +7637,7 @@ export async function handleEventAutocomplete(
       context.discordUserId,
       CONSOLE_PICKER_TIMEOUT_MS
     );
-    if (!reply.ok) return empty;
+    if (!reply.ok) return pickerRefusal(reply);
     return {
       type: 8,
       data: {
@@ -7905,7 +7922,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.tournaments.map((t) => ({ name: t.label, value: t.id })));
     }
     if (!UUID_PATTERN.test(tournamentId)) return empty;
@@ -7916,7 +7933,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.entries.map((e) => ({ name: e.label, value: e.value })));
     }
     if (focused?.name === 'match') {
@@ -7925,7 +7942,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.matches.map((m) => ({ name: m.label, value: m.id })));
     }
     if (focused?.name === 'player') {
@@ -7934,7 +7951,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.fees.map((f) => ({ name: f.label, value: f.playerId })));
     }
   } catch (error) {
