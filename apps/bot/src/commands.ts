@@ -665,7 +665,7 @@ export const COMMAND_DEFINITIONS = [
   },
   {
     name: 'setup',
-    description: 'Create and wire up the club roles in this server',
+    description: 'Set the bot up in this server, and the club roles in a club server',
     options: [
       {
         type: 7, // CHANNEL
@@ -676,6 +676,28 @@ export const COMMAND_DEFINITIONS = [
         // category channel would be accepted by Discord's picker and then fail
         // on the first message the bot tried to post.
         channel_types: [0, 5],
+      },
+      // THIS SERVER'S OWN (00302), in any server: the same as /config
+      // server_log and /config scam_guard, offered here so a first run sets
+      // everything at once.
+      {
+        type: 7,
+        name: 'server_log',
+        description: "Where this server's log posts: bans, joins, deleted messages (optional)",
+        required: false,
+        channel_types: [0, 5],
+      },
+      {
+        type: 5,
+        name: 'scam_guard',
+        description: 'Soft-ban accounts that spray the same post across channels (optional)',
+        required: false,
+      },
+      {
+        type: 5,
+        name: 'club',
+        description: "Connect this server to the club. Club execs only; the club's servers need not set it",
+        required: false,
       },
     ],
     // MANAGE_GUILD (1 << 5). Discord enforces this server-side, so the command
@@ -3985,7 +4007,7 @@ function managerRefusalText(refusal: ManagerRefusal): string {
   if (refusal === 'not_permitted') {
     return 'This changes the club\'s bot setup. Only club execs who can change the club\'s settings can run it.';
   }
-  return 'This server is not connected to the club, so its settings cannot be changed from here. A club exec connects a server with /setup.';
+  return 'This server is not connected to the club, so its settings cannot be changed from here. A club exec connects a server with /setup club:True.';
 }
 
 export async function handleSetup(
@@ -3997,6 +4019,14 @@ export async function handleSetup(
   // guild. Checked anyway: the alternative is a confusing crash if that ever
   // changes, and the whole command is meaningless without one.
   if (!guildId) return ephemeral('Run this in the server you want to set up.');
+
+  // TWO SETUPS. A server the club has connected (or one an exec is connecting
+  // with club:True) gets the club's: its roles, the audit log, the relays. Any
+  // other server gets its own settings and a checklist, and never touches the
+  // club's records, so it needs no club account.
+  if (!(await isClubServer(guildId)) && option(options, 'club') !== true) {
+    return handleServerSetup(options, context);
+  }
 
   // BEFORE ANY ROLE IS MADE. Discord admin rights in this server say nothing
   // about the club; the club's records decide (managerRefusalText).
@@ -4162,11 +4192,143 @@ export async function handleSetup(
       'Discord will not let me assign a role positioned above my own.'
   );
 
+  // MORE FOR A CLUB SERVER: this server's own settings, and a checklist of
+  // the club's relays, so one run shows everything still to do.
+  // After the roles, and never fatal to them: they are already made and saved.
+  const serverLines = await applyServerOptions(api, options, manager).catch((error) => {
+    console.error('[bot] setup could not apply the server settings:', error);
+    return ["I could not save or read this server's settings. Use **/config server_log** and **/config scam_guard**."];
+  });
+  lines.push('', '__This server__', ...serverLines);
+  lines.push(...(await permissionLines(api, guildId, true)));
+  lines.push('', '__Club relays__', ...(await clubChecklist()));
+
   return reply({
     title: 'Club roles configured',
-    description: lines.join('\n'),
+    description: clip4096(lines.join('\n')),
     color: failed.length || plan.ambiguous.length || plan.unusable.length ? 0xf1c40f : 0x2ecc71,
   });
+}
+
+/** An embed description caps at 4096 characters. */
+function clip4096(text: string): string {
+  return text.length > 4096 ? `${text.slice(0, 4093)}...` : text;
+}
+
+/**
+ * /setup's server_log and scam_guard options, applied for this server, then
+ * where each stands. The caller has already passed whatever check this server
+ * needs; the app checks again.
+ */
+async function applyServerOptions(
+  api: DiscordApi,
+  options: CommandOption[] | undefined,
+  caller: { discordUserId: string; guildId: string }
+): Promise<string[]> {
+  const lines: string[] = [];
+  const change: { serverLogChannelId?: string; scamGuard?: boolean } = {};
+  const logChannel = option(options, 'server_log');
+  if (typeof logChannel === 'string' && logChannel) {
+    // Saved only once a post there works, as /config server_log does.
+    if (await proveCanPost(api, logChannel, "This server's log")) change.serverLogChannelId = logChannel;
+    else lines.push(`I could not post in <#${logChannel}>, so the server log was left as it was. Let me see and post there.`);
+  }
+  const guard = option(options, 'scam_guard');
+  if (typeof guard === 'boolean') change.scamGuard = guard;
+  if (Object.keys(change).length > 0) await writeServerSettings(caller, change);
+  lines.push(await serverSettingsText(caller.guildId));
+  return lines;
+}
+
+const PERMISSION_NEEDS: { bit: bigint; name: string; why: string; clubOnly?: boolean }[] = [
+  { bit: 1n << 10n, name: 'View Channels', why: 'I cannot see anything without it' },
+  { bit: 1n << 11n, name: 'Send Messages', why: 'replies and logs' },
+  { bit: 1n << 14n, name: 'Embed Links', why: 'every log entry is an embed' },
+  { bit: 1n << 7n, name: 'View Audit Log', why: 'the server log names who banned, kicked or changed roles' },
+  { bit: 1n << 2n, name: 'Ban Members', why: 'the scam guard and /softban' },
+  { bit: 1n << 28n, name: 'Manage Roles', why: 'role pickers, and the club roles' },
+  { bit: 1n << 33n, name: 'Manage Events', why: 'tournaments become Discord events', clubOnly: true },
+];
+
+/** What the bot is missing here, and what each missing one stops. */
+async function permissionLines(api: DiscordApi, guildId: string, club: boolean): Promise<string[]> {
+  let permissions: bigint;
+  try {
+    permissions = await api.getOwnPermissions(guildId);
+  } catch (error) {
+    console.error('[bot] setup could not read its own permissions:', error);
+    return ['I could not read my own permissions here, so check them by hand.'];
+  }
+  if (permissions & (1n << 3n)) return ['**My permissions**: Administrator, so nothing is missing.'];
+  const missing = PERMISSION_NEEDS.filter((need) => (club || !need.clubOnly) && !(permissions & need.bit));
+  if (missing.length === 0) return ['**My permissions**: nothing missing.'];
+  return [
+    '**I am missing**:',
+    ...missing.map((need) => `- **${need.name}**: ${need.why}`),
+    'Give my role these in Server Settings, Roles.',
+  ];
+}
+
+/** The club's relays, ping roles and values: set, or which command sets it. */
+async function clubChecklist(): Promise<string[]> {
+  let settings: Record<string, string | null | undefined>;
+  try {
+    ({ settings } = await fetchDiscordSettings());
+  } catch (error) {
+    console.error('[bot] setup could not read the club settings:', error);
+    return ['I could not read the club settings. Run /config show in a moment.'];
+  }
+  const missing = (specs: readonly (typeof ALL_SETTINGS)[number][]) => specs.filter((spec) => !settings[spec.key]);
+  const unsetChannels = missing(CHANNEL_SETTINGS);
+  const unsetRoles = missing(ROLE_SETTINGS);
+  const lines: string[] = [];
+  lines.push(
+    unsetChannels.length === 0
+      ? '**Channels**: all set.'
+      : `**Channels not set**: ${unsetChannels.map((spec) => spec.label).join(', ')}. ` +
+          `Set them with **/config channels** (${unsetChannels.map((spec) => spec.option).join(', ')}).`
+  );
+  lines.push(
+    unsetRoles.length === 0
+      ? '**Session ping roles**: all set.'
+      : `**Session ping roles not set**: ${unsetRoles.map((spec) => spec.label).join(', ')}. Set them with **/config ping_roles**.`
+  );
+  lines.push('Everything, with what each relay does while unset: **/config show**.');
+  return lines;
+}
+
+/**
+ * /setup in a server that is not the club's: its own settings and a checklist.
+ * Manage Server is the gate, re-checked from the caller's own mask because a
+ * server admin can open any command to anyone. Nothing here reaches the
+ * club's records: no roles are made, and the server is not connected.
+ */
+async function handleServerSetup(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { guildId, discordUserId } = context;
+  if (!guildId || !discordUserId) return ephemeral('Run this in the server you want to set up.');
+  if (!canManageServer(context.permissions)) return ephemeral(NEEDS_MANAGE_SERVER);
+  if (option(options, 'audit_channel') !== undefined) {
+    return ephemeral(
+      "The audit log is the club's, for the roles it hands out. Here, use **server_log** for this server's own log."
+    );
+  }
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return ephemeral('The bot is not configured with a token.');
+  const api = new DiscordApi({ token });
+
+  const lines = [
+    ...(await applyServerOptions(api, options, { discordUserId, guildId })),
+    '',
+    ...(await permissionLines(api, guildId, false)),
+    '',
+    '**Also here**: **/rolepicker** for roles people pick themselves, **/softban** to clear out a spammer, ' +
+      'and **/config** to change any of the above later.',
+    "If this is one of the club's own servers, a club exec connects it with **/setup club:True**.",
+  ];
+  return ephemeralEmbed({ title: 'Server set up', color: CLUB_RED, description: clip4096(lines.join('\n')) });
 }
 
 

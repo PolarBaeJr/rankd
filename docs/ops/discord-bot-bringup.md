@@ -111,7 +111,13 @@ order, and **only** these:
 
 ## 3. Roles in the test server
 
-**Run `/setup` in the server. That is the whole step.**
+**Run `/setup club:True` in the server. That is the whole step.**
+
+`club:True` connects a new server to the club, and needs a club exec account.
+Once a server is connected, plain `/setup` reruns the club setup there. In a
+server that is not the club's, plain `/setup` sets up only that server (its log
+channel, the scam guard, a permission check) and never touches the club's
+records, so any server admin can run it.
 
 > `/setup` is a slash command, so it only exists after step 7
 > (`npm run register -w bot`) and after the bot is running and reachable. If you
