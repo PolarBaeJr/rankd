@@ -24,6 +24,13 @@ vi.mock('../api.js', async (importOriginal) => ({
   fetchDiscordSettings,
   writeDiscordSettings,
   checkDiscordManager,
+  fetchServerSettings: async () => ({ servers: [] }),
+}));
+
+// g1 is one of the club's servers, where the club's relays are configured.
+vi.mock('../config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../config.js')>()),
+  loadConfig: async () => ({ registry: new Map([['g1', {}]]), auditChannelId: undefined }),
 }));
 
 vi.mock('../discord-api.js', async (importOriginal) => ({

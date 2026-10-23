@@ -1080,7 +1080,7 @@ function serverLogOptions(token: string) {
   if (scopes.size === 0) return {};
   console.log(`[server-log] on: ${[...scopes].join(', ')}`);
 
-  // Each server's log channel and guard switch (/server, 00302), read through
+  // Each server's log channel and guard switch (/config server_log and scam_guard, 00302), read through
   // the app and held for a minute so a busy server does not ask on every event.
   // A failed read keeps the last answer; before any answer, nothing posts.
   let servers: { byGuild: Map<string, ServerSettings>; at: number } | null = null;

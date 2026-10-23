@@ -318,7 +318,7 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `event_feedback_channel_id` | tournament survey comments (00173) | SQL |
 
 The server log is not in this table: since 00302 each server sets its own, with
-`/server log channel:` (and `/server scam_guard` for the scam guard). It lives in
+`/config server_log channel:` (and `/config scam_guard` for the scam guard). It lives in
 `discord_server_settings`, one row per server. In a club server the caller also
 needs the club check `/config` uses.
 
