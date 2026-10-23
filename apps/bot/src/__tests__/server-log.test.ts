@@ -75,9 +75,16 @@ describe('describeDispatch', () => {
     expect(bare?.embed.description).not.toContain('crypto');
   });
 
-  it('skips uncached deletes, bots, DMs and the log channel itself', () => {
+  it('still logs a delete it has no copy of, saying where and that the rest is unknown', () => {
     const ctx = context(['messages', 'content']);
-    expect(describeDispatch('MESSAGE_DELETE', { id: 'x', guild_id: 'g', channel_id: 'general' }, ctx)).toBeNull();
+    const entry = describeDispatch('MESSAGE_DELETE', { id: 'x', guild_id: 'g', channel_id: 'general' }, ctx);
+    expect(entry?.embed.title).toBe('Message deleted');
+    expect(entry?.embed.description).toContain('<#general>');
+    expect(entry?.embed.description).toContain('before I last restarted');
+  });
+
+  it("skips a bot's own deletes, DMs and the log channel itself", () => {
+    const ctx = context(['messages', 'content']);
 
     describeDispatch('MESSAGE_CREATE', created('b1', 'beep', { author: { id: 'bot', bot: true } }), ctx);
     expect(describeDispatch('MESSAGE_DELETE', { id: 'b1', guild_id: 'g', channel_id: 'general' }, ctx)).toBeNull();
@@ -226,6 +233,34 @@ describe('createServerLog', () => {
     await serverLog.drain();
     const posted = createMessage.mock.calls.map((call) => (call as unknown[])[0]);
     expect(posted).toEqual(['b-log', 'b-log']);
+  });
+
+  it('writes each person\'s name beside the mention, looked up once', async () => {
+    const createMessage = vi.fn(async () => true);
+    const getUserName = vi.fn(async (id: string) => (id === '397613147483144192' ? 'Matt_*' : null));
+    const serverLog = createServerLog({
+      api: { createMessage, getUserName },
+      scopes: new Set<ServerLogScope>(['moderation']),
+      resolveChannel: async () => 'log',
+      log: () => {},
+      now: () => NOW,
+    });
+    const roles = {
+      id: 'a9',
+      guild_id: 'g',
+      action_type: 25,
+      user_id: '397613147483144192',
+      target_id: '397613147483144192',
+    };
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roles);
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', { ...roles, id: 'a10', user_id: '111111111111111111' });
+    await serverLog.drain();
+    const first = (createMessage.mock.calls[0] as unknown[])[1] as { embeds: { description: string }[] };
+    expect(first.embeds[0]?.description).toContain('By **Matt\\_\\*** (<@397613147483144192>)');
+    const second = (createMessage.mock.calls[1] as unknown[])[1] as { embeds: { description: string }[] };
+    // Unknown to Discord: the bare mention stays.
+    expect(second.embeds[0]?.description).toContain('By <@111111111111111111>');
+    expect(getUserName).toHaveBeenCalledTimes(2);
   });
 
   it('drops past the queue limit and says how many', async () => {
