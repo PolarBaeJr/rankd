@@ -39,7 +39,7 @@
 // ban; a ban and an unban are idempotent, and the log entry is deduped by
 // nonce like every other server log entry.
 //
-// Only where the server switched it on (/server scam_guard, 00302). The bot
+// Only where the server switched it on (/config scam_guard, 00302). The bot
 // runs anywhere, and banning people in somebody else's server needs their yes.
 // The club's own servers were switched on by the migration.
 
