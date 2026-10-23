@@ -8299,10 +8299,10 @@ export async function handlePurge(
       memberId,
     });
     const minutes = Math.max(1, Math.ceil((tooOld * purgeTiming.gapMs) / 60_000));
+    const recentPart = fresh.length ? `Deleted ${fresh.length} recent message${fresh.length === 1 ? '' : 's'}. Now deleting` : 'Deleting';
     return ephemeral(
-      `Deleted ${fresh.length} recent message${fresh.length === 1 ? '' : 's'}. ` +
-        `Now deleting ${tooOld} older one${tooOld === 1 ? '' : 's'} one at a time (about ${minutes} minute${minutes === 1 ? '' : 's'}); ` +
-        'this message updates when it is done.'
+      `${recentPart} ${tooOld} message${tooOld === 1 ? '' : 's'} over 14 days old, one at a time ` +
+        `(about ${minutes} minute${minutes === 1 ? '' : 's'}). This message updates when it is done.`
     );
   }
 

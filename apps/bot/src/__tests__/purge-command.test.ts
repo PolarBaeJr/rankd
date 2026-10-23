@@ -100,7 +100,9 @@ describe('/purge', () => {
       { name: 'count', type: 4, value: 10 },
       { name: 'include_old', type: 5, value: true },
     ]);
-    expect(reply).toContain('Now deleting 2 older ones one at a time');
+    expect(reply).toBe(
+      'Deleted 1 recent message. Now deleting 2 messages over 14 days old, one at a time (about 1 minute). This message updates when it is done.'
+    );
     await commands.lastOldPurge;
     expect(deleteMessages.mock.calls.map((call) => call[1])).toEqual([['1'], ['old1'], ['old2']]);
     const final = (editDeferredReply.mock.calls.at(-1) as unknown[])[2] as { content: string };
