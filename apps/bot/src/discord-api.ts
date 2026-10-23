@@ -162,6 +162,48 @@ export class DiscordApi {
     return typeof name === 'string' && name ? name : null;
   }
 
+  /** A user's shown name and avatar picture, or null when there is no such user. */
+  async getUserProfile(userId: string): Promise<{ name: string; avatarUrl: string } | null> {
+    const response = await this.request('GET', `/users/${userId}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GET user -> ${response.status}`);
+    const body = (await response.json()) as { username?: unknown; global_name?: unknown; avatar?: unknown };
+    const name = typeof body.global_name === 'string' && body.global_name ? body.global_name : body.username;
+    if (typeof name !== 'string' || !name) return null;
+    // No avatar means Discord's default picture, chosen from the id.
+    const avatarUrl =
+      typeof body.avatar === 'string' && /^(a_)?[0-9a-f]{32}$/.test(body.avatar)
+        ? `https://cdn.discordapp.com/avatars/${userId}/${body.avatar}.png?size=64`
+        : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(userId) >> 22n) % 6n)}.png`;
+    return { name, avatarUrl };
+  }
+
+  /**
+   * The server's latest "message deleted" audit entries, newest first. Discord
+   * writes one only when somebody deletes ANOTHER person's message, and adds
+   * to its count rather than writing a new one when the same moderator deletes
+   * the same person's messages in the same channel again soon after. Null when
+   * the bot cannot read the audit log (it needs View Audit Log).
+   */
+  async listMessageDeleteAudits(guildId: string): Promise<
+    { id: string; userId: string | null; targetId: string | null; channelId: string | null; count: number }[] | null
+  > {
+    const response = await this.request('GET', `/guilds/${guildId}/audit-logs?action_type=72&limit=10`);
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      audit_log_entries?: { id?: unknown; user_id?: unknown; target_id?: unknown; options?: { channel_id?: unknown; count?: unknown } }[];
+    };
+    return (body.audit_log_entries ?? [])
+      .filter((entry): entry is typeof entry & { id: string } => typeof entry.id === 'string')
+      .map((entry) => ({
+        id: entry.id,
+        userId: typeof entry.user_id === 'string' ? entry.user_id : null,
+        targetId: typeof entry.target_id === 'string' ? entry.target_id : null,
+        channelId: typeof entry.options?.channel_id === 'string' ? entry.options.channel_id : null,
+        count: Number(entry.options?.count ?? 1) || 1,
+      }));
+  }
+
   /**
    * Every role in the guild, including @everyone and Discord-managed ones.
    *
