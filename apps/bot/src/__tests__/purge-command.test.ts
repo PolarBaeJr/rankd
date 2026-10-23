@@ -3,30 +3,41 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // /purge: who may, what it skips (pinned, too old, other people's), and that
 // it asks Discord for one delete call however many it takes.
 
-const { listRecentMessages, deleteMessages } = vi.hoisted(() => ({
+const { listRecentMessages, deleteMessages, editDeferredReply } = vi.hoisted(() => ({
   listRecentMessages: vi.fn(),
   deleteMessages: vi.fn(),
+  editDeferredReply: vi.fn(async () => true),
 }));
 
 vi.mock('../discord-api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../discord-api.js')>()),
+  editDeferredReply,
   DiscordApi: class {
     listRecentMessages = listRecentMessages;
     deleteMessages = deleteMessages;
   },
 }));
 
-import { COMMAND_DEFINITIONS, dispatch } from '../commands.js';
+import * as commands from '../commands.js';
+import { COMMAND_DEFINITIONS, dispatch, purgeTiming } from '../commands.js';
+
+purgeTiming.gapMs = 0;
+purgeTiming.startDelayMs = 0;
 
 const MANAGE_MESSAGES = String(1n << 13n);
 const DAY = 24 * 60 * 60 * 1000;
 
-async function purge(options: { name: string; type: number; value: unknown }[], permissions = MANAGE_MESSAGES) {
+async function purge(
+  options: { name: string; type: number; value: unknown }[],
+  permissions = MANAGE_MESSAGES,
+  deferred = true
+) {
   const reply = (await dispatch('purge', options as never, {
     discordUserId: 'mod',
     guildId: 'g',
     channelId: 'c',
     permissions,
+    ...(deferred ? { applicationId: 'app', interactionToken: 'tok' } : {}),
   } as never)) as unknown as { data: { content: string } };
   return reply.data.content;
 }
@@ -81,5 +92,31 @@ describe('/purge', () => {
     listRecentMessages.mockResolvedValue([message('1')]);
     deleteMessages.mockResolvedValue('forbidden');
     expect(await purge([{ name: 'count', type: 4, value: 1 }])).toContain('I need **Manage Messages**');
+  });
+
+  it('with include_old, bulk deletes the recent ones, then the old ones one at a time, and edits the reply', async () => {
+    listRecentMessages.mockResolvedValue([message('1'), message('old1', { at: Date.now() - 20 * DAY }), message('old2', { at: Date.now() - 30 * DAY })]);
+    const reply = await purge([
+      { name: 'count', type: 4, value: 10 },
+      { name: 'include_old', type: 5, value: true },
+    ]);
+    expect(reply).toContain('Now deleting 2 older ones one at a time');
+    await commands.lastOldPurge;
+    expect(deleteMessages.mock.calls.map((call) => call[1])).toEqual([['1'], ['old1'], ['old2']]);
+    const final = (editDeferredReply.mock.calls.at(-1) as unknown[])[2] as { content: string };
+    expect(final.content).toBe('Done: deleted 3 messages, 2 of them older than 14 days.');
+  });
+
+  it('with include_old and only old ones, makes no bulk call, and stops when refused', async () => {
+    listRecentMessages.mockResolvedValue([message('old1', { at: Date.now() - 20 * DAY }), message('old2', { at: Date.now() - 30 * DAY })]);
+    deleteMessages.mockResolvedValue('forbidden');
+    await purge([
+      { name: 'count', type: 4, value: 10 },
+      { name: 'include_old', type: 5, value: true },
+    ]);
+    await commands.lastOldPurge;
+    expect(deleteMessages).toHaveBeenCalledTimes(1);
+    const final = (editDeferredReply.mock.calls.at(-1) as unknown[])[2] as { content: string };
+    expect(final.content).toContain('2 could not be deleted: check I still have **Manage Messages**');
   });
 });

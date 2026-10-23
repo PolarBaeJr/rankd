@@ -70,7 +70,7 @@ import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { SOFTBAN_WINDOWS, describeWindow, softban, windowSeconds } from './moderation.js';
 import { parseServerLogScopes } from './server-log.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
-import { DiscordApi } from './discord-api.js';
+import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
 import { syncMembersNow } from './member-sync.js';
 import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
@@ -1580,6 +1580,12 @@ export const COMMAND_DEFINITIONS = [
     options: [
       { type: 4, name: 'count', description: 'How many messages (1 to 100)', required: true, min_value: 1, max_value: 100 },
       { type: 6, name: 'member', description: "Only this person's messages", required: false },
+      {
+        type: 5,
+        name: 'include_old',
+        description: 'Also delete ones over 14 days old, one at a time (slow: about one a second)',
+        required: false,
+      },
     ],
   },
   {
@@ -1645,6 +1651,9 @@ export const COMMAND_DEFINITIONS = [
  */
 export const DEFERRED_COMMANDS = new Set([
   'setup',
+  // A bulk delete, and with include_old a background run that edits the reply
+  // when it is done, which needs the interaction token only a deferral carries.
+  'purge',
   // Five or six Discord calls, plus up to three unban retries.
   'softban',
   'config',
@@ -8159,6 +8168,47 @@ async function handleServerSetting(
   );
 }
 
+/** The pace of a one-at-a-time purge. Tests set both to 0. */
+export const purgeTiming = { gapMs: 1100, startDelayMs: 2000 };
+/** The latest background purge, for tests to wait on. */
+export let lastOldPurge: Promise<void> | null = null;
+
+/** Delete old messages one at a time, then edit the /purge reply to say how it went. Never throws. */
+async function purgeOneByOne(
+  api: DiscordApi,
+  channelId: string,
+  messageIds: string[],
+  reason: string,
+  report: { applicationId: string; interactionToken: string; bulkDeleted: number; memberId: string | null }
+): Promise<void> {
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  let deleted = 0;
+  let failed = 0;
+  try {
+    // Let the first answer land before this one replaces it.
+    await wait(purgeTiming.startDelayMs);
+    for (const messageId of messageIds) {
+      const result = await api.deleteMessages(channelId, [messageId], reason);
+      if (result === 'ok' || result === 'not_found') deleted += 1;
+      else failed += 1;
+      // Refused once means refused for all; no point grinding through the rest.
+      if (result === 'forbidden') break;
+      await wait(purgeTiming.gapMs);
+    }
+  } catch (error) {
+    console.error('[bot] /purge one-by-one stopped:', error);
+  }
+  const total = report.bulkDeleted + deleted;
+  const left = messageIds.length - deleted;
+  await editDeferredReply(report.applicationId, report.interactionToken, {
+    content:
+      `Done: deleted ${total} message${total === 1 ? '' : 's'}${report.memberId ? ` from <@${report.memberId}>` : ''}, ` +
+      `${deleted} of them older than 14 days.` +
+      (left > 0 ? ` ${left} could not be deleted${failed > 0 ? ': check I still have **Manage Messages** here' : ''}.` : ''),
+    allowed_mentions: { parse: [] },
+  });
+}
+
 /** Discord refuses to bulk delete a message older than this. */
 const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000 - 60_000;
 
@@ -8200,23 +8250,48 @@ export async function handlePurge(
     .filter((message) => !message.pinned && (!memberId || message.authorId === memberId))
     .slice(0, count);
   const fresh = picked.filter((message) => now - message.at < BULK_DELETE_MAX_AGE_MS);
-  const tooOld = picked.length - fresh.length;
-  if (fresh.length === 0) {
-    if (tooOld > 0) return ephemeral('Those messages are over 14 days old, and Discord does not let bots bulk delete those.');
+  const old = picked.filter((message) => now - message.at >= BULK_DELETE_MAX_AGE_MS);
+  const tooOld = old.length;
+  const includeOld = option(options, 'include_old') === true && tooOld > 0;
+  if (fresh.length === 0 && !includeOld) {
+    if (tooOld > 0) {
+      return ephemeral(
+        'Those messages are over 14 days old, and Discord does not let bots bulk delete those. ' +
+          'Run it again with **include_old: True** to delete them one at a time.'
+      );
+    }
     return ephemeral(memberId ? `<@${memberId}> has no recent messages here.` : 'There is nothing to delete here.');
   }
 
-  const outcome = await api.deleteMessages(
-    context.channelId,
-    fresh.map((message) => message.id),
-    `Purge by ${context.discordUserId}`
-  );
+  const reason = `Purge by ${context.discordUserId}`;
+  const outcome = fresh.length
+    ? await api.deleteMessages(context.channelId, fresh.map((message) => message.id), reason)
+    : 'ok';
   if (outcome === 'forbidden') return ephemeral('I need **Manage Messages** in this channel to purge.');
   if (outcome !== 'ok') return ephemeral('Discord did not let me delete those just now. Try again in a moment.');
 
+  // Old ones go one at a time: a single delete works at any age but Discord
+  // rate limits it, so this runs after the reply and edits it when done.
+  // Without the token there is nowhere to say how it went, so it is not started.
+  const canReport = Boolean(context.applicationId && context.interactionToken);
+  if (includeOld && canReport) {
+    lastOldPurge = purgeOneByOne(api, context.channelId, old.map((message) => message.id), reason, {
+      applicationId: context.applicationId as string,
+      interactionToken: context.interactionToken as string,
+      bulkDeleted: fresh.length,
+      memberId,
+    });
+    const minutes = Math.max(1, Math.ceil((tooOld * purgeTiming.gapMs) / 60_000));
+    return ephemeral(
+      `Deleted ${fresh.length} recent message${fresh.length === 1 ? '' : 's'}. ` +
+        `Now deleting ${tooOld} older one${tooOld === 1 ? '' : 's'} one at a time (about ${minutes} minute${minutes === 1 ? '' : 's'}); ` +
+        'this message updates when it is done.'
+    );
+  }
+
   const notes = [
     tooOld > 0
-      ? `${tooOld} older than 14 days ${tooOld === 1 ? 'was' : 'were'} left: Discord does not let bots bulk delete those.`
+      ? `${tooOld} older than 14 days ${tooOld === 1 ? 'was' : 'were'} left: Discord does not let bots bulk delete those. Use **include_old: True** to delete them one at a time.`
       : '',
     picked.length < count ? `Only ${picked.length} matching message${picked.length === 1 ? ' was' : 's were'} in the latest 100.` : '',
   ].filter(Boolean);
