@@ -369,3 +369,63 @@ describe('who deleted a message', () => {
     expect(embed?.description).toContain('rude');
   });
 });
+
+describe('role changes, stacked', () => {
+  const roleChange = (id: string, target: string, changes: unknown[], user = 'mod') => ({
+    id,
+    guild_id: 'g',
+    action_type: 25,
+    user_id: user,
+    target_id: target,
+    changes,
+  });
+  const add = (...names: string[]) => ({ key: '$add', new_value: names.map((name) => ({ id: name, name })) });
+  const remove = (...names: string[]) => ({ key: '$remove', new_value: names.map((name) => ({ id: name, name })) });
+
+  function stacker() {
+    const createMessage = vi.fn(async () => true);
+    const serverLog = createServerLog({
+      api: { createMessage },
+      scopes: new Set<ServerLogScope>(['moderation']),
+      resolveChannel: async () => 'log',
+      log: () => {},
+      now: () => NOW,
+      stackMs: 60_000,
+    });
+    const posted = () =>
+      createMessage.mock.calls.map((call) => ((call as unknown[])[1] as { embeds: { description: string }[] }).embeds[0]);
+    return { serverLog, posted };
+  }
+
+  it("puts one member's changes in a burst into one entry, Added and Removed", async () => {
+    const { serverLog, posted } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'm', [add('Exec')]));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'm', [add('Coach'), remove('Land Crab')]));
+    await serverLog.drain();
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.description).toBe('<@m> **roles changed**\n**Added:** `Exec`, `Coach`\n**Removed:** `Land Crab`');
+  });
+
+  it('turns a mass removal into one entry listing the members', async () => {
+    const { serverLog, posted } = stacker();
+    for (const member of ['a', 'b', 'c']) {
+      serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange(`r${member}`, member, [remove('Land Crab')]));
+    }
+    await serverLog.drain();
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.description).toBe(
+      "**3 members' roles changed**\n**Removed:** `Land Crab`\n\n**Members:** <@a>, <@b>, <@c>"
+    );
+  });
+
+  it('lists each member when their changes differ, keeps separate people apart, and drops an undone change', async () => {
+    const { serverLog, posted } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'a', [add('Exec')]));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'b', [remove('Coach')]));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('3', 'c', [add('Exec')], 'other-mod'));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('4', 'c', [remove('Exec')], 'other-mod'));
+    await serverLog.drain();
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.description).toBe("**2 members' roles changed**\n\n<@a>: added `Exec`\n<@b>: removed `Coach`");
+  });
+});
