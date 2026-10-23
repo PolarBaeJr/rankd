@@ -170,6 +170,7 @@ const EXEC_ONLY = '0';
 
 /** BAN_MEMBERS (1 << 2). Only /softban uses it; see the note on its definition. */
 const BAN_MEMBERS = '4';
+const MANAGE_MESSAGES = String(1n << 13n);
 
 /**
  * The club event kinds, as /event create offers them. A copy of
@@ -1556,6 +1557,16 @@ export const COMMAND_DEFINITIONS = [
           },
         ],
       },
+    ],
+  },
+  {
+    name: 'purge',
+    description: 'Delete the latest messages in this channel',
+    default_member_permissions: MANAGE_MESSAGES,
+    dm_permission: false,
+    options: [
+      { type: 4, name: 'count', description: 'How many messages (1 to 100)', required: true, min_value: 1, max_value: 100 },
+      { type: 6, name: 'member', description: "Only this person's messages", required: false },
     ],
   },
   {
@@ -7985,6 +7996,73 @@ async function handleServerSetting(
   );
 }
 
+/** Discord refuses to bulk delete a message older than this. */
+const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000 - 60_000;
+
+/**
+ * /purge: the latest messages here, or the latest of one person's. Pinned
+ * ones are kept. The server log records it as a bulk delete.
+ */
+export async function handlePurge(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!context.guildId || !context.channelId || !context.discordUserId) {
+    return ephemeral('Run /purge in the channel to clear.');
+  }
+  // The command is hidden from people without Manage Messages, but a server
+  // can open it to anyone in its settings, so the caller is checked here too.
+  let allowed = false;
+  try {
+    allowed = (BigInt(context.permissions ?? '0') & ((1n << 13n) | ADMINISTRATOR_BIT)) !== 0n;
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) return ephemeral('You need **Manage Messages** to purge.');
+  if (!token) {
+    console.error('[bot] /purge: DISCORD_BOT_TOKEN is not set');
+    return ephemeral('The bot is not set up to do that right now.');
+  }
+  const count = Math.min(100, Math.max(1, Number(option(options, 'count')) || 1));
+  const memberId = stringOption(options, 'member');
+
+  const api = new DiscordApi({ token });
+  const recent = await api.listRecentMessages(context.channelId, 100);
+  if (!recent) {
+    return ephemeral('I could not read this channel. I need **View Channel** and **Read Message History** here.');
+  }
+  const now = Date.now();
+  const picked = recent
+    .filter((message) => !message.pinned && (!memberId || message.authorId === memberId))
+    .slice(0, count);
+  const fresh = picked.filter((message) => now - message.at < BULK_DELETE_MAX_AGE_MS);
+  const tooOld = picked.length - fresh.length;
+  if (fresh.length === 0) {
+    if (tooOld > 0) return ephemeral('Those messages are over 14 days old, and Discord does not let bots bulk delete those.');
+    return ephemeral(memberId ? `<@${memberId}> has no recent messages here.` : 'There is nothing to delete here.');
+  }
+
+  const outcome = await api.deleteMessages(
+    context.channelId,
+    fresh.map((message) => message.id),
+    `Purge by ${context.discordUserId}`
+  );
+  if (outcome === 'forbidden') return ephemeral('I need **Manage Messages** in this channel to purge.');
+  if (outcome !== 'ok') return ephemeral('Discord did not let me delete those just now. Try again in a moment.');
+
+  const notes = [
+    tooOld > 0
+      ? `${tooOld} older than 14 days ${tooOld === 1 ? 'was' : 'were'} left: Discord does not let bots bulk delete those.`
+      : '',
+    picked.length < count ? `Only ${picked.length} matching message${picked.length === 1 ? ' was' : 's were'} in the latest 100.` : '',
+  ].filter(Boolean);
+  return ephemeral(
+    `Deleted ${fresh.length} message${fresh.length === 1 ? '' : 's'}${memberId ? ` from <@${memberId}>` : ''}.` +
+      (notes.length ? `\n${notes.join('\n')}` : '')
+  );
+}
+
 export async function handleSoftban(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -8099,6 +8177,8 @@ export async function dispatch(
         return handleTourney(options, context);
       case 'softban':
         return await handleSoftban(options, context);
+      case 'purge':
+        return await handlePurge(options, context);
       default:
         return ephemeral('Unknown command.');
     }
