@@ -20,6 +20,7 @@ import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
+import { LiveEvent } from '../live-event';
 import type { CheckInRow } from '@/components/checkin-list';
 
 type EventRow = {
@@ -262,6 +263,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
 
   return (
     <div>
+      <LiveEvent eventId={id} channel="event-page" />
       <PageHeader
         eyebrow="EVENTS"
         title={event.title}
