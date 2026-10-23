@@ -414,11 +414,11 @@ describe('role changes, stacked', () => {
     await serverLog.drain();
     expect(posted()).toHaveLength(1);
     expect(posted()[0]?.description).toBe(
-      "**3 members' roles changed**\n**Removed:** `Land Crab`\n\n**Members:** <@a>, <@b>, <@c>"
+      "**3 members' roles changed**\n\n**Removed `Land Crab`:** <@a>, <@b>, <@c>"
     );
   });
 
-  it('lists each member when their changes differ, keeps separate people apart, and drops an undone change', async () => {
+  it('adds and removes in one entry, grouped by role, keeps separate people apart, and drops an undone change', async () => {
     const { serverLog, posted } = stacker();
     serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'a', [add('Exec')]));
     serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'b', [remove('Coach')]));
@@ -426,6 +426,6 @@ describe('role changes, stacked', () => {
     serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('4', 'c', [remove('Exec')], 'other-mod'));
     await serverLog.drain();
     expect(posted()).toHaveLength(1);
-    expect(posted()[0]?.description).toBe("**2 members' roles changed**\n\n<@a>: added `Exec`\n<@b>: removed `Coach`");
+    expect(posted()[0]?.description).toBe("**2 members' roles changed**\n\n**Added `Exec`:** <@a>\n**Removed `Coach`:** <@b>");
   });
 });

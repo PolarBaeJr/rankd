@@ -886,24 +886,18 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
       description = `<@${memberId}> **roles changed**\n${lists(change)}`;
       footer = `ID: ${memberId}`;
     } else {
-      const same = (a: string[], b: string[]) => a.length === b.length && a.every((role) => b.includes(role));
-      const [, first] = members[0] as [string, { added: string[]; removed: string[] }];
-      const alike = members.every(([, m]) => same(m.added, first.added) && same(m.removed, first.removed));
-      const shown = members.slice(0, 60);
-      const more = members.length > shown.length ? `\n...and ${members.length - shown.length} more` : '';
-      description = alike
-        ? `**${members.length} members' roles changed**\n${lists(first)}\n\n**Members:** ${shown.map(([id]) => `<@${id}>`).join(', ')}${more}`
-        : `**${members.length} members' roles changed**\n\n` +
-          shown
-            .map(
-              ([id, m]) =>
-                `<@${id}>: ` +
-                [m.added.length ? `added ${roleNames(m.added)}` : '', m.removed.length ? `removed ${roleNames(m.removed)}` : '']
-                  .filter(Boolean)
-                  .join('; ')
-            )
-            .join('\n') +
-          more;
+      // Grouped by role, so a burst that adds some and removes others still
+      // reads as a few lines: each role, and who gained or lost it.
+      const byRole = new Map<string, string[]>();
+      for (const [id, m] of members) {
+        for (const role of m.added) byRole.set(`Added \`${role}\``, [...(byRole.get(`Added \`${role}\``) ?? []), id]);
+        for (const role of m.removed) byRole.set(`Removed \`${role}\``, [...(byRole.get(`Removed \`${role}\``) ?? []), id]);
+      }
+      const lines = [...byRole.entries()].map(([change, ids]) => {
+        const shown = ids.slice(0, 40).map((id) => `<@${id}>`).join(', ');
+        return `**${change}:** ${shown}${ids.length > 40 ? ` and ${ids.length - 40} more` : ''}`;
+      });
+      description = `**${members.length} members' roles changed**\n\n${lines.join('\n')}`;
       footer = `${members.length} members`;
     }
     return {
