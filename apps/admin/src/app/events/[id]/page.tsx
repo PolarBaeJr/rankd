@@ -152,6 +152,25 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           : Promise.resolve({ data: [] }),
       ])
     : [{ data: [] }, { data: [] }];
+  // A member's fee for the event, so their row says paid or unpaid as a
+  // guest's does. Members sign the club waiver when they join, so there is no
+  // per-event waiver to show.
+  const { data: memberFeeData } =
+    canSeeSignups && signups.length > 0
+      ? await adminClient
+          .from('club_fees')
+          .select('player_id, amount_cents, paid_at')
+          .eq('club_event_id', id)
+          .in(
+            'player_id',
+            signups.map((row) => row.player_id),
+          )
+      : { data: [] };
+  const memberFee = new Map(
+    ((memberFeeData ?? []) as { player_id: string; amount_cents: number | null; paid_at: string | null }[]).map(
+      (row) => [row.player_id, { amountCents: row.amount_cents, paid: row.paid_at !== null }],
+    ),
+  );
   const memberPartner = new Map(
     ((memberNotes ?? []) as { player_id: string; preferred_partner: string }[]).map((row) => [
       row.player_id,
@@ -194,6 +213,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         key: `member:${row.player_id}`,
         ...row,
         partner: memberPartner.get(row.player_id) ?? null,
+        fee: memberFee.get(row.player_id) ?? null,
       }),
     ),
     ...guests,

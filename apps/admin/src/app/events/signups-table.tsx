@@ -16,7 +16,15 @@ import { undoImportedEntry } from '@/lib/actions/registration-imports';
  * `partner` is the preferred partner the Form's answer named (00299), as typed.
  */
 export type ClubEventSignupRow =
-  | { kind: 'member'; key: string; player_id: string; name: string; created_at: string; partner?: string | null }
+  | {
+      kind: 'member';
+      key: string;
+      player_id: string;
+      name: string;
+      created_at: string;
+      partner?: string | null;
+      fee?: { amountCents: number | null; paid: boolean } | null;
+    }
   | {
       kind: 'guest';
       key: string;
@@ -105,7 +113,7 @@ export function ClubEventSignupsTable({
               {row.kind === 'guest' && row.waiverSigned !== null && (
                 <> · Waiver {row.waiverSigned ? 'signed' : 'not signed'}</>
               )}
-              {row.kind === 'guest' && row.fee && (
+              {row.fee && (
                 <>
                   {' '}
                   · {money(row.fee.amountCents)} {row.fee.paid ? 'paid' : 'unpaid'}
