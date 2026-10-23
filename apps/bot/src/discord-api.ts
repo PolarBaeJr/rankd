@@ -215,6 +215,23 @@ export class DiscordApi {
       .reduce((highest, r) => Math.max(highest, r.position), 0);
   }
 
+  /**
+   * The bot's own server-wide permissions: @everyone's plus every role it
+   * holds. Channel overwrites are not counted, so this is the ceiling.
+   */
+  async getOwnPermissions(guildId: string): Promise<bigint> {
+    const userId = await this.getOwnUserId();
+    const member = await this.request('GET', `/guilds/${guildId}/members/${userId}`);
+    if (!member.ok) throw new Error(`GET member -> ${member.status}`);
+    const { roles } = (await member.json()) as { roles?: string[] };
+    const mine = new Set([...(roles ?? []), guildId]);
+    let permissions = 0n;
+    for (const role of await this.listGuildRoles(guildId)) {
+      if (mine.has(role.id)) permissions |= BigInt(role.permissions ?? '0');
+    }
+    return permissions;
+  }
+
   /** The bot's own user id, for callers that must refuse to act on it. */
   async getBotUserId(): Promise<string> {
     return this.getOwnUserId();
