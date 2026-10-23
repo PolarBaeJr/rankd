@@ -64,8 +64,8 @@ export function ClubEventCheckIn({
   const [walkInOpen, setWalkInOpen] = useState(false);
   const door = canWrite && doorReady;
 
-  // More than one exec can be at the door, so the list re-reads every 20
-  // seconds while it is open.
+  // More than one exec can be at the door. The page updates live (LiveEvent,
+  // 00301); this 20 second re-read stays as the fallback for a quiet socket.
   useEffect(() => {
     const timer = setInterval(() => router.refresh(), 20_000);
     return () => clearInterval(timer);

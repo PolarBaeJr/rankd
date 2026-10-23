@@ -7,6 +7,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import type { CheckInRow } from '@/components/checkin-list';
 import { ClubEventCheckIn, type PastGuest, type WaitingRow } from '../../checkin-card';
+import { LiveEvent } from '../../live-event';
 
 // THE CLUB EVENT'S DOOR, on its own page so whoever is at the door has nothing
 // else on screen. Members and guests in one list (00293), and the last-minute
@@ -161,6 +162,7 @@ export default async function ClubEventCheckInPage({ params }: { params: Promise
 
   return (
     <div>
+      <LiveEvent eventId={id} channel="event-checkin" />
       <PageHeader
         eyebrow="CHECK-IN"
         title={event.title as string}
