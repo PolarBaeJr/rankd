@@ -1173,6 +1173,8 @@ export interface ServerSettings {
   automodFlagSuspects: boolean;
   automodWords: string[];
   automodWordsAction: AutomodWordsAction;
+  /** What a post in a trap channel gets (00303); a soft ban unless changed. */
+  automodTrapAction: AutomodAction;
   automodTrapChannelIds: string[];
 }
 

@@ -78,6 +78,7 @@ import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import { CRYPTO_WORDS, GIVEAWAY_WORDS } from './scam-guard.js';
+import { putUpTrapNotice, takeDownTrapNotice } from './trap-notice.js';
 import { socialsReply, type SocialsPayload } from './socials.js';
 import {
   ALL_SETTINGS,
@@ -170,6 +171,7 @@ const EXEC_ONLY = '0';
 
 /** BAN_MEMBERS (1 << 2). Only /softban uses it; see the note on its definition. */
 const BAN_MEMBERS = '4';
+const MANAGE_MESSAGES = String(1n << 13n);
 
 /**
  * The club event kinds, as /event create offers them. A copy of
@@ -845,6 +847,18 @@ export const COMMAND_DEFINITIONS = [
             channel_types: [0, 5],
           },
           { type: 7, name: 'remove_trap', description: 'Stop treating a channel as a trap', required: false, channel_types: [0, 5] },
+          {
+            type: 3,
+            name: 'trap_action',
+            description: 'What a post in a trap channel gets (default: soft-ban)',
+            required: false,
+            choices: [
+              { name: 'Soft-ban at once (default)', value: 'softban' },
+              { name: 'Timeout, then soft-ban if caught again', value: 'timeout_then_softban' },
+              { name: 'Timeout only', value: 'timeout' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
         ],
       },
       {
@@ -1368,7 +1382,7 @@ export const COMMAND_DEFINITIONS = [
       {
         type: 1,
         name: 'signups',
-        description: 'Who has signed up',
+        description: 'Who has signed up, with check-in and the waitlist',
         options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
       },
     ],
@@ -1556,6 +1570,16 @@ export const COMMAND_DEFINITIONS = [
           },
         ],
       },
+    ],
+  },
+  {
+    name: 'purge',
+    description: 'Delete the latest messages in this channel',
+    default_member_permissions: MANAGE_MESSAGES,
+    dm_permission: false,
+    options: [
+      { type: 4, name: 'count', description: 'How many messages (1 to 100)', required: true, min_value: 1, max_value: 100 },
+      { type: 6, name: 'member', description: "Only this person's messages", required: false },
     ],
   },
   {
@@ -6899,12 +6923,17 @@ export function consoleRefusalText(reply: Exclude<ConsoleReply<unknown>, { ok: t
 
 /** finish() for a console subcommand: never throws, always answers. */
 function consoleFinish(work: () => Promise<string>): BotResponse {
+  return consoleFinishResponse(async () => consoleLine(await work()));
+}
+
+/** consoleFinish for an answer that is more than a line, such as an embed. */
+function consoleFinishResponse(work: () => Promise<BotResponse>): BotResponse {
   return {
     type: 5,
     data: { flags: 64 },
     finish: async () => {
       try {
-        return consoleLine(await work());
+        return await work();
       } catch (error) {
         if (error instanceof ConsoleNotConfiguredError) return consoleLine(CONSOLE_NOT_CONFIGURED);
         if (error instanceof ConsoleNotAvailableError) return consoleLine(CONSOLE_NOT_AVAILABLE);
@@ -7214,24 +7243,130 @@ export function handleEventAdmin(
         return `**Upcoming club events**\n${reply.data.events.map((e) => `- ${e.label}`).join('\n')}`;
       });
     case 'signups':
-      return consoleFinish(async () => {
-        const reply = await adminGet<{
-          event: { id: string; label: string; capacity: number | null } | null;
-          signups?: string[];
-        }>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
-        if (!reply.ok) return consoleRefusalText(reply);
-        if (!reply.data.event) return 'That event no longer exists.';
-        const names = reply.data.signups ?? [];
-        const cap = reply.data.event.capacity;
-        return (
-          `**${reply.data.event.label}**\n` +
-          `Signed up: ${names.length}${cap ? ` of ${cap}` : ''}` +
-          (names.length > 0 ? `\n${names.map((n) => `- ${n}`).join('\n')}` : '')
-        ).slice(0, 1900);
+      return consoleFinishResponse(async () => {
+        const reply = await adminGet<EventSignupsRead>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
+        if (!reply.ok) return consoleLine(consoleRefusalText(reply));
+        const event = reply.data.event;
+        if (!event) return consoleLine('That event no longer exists.');
+        return {
+          type: 4,
+          data: {
+            embeds: [eventSignupsEmbed({ ...reply.data, event })],
+            flags: 64,
+            allowed_mentions: { parse: [] },
+          },
+        };
       });
     default:
       return consoleLine('Unknown subcommand.');
   }
+}
+
+type EventSignupsEvent = {
+  id: string;
+  label: string;
+  title?: string;
+  when?: string;
+  status?: string;
+  capacity: number | null;
+  url?: string | null;
+};
+
+export type EventSignupsPerson = {
+  name: string;
+  kind: 'member' | 'guest' | 'external';
+  checkedIn: boolean;
+  noShow: boolean;
+  walkIn: boolean;
+};
+
+/**
+ * The console's event-signups read. An older console sends only `signups`
+ * (plain names), so the embed falls back to it when `people` is absent: the
+ * bot and the console deploy separately.
+ */
+export type EventSignupsRead = {
+  event: EventSignupsEvent | null;
+  taken?: number;
+  signups?: string[];
+  people?: EventSignupsPerson[];
+  waitlist?: string[];
+};
+
+// Discord's limit for an embed description.
+const SIGNUPS_DESCRIPTION_MAX = 4096;
+
+/** A member typed their name, so markdown in it is shown, not applied. */
+function plainName(name: string): string {
+  return name.slice(0, 120).replace(/[\\*_~`|[\]]/g, '\\$&');
+}
+
+function signupMarkers(person: EventSignupsPerson): string[] {
+  const markers: string[] = [];
+  if (person.kind === 'guest') markers.push('guest');
+  if (person.kind === 'external') markers.push('external');
+  if (person.walkIn) markers.push('walk-in');
+  if (person.checkedIn) markers.push('checked in');
+  if (person.noShow) markers.push('no-show');
+  return markers;
+}
+
+/**
+ * /event signups as one embed: the event, how many places are taken, then a
+ * numbered list in sign-up order with the waitlist after it. Whole lines are
+ * packed under the description limit; whatever does not fit is counted and
+ * left to the console's page.
+ */
+export function eventSignupsEmbed(read: EventSignupsRead & { event: EventSignupsEvent }): Record<string, unknown> {
+  const { event } = read;
+  const people: EventSignupsPerson[] =
+    read.people ??
+    (read.signups ?? []).map((name) => ({ name, kind: 'member', checkedIn: false, noShow: false, walkIn: false }));
+  const waitlist = read.waitlist ?? [];
+  const taken = read.taken ?? people.filter((p) => !p.noShow).length;
+  const status = event.status === 'draft' ? 'Draft' : event.status === 'cancelled' ? 'Cancelled' : null;
+  const header = [
+    event.when ?? null,
+    `${taken} signed up${event.capacity ? ` / ${event.capacity}` : ''}`,
+    waitlist.length > 0 ? `${waitlist.length} waitlisted` : null,
+    status,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const lines = [
+    ...people.map((person, index) => {
+      const markers = signupMarkers(person);
+      return `${index + 1}. ${plainName(person.name)}${markers.length ? ` (${markers.join(', ')})` : ''}`;
+    }),
+    ...waitlist.map((name, index) => `${people.length + index + 1}. ${plainName(name)} (waitlisted)`),
+  ];
+
+  let description: string;
+  if (lines.length === 0) {
+    description = `${header}\n\nNobody has signed up yet.`;
+  } else if (`${header}\n\n${lines.join('\n')}`.length <= SIGNUPS_DESCRIPTION_MAX) {
+    description = `${header}\n\n${lines.join('\n')}`;
+  } else {
+    const more = (count: number) => `...and ${count} more, see the website${event.url ? `: ${event.url}` : '.'}`;
+    // Room for the cut line at its longest, so it always fits once it is needed.
+    const room = SIGNUPS_DESCRIPTION_MAX - more(lines.length).length - 1;
+    description = `${header}\n`;
+    let shown = 0;
+    for (const line of lines) {
+      if (description.length + 1 + line.length > room) break;
+      description += `\n${line}`;
+      shown += 1;
+    }
+    description += `\n${more(lines.length - shown)}`;
+  }
+
+  return {
+    title: (event.title ?? event.label).slice(0, 256),
+    ...(event.url ? { url: event.url } : {}),
+    color: CLUB_RED,
+    description,
+  };
 }
 
 function eventCreate(options: CommandOption[] | undefined, callerId: string): BotResponse {
@@ -7812,6 +7947,40 @@ export function canManageServer(permissions: string | null | undefined): boolean
   }
 }
 
+/** Put up, take down or reword the trap channel warnings after a /config automod save. */
+async function updateTrapNotices(
+  guildId: string,
+  change: ServerSettingsChange,
+  added: string | null,
+  removed: string | null
+): Promise<string[]> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token || (!added && !removed && !change.automodTrapAction)) return [];
+  const api = new DiscordApi({ token });
+  const notes: string[] = [];
+  try {
+    if (removed) await takeDownTrapNotice(api, removed);
+    const { servers } = await fetchServerSettings();
+    const mine = servers.find((row) => row.guildId === guildId);
+    const action = mine?.automodTrapAction ?? 'softban';
+    // A new trap gets its warning; a changed answer rewords all of them.
+    const channels = change.automodTrapAction ? (mine?.automodTrapChannelIds ?? []) : added ? [added] : [];
+    for (const channelId of channels) {
+      const result = await putUpTrapNotice(api, channelId, action);
+      if (result === 'forbidden') {
+        notes.push(`I posted the warning in <#${channelId}> but could not pin it: I need **Manage Messages** (or **Pin Messages**) there.`);
+      } else if (result !== 'ok') {
+        notes.push(`I could not post the warning in <#${channelId}>. Check I can send messages there, then run this again.`);
+      }
+    }
+    if (added && notes.length === 0) notes.push(`<#${added}> now has a pinned warning that counts everyone caught there.`);
+  } catch (error) {
+    console.error('[bot] trap notice update failed:', error);
+    notes.push('The setting is saved, but I could not update the warning in the trap channel.');
+  }
+  return notes;
+}
+
 /** What each auto mod action does, in words, given the timeout length. */
 const AUTOMOD_ACTION_TEXT: Record<AutomodAction, (timeoutMinutes: number) => string> = {
   timeout_then_softban: (minutes) =>
@@ -7858,7 +8027,9 @@ async function serverSettingsText(guildId: string): Promise<string> {
       mine.automodSpray
         ? `- **Spray**: the same post in **${mine.automodSprayChannels} channels** within **${minutes} minute${minutes === 1 ? '' : 's'}**`
         : '- **Spray**: off',
-      `- **Trap channels**: ${mine.automodTrapChannelIds.length ? mine.automodTrapChannelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`,
+      mine.automodTrapChannelIds.length
+        ? `- **Trap channels**: ${mine.automodTrapChannelIds.map((id) => `<#${id}>`).join(', ')}; a post there gets ${AUTOMOD_ACTION_TEXT[mine.automodTrapAction ?? 'softban'](mine.automodTimeoutMinutes)}`
+        : '- **Trap channels**: none',
       mine.automodWords.length
         ? `- **Your words** (${WORDS_ACTION_TEXT[mine.automodWordsAction]}): ${mine.automodWords.map((word) => `\`${word.replace(/`/g, '')}\``).join(', ')}`
         : '- **Your words**: none',
@@ -7920,6 +8091,8 @@ async function handleServerSetting(
     count('spray_minutes', 'automodSprayWindowMinutes');
     const action = option(args, 'action');
     if (typeof action === 'string' && action in AUTOMOD_ACTION_TEXT) change.automodAction = action as AutomodAction;
+    const trapAction = option(args, 'trap_action');
+    if (typeof trapAction === 'string' && trapAction in AUTOMOD_ACTION_TEXT) change.automodTrapAction = trapAction as AutomodAction;
     const wordsAction = option(args, 'words_action');
     if (typeof wordsAction === 'string' && wordsAction in WORDS_ACTION_TEXT) {
       change.automodWordsAction = wordsAction as AutomodWordsAction;
@@ -7954,10 +8127,11 @@ async function handleServerSetting(
     if (Object.keys(change).length === 0) {
       return ephemeral(`${now}\n\nFill in any option of **/config automod** to change it.`);
     }
-    const trapNote =
-      typeof addTrap === 'string'
-        ? `\n\nTell your members not to post in <#${addTrap}>: anything posted there is caught. Hide it from new members' view or say so in its topic.`
-        : '';
+    // The warning in each trap channel: up when one is added, down when one
+    // is removed, and reworded everywhere when what a post there gets changes.
+    const trapNotes = await updateTrapNotices(guildId, change, typeof addTrap === 'string' ? addTrap : null,
+      typeof removeTrap === 'string' ? removeTrap : null);
+    const trapNote = trapNotes.length ? `\n\n${trapNotes.join('\n')}` : '';
     return ephemeral(`Saved.\n\n${now}${trapNote}`);
   }
 
@@ -7982,6 +8156,73 @@ async function handleServerSetting(
   return ephemeral(
     `This server's log now posts in <#${channelId}>. It includes the text of deleted and edited messages, ` +
       'so keep it to moderators.'
+  );
+}
+
+/** Discord refuses to bulk delete a message older than this. */
+const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000 - 60_000;
+
+/**
+ * /purge: the latest messages here, or the latest of one person's. Pinned
+ * ones are kept. The server log records it as a bulk delete.
+ */
+export async function handlePurge(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!context.guildId || !context.channelId || !context.discordUserId) {
+    return ephemeral('Run /purge in the channel to clear.');
+  }
+  // The command is hidden from people without Manage Messages, but a server
+  // can open it to anyone in its settings, so the caller is checked here too.
+  let allowed = false;
+  try {
+    allowed = (BigInt(context.permissions ?? '0') & ((1n << 13n) | ADMINISTRATOR_BIT)) !== 0n;
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) return ephemeral('You need **Manage Messages** to purge.');
+  if (!token) {
+    console.error('[bot] /purge: DISCORD_BOT_TOKEN is not set');
+    return ephemeral('The bot is not set up to do that right now.');
+  }
+  const count = Math.min(100, Math.max(1, Number(option(options, 'count')) || 1));
+  const memberId = stringOption(options, 'member');
+
+  const api = new DiscordApi({ token });
+  const recent = await api.listRecentMessages(context.channelId, 100);
+  if (!recent) {
+    return ephemeral('I could not read this channel. I need **View Channel** and **Read Message History** here.');
+  }
+  const now = Date.now();
+  const picked = recent
+    .filter((message) => !message.pinned && (!memberId || message.authorId === memberId))
+    .slice(0, count);
+  const fresh = picked.filter((message) => now - message.at < BULK_DELETE_MAX_AGE_MS);
+  const tooOld = picked.length - fresh.length;
+  if (fresh.length === 0) {
+    if (tooOld > 0) return ephemeral('Those messages are over 14 days old, and Discord does not let bots bulk delete those.');
+    return ephemeral(memberId ? `<@${memberId}> has no recent messages here.` : 'There is nothing to delete here.');
+  }
+
+  const outcome = await api.deleteMessages(
+    context.channelId,
+    fresh.map((message) => message.id),
+    `Purge by ${context.discordUserId}`
+  );
+  if (outcome === 'forbidden') return ephemeral('I need **Manage Messages** in this channel to purge.');
+  if (outcome !== 'ok') return ephemeral('Discord did not let me delete those just now. Try again in a moment.');
+
+  const notes = [
+    tooOld > 0
+      ? `${tooOld} older than 14 days ${tooOld === 1 ? 'was' : 'were'} left: Discord does not let bots bulk delete those.`
+      : '',
+    picked.length < count ? `Only ${picked.length} matching message${picked.length === 1 ? ' was' : 's were'} in the latest 100.` : '',
+  ].filter(Boolean);
+  return ephemeral(
+    `Deleted ${fresh.length} message${fresh.length === 1 ? '' : 's'}${memberId ? ` from <@${memberId}>` : ''}.` +
+      (notes.length ? `\n${notes.join('\n')}` : '')
   );
 }
 
@@ -8099,6 +8340,8 @@ export async function dispatch(
         return handleTourney(options, context);
       case 'softban':
         return await handleSoftban(options, context);
+      case 'purge':
+        return await handlePurge(options, context);
       default:
         return ephemeral('Unknown command.');
     }

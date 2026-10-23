@@ -228,16 +228,18 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
 
 function guardWith(api: ReturnType<typeof fakeApi>, servers = ['club'], rules: Partial<GuardRules> = {}) {
   const reports: { guildId: string; entry: ServerLogEntry }[] = [];
+  const trapCatches: { channelId: string; action: string }[] = [];
   const clock = { at: Date.parse('2026-10-22T18:00:00Z') };
   const guard = createScamGuard({
     api,
     rulesFor: async (guildId) => (servers.includes(guildId) ? { ...DEFAULT_RULES, ...rules } : null),
     report: (guildId, entry) => reports.push({ guildId, entry }),
+    onTrapCaught: (_guildId, channelId, action) => trapCatches.push({ channelId, action }),
     log: () => {},
     now: () => new Date((clock.at += 1000)),
     sleep: async () => {},
   });
-  return { guard, reports, clock };
+  return { guard, reports, clock, trapCatches };
 }
 
 const outcome = (reports: { entry: ServerLogEntry }[]) => reports.at(-1)?.entry.embed.fields?.[0]?.value ?? '';
@@ -382,7 +384,7 @@ describe('createScamGuard', () => {
 
   it('catches any post in a trap channel, deleting it, and deletes later ones too', async () => {
     const api = fakeApi();
-    const { guard, reports } = guardWith(api, ['club'], { trapChannelIds: ['trap'] });
+    const { guard, reports } = guardWith(api, ['club'], { trapChannelIds: ['trap'], trapAction: 'timeout_then_softban' });
     guard.onMessage(raw('trap', { content: 'hello', attachments: [] }));
     await guard.drain();
     guard.onMessage(raw('trap', { content: 'hello again', attachments: [] }));
@@ -436,5 +438,24 @@ describe('createScamGuard', () => {
     await guard.drain();
     expect(api.timeoutMember).not.toHaveBeenCalled();
     expect(reports).toEqual([]);
+  });
+
+  it('soft-bans a post in a trap channel by default, whatever the other catches get, and counts it', async () => {
+    const api = fakeApi();
+    const { guard, reports, trapCatches } = guardWith(api, ['club'], { trapChannelIds: ['trap'], action: 'timeout' });
+    guard.onMessage(raw('trap', { content: 'hello', attachments: [] }));
+    await guard.drain();
+    expect(api.banMember).toHaveBeenCalledTimes(1);
+    expect(api.timeoutMember).not.toHaveBeenCalled();
+    expect(outcome(reports)).toMatch(/^soft-banned/);
+    expect(trapCatches).toEqual([{ channelId: 'trap', action: 'softban' }]);
+  });
+
+  it('does not count a trap catch that came to nothing', async () => {
+    const api = fakeApi({ banMember: vi.fn(async () => 'forbidden' as const) });
+    const { guard, trapCatches } = guardWith(api, ['club'], { trapChannelIds: ['trap'] });
+    guard.onMessage(raw('trap', { content: 'hello', attachments: [] }));
+    await guard.drain();
+    expect(trapCatches).toEqual([]);
   });
 });

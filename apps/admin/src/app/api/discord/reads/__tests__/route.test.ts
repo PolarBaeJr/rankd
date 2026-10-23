@@ -20,6 +20,9 @@ const state = vi.hoisted(() => ({
   tables: {} as Record<string, Record<string, unknown>[]>,
   filters: [] as { table: string; method: string; column: string; value: unknown }[],
   readError: null as { message: string } | null,
+  // Per-table read errors, when one read of several should fail.
+  tableErrors: {} as Record<string, { message: string }>,
+  selects: [] as { table: string; columns: string }[],
 }));
 
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
@@ -29,16 +32,21 @@ vi.mock('@/lib/supabase-server', async () => {
     state.queried.push(table);
     const self: Record<string, unknown> = {};
     const rows = () => state.tables[table] ?? state.rows;
-    for (const method of ['select', 'gte', 'order', 'limit']) self[method] = () => self;
+    const error = () => state.tableErrors[table] ?? state.readError;
+    self.select = (columns: string) => {
+      state.selects.push({ table, columns });
+      return self;
+    };
+    for (const method of ['gte', 'order', 'limit']) self[method] = () => self;
     for (const method of ['eq', 'neq', 'in']) {
       self[method] = (column: string, value: unknown) => {
         state.filters.push({ table, method, column, value });
         return self;
       };
     }
-    self.maybeSingle = async () => ({ data: rows()[0] ?? null, error: state.readError });
+    self.maybeSingle = async () => ({ data: rows()[0] ?? null, error: error() });
     self.then = (resolve: (v: unknown) => unknown) =>
-      resolve({ data: state.readError ? null : rows(), error: state.readError, count: 0 });
+      resolve({ data: error() ? null : rows(), error: error(), count: 0 });
     return self;
   };
   return {
@@ -79,6 +87,8 @@ beforeEach(() => {
   state.tables = {};
   state.filters = [];
   state.readError = null;
+  state.tableErrors = {};
+  state.selects = [];
   resolveDiscordActor.mockReset();
   resolveDiscordActor.mockResolvedValue({ playerId: 'exec-1' });
 });
@@ -297,4 +307,121 @@ describe('GET /api/discord/reads/[name]: tournaments', () => {
     ]);
     expect(state.filters).toContainEqual({ table: 'club_fees', method: 'eq', column: 'fee_type', value: 'tournament' });
   });
+});
+
+describe('GET /api/discord/reads/[name]: event-signups', () => {
+  const EVENT = '55555555-6666-4777-8888-999999999999';
+  const EVENT_ROW = {
+    id: EVENT,
+    title: 'Halloween social',
+    kind: 'social',
+    description: null,
+    location: 'Gym',
+    starts_at: '2026-10-31T02:00:00Z',
+    ends_at: null,
+    signup_opens_at: null,
+    signup_closes_at: null,
+    capacity: 20,
+    cost_cents: null,
+    status: 'published',
+  };
+
+  function seed() {
+    state.tables = {
+      club_events: [EVENT_ROW],
+      club_event_signups: [
+        {
+          created_at: '2026-10-01T00:00:00Z',
+          checked_in_at: '2026-10-31T02:05:00Z',
+          no_show_at: null,
+          walk_in: false,
+          players: { full_name: 'Ada Member', is_guest: false },
+        },
+        {
+          created_at: '2026-10-03T00:00:00Z',
+          checked_in_at: null,
+          no_show_at: '2026-10-31T03:00:00Z',
+          walk_in: false,
+          players: [{ full_name: 'Gus Guest', is_guest: true }],
+        },
+      ],
+      club_event_external_signups: [
+        {
+          full_name: 'Eve Outside',
+          created_at: '2026-10-02T00:00:00Z',
+          checked_in_at: null,
+          no_show_at: null,
+          walk_in: true,
+          email: 'never-shown@example.invalid',
+        },
+      ],
+      club_event_waitlist: [{ joined_at: '2026-10-04T00:00:00Z', players: { full_name: 'Wes Waiting' } }],
+    };
+  }
+
+  it('answers no event for an id that is not a uuid, and reads nothing', async () => {
+    const body = await (await call('event-signups', '?id=nope')).json();
+    expect(body).toEqual({ ok: true, data: { event: null } });
+    expect(state.queried).toEqual([]);
+  });
+
+  it('lists members, guests, externals and the waitlist in sign-up order, with their statuses', async () => {
+    seed();
+    const body = await (await call('event-signups', `?id=${EVENT}`)).json();
+    expect(body.ok).toBe(true);
+    expect(body.data.event).toMatchObject({ id: EVENT, title: 'Halloween social', capacity: 20, status: 'published' });
+    expect(typeof body.data.event.when).toBe('string');
+    expect(body.data.people).toEqual([
+      { name: 'Ada Member', kind: 'member', checkedIn: true, noShow: false, walkIn: false },
+      { name: 'Eve Outside', kind: 'external', checkedIn: false, noShow: false, walkIn: true },
+      { name: 'Gus Guest', kind: 'guest', checkedIn: false, noShow: true, walkIn: false },
+    ]);
+    // A no-show frees their place, as club_event_taken counts it.
+    expect(body.data.taken).toBe(2);
+    expect(body.data.signups).toEqual(['Ada Member', 'Eve Outside', 'Gus Guest']);
+    expect(body.data.waitlist).toEqual(['Wes Waiting']);
+    expect(state.filters).toContainEqual({ table: 'club_event_waitlist', method: 'eq', column: 'status', value: 'waiting' });
+  });
+
+  it('never selects or returns an email or a preferred partner', async () => {
+    seed();
+    const text = await (await call('event-signups', `?id=${EVENT}`)).text();
+    expect(text).not.toContain('never-shown@example.invalid');
+    expect(state.selects.length).toBeGreaterThan(0);
+    for (const { columns } of state.selects) {
+      expect(columns).not.toMatch(/email|preferred_partner/);
+    }
+  });
+
+  it('names the waitlist embed, since resolved_by is a second key to players', async () => {
+    seed();
+    await call('event-signups', `?id=${EVENT}`);
+    const waitlist = state.selects.find((s) => s.table === 'club_event_waitlist');
+    expect(waitlist?.columns).toContain('players!club_event_waitlist_player_id_fkey(');
+  });
+
+  it('links the console page only when the console address is configured', async () => {
+    seed();
+    const before = process.env.NEXT_PUBLIC_ADMIN_URL;
+    try {
+      delete process.env.NEXT_PUBLIC_ADMIN_URL;
+      expect((await (await call('event-signups', `?id=${EVENT}`)).json()).data.event.url).toBeNull();
+      process.env.NEXT_PUBLIC_ADMIN_URL = 'https://club.example.invalid/admin/';
+      expect((await (await call('event-signups', `?id=${EVENT}`)).json()).data.event.url).toBe(
+        `https://club.example.invalid/admin/events/${EVENT}`,
+      );
+    } finally {
+      if (before === undefined) delete process.env.NEXT_PUBLIC_ADMIN_URL;
+      else process.env.NEXT_PUBLIC_ADMIN_URL = before;
+    }
+  });
+
+  it.each(['club_events', 'club_event_signups', 'club_event_external_signups', 'club_event_waitlist'])(
+    'is a 503 when the %s read fails, rather than an empty list',
+    async (table) => {
+      seed();
+      state.tableErrors = { [table]: { message: 'boom' } };
+      expect((await call('event-signups', `?id=${EVENT}`)).status).toBe(503);
+    },
+  );
 });

@@ -73,6 +73,7 @@ import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
 import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
+import { bumpTrapNotice } from './trap-notice.js';
 import { createScamGuard, type GuardRules } from './scam-guard.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
@@ -1125,6 +1126,7 @@ function serverLogOptions(token: string) {
       flagSuspects: settings.automodFlagSuspects,
       words: settings.automodWords,
       wordsAction: settings.automodWordsAction,
+      trapAction: settings.automodTrapAction ?? 'softban',
       trapChannelIds: settings.automodTrapChannelIds,
     };
   };
@@ -1134,7 +1136,12 @@ function serverLogOptions(token: string) {
   if (!scopes.has('scam')) return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
 
   // The scam guard reads the same messages. See scam-guard.ts.
-  const guard = createScamGuard({ api, rulesFor, report: serverLog.post });
+  const guard = createScamGuard({
+    api,
+    rulesFor,
+    report: serverLog.post,
+    onTrapCaught: (_guildId, channelId, action) => void bumpTrapNotice(api, channelId, action),
+  });
   return {
     intents: intentsFor(scopes),
     onDispatch: (type: string, data: unknown) => {

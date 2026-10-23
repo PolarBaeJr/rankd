@@ -342,6 +342,79 @@ export class DiscordApi {
     }
   }
 
+  /** A channel's pinned messages, with who posted each and its first embed's text. Null when unreadable. */
+  async listPinnedMessages(
+    channelId: string
+  ): Promise<{ id: string; authorId: string | null; embed: { footer: string; description: string } | null }[] | null> {
+    try {
+      const response = await this.request('GET', `/channels/${channelId}/pins`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as {
+        id?: unknown;
+        author?: { id?: unknown };
+        embeds?: { footer?: { text?: unknown }; description?: unknown }[];
+      }[];
+      return body
+        .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
+        .map((message) => {
+          const embed = message.embeds?.[0];
+          return {
+            id: message.id,
+            authorId: typeof message.author?.id === 'string' ? message.author.id : null,
+            embed: embed
+              ? {
+                  footer: typeof embed.footer?.text === 'string' ? embed.footer.text : '',
+                  description: typeof embed.description === 'string' ? embed.description : '',
+                }
+              : null,
+          };
+        });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Pin a message. Needs Manage Messages (Pin Messages on newer servers). */
+  async pinMessage(channelId: string, messageId: string, reason: string): Promise<RoleCallResult> {
+    return this.moderationCall('PUT', `/channels/${channelId}/pins/${messageId}`, reason);
+  }
+
+  /** A channel's latest messages, newest first (up to 100), or null when unreadable. */
+  async listRecentMessages(
+    channelId: string,
+    limit: number
+  ): Promise<{ id: string; authorId: string | null; at: number; pinned: boolean }[] | null> {
+    try {
+      const response = await this.request('GET', `/channels/${channelId}/messages?limit=${Math.min(100, Math.max(1, limit))}`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as { id?: unknown; author?: { id?: unknown }; timestamp?: unknown; pinned?: unknown }[];
+      return body
+        .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
+        .map((message) => ({
+          id: message.id,
+          authorId: typeof message.author?.id === 'string' ? message.author.id : null,
+          at: typeof message.timestamp === 'string' ? Date.parse(message.timestamp) : 0,
+          pinned: message.pinned === true,
+        }));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Delete several messages in one call (2 to 100, each under 14 days old, a
+   * Discord rule), or one with a plain delete. Needs Manage Messages.
+   */
+  async deleteMessages(channelId: string, messageIds: string[], reason: string): Promise<RoleCallResult> {
+    if (messageIds.length === 0) return 'ok';
+    if (messageIds.length === 1) {
+      return this.moderationCall('DELETE', `/channels/${channelId}/messages/${messageIds[0]}`, reason);
+    }
+    return this.moderationCall('POST', `/channels/${channelId}/messages/bulk-delete`, reason, {
+      messages: messageIds.slice(0, 100),
+    });
+  }
+
   /**
    * Create a role, with NO permissions.
    *

@@ -335,8 +335,10 @@ The server log is not in this table: since 00302 each server sets its own, with
 `/config server_log channel:`. Auto mod (the scam guard in the code) is set the
 same way with `/config automod`: on or off, what a caught account gets (timeout
 then soft-ban, timeout, soft-ban, or flag only), the spray rule's channels and
-minutes, the server's own words, trap channels, and whether lone giveaway posts
-are flagged (00303). `/config automod` with no options shows the setup. Both
+minutes, the server's own words, trap channels (with their own answer,
+`trap_action:`, a soft ban unless changed), and whether lone giveaway posts
+are flagged (00303). Adding a trap channel posts and pins a warning there whose
+count goes up with each account caught; the count lives in that message. `/config automod` with no options shows the setup. Both
 live in `discord_server_settings`, one row per server. In a club server the
 caller also needs the club check `/config` uses.
 
@@ -617,6 +619,32 @@ an auth gate.
 **Taking a single report down** is a manual delete in Discord. The mapping row
 survives, and the relay only ever posts what has no mapping, so it is never
 re-posted. Hand deletion is permanent here by design.
+
+### Event sign-ups on Discord (`/event signups`)
+
+`/event` is the console's club-event commands on Discord: `create`, `publish`,
+`cancel`, `delete`, `list` and `signups`. `/event signups` picks an event from
+the same list as the others (drafts and published events that have not started
+more than a day ago) and answers, only to the caller, with one embed: the start
+time, places taken against the capacity, then a numbered list in sign-up order
+with the waitlist after it. Each name carries plain-word markers: guest (a
+guest record from a linked tournament), external (a Google Form or door
+non-member), walk-in, checked in, no-show, waitlisted. A list too long for one
+embed ends "...and N more, see the website", linking the event's console page
+when `NEXT_PUBLIC_ADMIN_URL` is set on the console.
+
+**Who can run it is the console's decision, not the bot's.** The bot asks the
+console's `reads/event-signups` as the caller; the console resolves their
+linked account and asks `requireCapability('events.signups.read')`, the same
+gate the console's own sign-ups list uses. Unlinked callers are told to run
+`/link`; anyone without the capability gets the console's own refusal. Only
+names and statuses leave the console: no email, no preferred partner. A failed
+read is a 503, never an empty list.
+
+Discord hides `/event` from everybody but server admins until a server admin
+grants it to a role under **Server Settings, Integrations**. Grant it to the
+roles whose members hold the capability; the console check still applies to
+whoever runs it.
 
 ---
 

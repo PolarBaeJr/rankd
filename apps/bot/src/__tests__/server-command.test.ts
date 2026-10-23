@@ -4,6 +4,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // What is pinned is who may, that every write names the server it was typed
 // in and nothing else, and that a server outside the club gets only these.
 
+const { putUpTrapNotice, takeDownTrapNotice } = vi.hoisted(() => ({
+  putUpTrapNotice: vi.fn(async () => 'ok'),
+  takeDownTrapNotice: vi.fn(async () => {}),
+}));
+vi.mock('../trap-notice.js', () => ({ putUpTrapNotice, takeDownTrapNotice }));
+
 const { fetchServerSettings, writeServerSettings, checkDiscordManager, createMessage } = vi.hoisted(() => ({
   fetchServerSettings: vi.fn(),
   writeServerSettings: vi.fn(),
@@ -139,7 +145,9 @@ describe("/config in somebody else's server", () => {
     expect(reply).toContain('**2 channels** within **5 minutes**');
     expect(reply).toContain('**30-minute timeout**');
     expect(reply).toContain('`nitro`');
-    expect(reply).toContain(`Tell your members not to post in <#${CHANNEL}>`);
+    expect(putUpTrapNotice).toHaveBeenCalledWith(expect.anything(), CHANNEL, 'softban');
+    expect(takeDownTrapNotice).toHaveBeenCalledWith(expect.anything(), '111111111111111111');
+    expect(reply).toContain(`<#${CHANNEL}> now has a pinned warning`);
   });
 
   it('clears the word list with "all", and refuses a word that is too long', async () => {

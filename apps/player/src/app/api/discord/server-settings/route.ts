@@ -42,11 +42,12 @@ const SWITCH_FIELDS = {
 const CHOICE_FIELDS = {
   automodAction: { column: 'automod_action', allowed: AUTOMOD_ACTIONS },
   automodWordsAction: { column: 'automod_words_action', allowed: AUTOMOD_WORDS_ACTIONS },
+  automodTrapAction: { column: 'automod_trap_action', allowed: AUTOMOD_ACTIONS },
 } as const;
 
 // One literal, not concatenated, so the client can still type the rows.
 const COLUMNS =
-  'guild_id, server_log_channel_id, scam_guard, automod_action, automod_timeout_minutes, automod_spray, automod_spray_channels, automod_spray_window_minutes, automod_flag_suspects, automod_words, automod_words_action, automod_trap_channel_ids';
+  'guild_id, server_log_channel_id, scam_guard, automod_action, automod_timeout_minutes, automod_spray, automod_spray_channels, automod_spray_window_minutes, automod_flag_suspects, automod_words, automod_words_action, automod_trap_channel_ids, automod_trap_action';
 
 export interface ServerSettings {
   guildId: string;
@@ -61,6 +62,7 @@ export interface ServerSettings {
   automodFlagSuspects: boolean;
   automodWords: string[];
   automodWordsAction: (typeof AUTOMOD_WORDS_ACTIONS)[number];
+  automodTrapAction: (typeof AUTOMOD_ACTIONS)[number];
   automodTrapChannelIds: string[];
 }
 
@@ -101,6 +103,7 @@ export async function GET(request: Request) {
     automodFlagSuspects: row.automod_flag_suspects,
     automodWords: row.automod_words,
     automodWordsAction: row.automod_words_action as ServerSettings['automodWordsAction'],
+    automodTrapAction: row.automod_trap_action as ServerSettings['automodTrapAction'],
     automodTrapChannelIds: row.automod_trap_channel_ids,
   }));
   return NextResponse.json({ servers });

@@ -271,3 +271,138 @@ describe('/event picker', () => {
     expect((answer.data as { choices: unknown[] }).choices).toEqual([{ name: 'Pub night', value: EVENT_ID }]);
   });
 });
+
+describe('/event signups', () => {
+  const EVENT = {
+    id: EVENT_ID,
+    label: 'Oct 30, 2026, 7:00 PM · Halloween social · Social',
+    title: 'Halloween social',
+    when: 'Oct 30, 2026, 7:00 PM',
+    status: 'published',
+    capacity: 20,
+    url: 'https://club.example.invalid/admin/events/' + EVENT_ID,
+  };
+
+  type Embed = { title: string; url?: string; description: string };
+
+  async function answer(): Promise<{ content?: string; embeds?: Embed[]; flags?: number; allowed_mentions?: unknown }> {
+    const response = await dispatch('event', sub('signups', [{ name: 'event', value: EVENT_ID }]), CONTEXT);
+    expect(response.type).toBe(5);
+    expect(response.data).toEqual({ flags: 64 });
+    const final = await response.finish!();
+    return final.data as never;
+  }
+
+  it('asks the console as the caller, so the console decides who may see the list', async () => {
+    fetchSpy.mockResolvedValueOnce(json({ ok: true, data: { event: EVENT, taken: 0, signups: [], people: [] } }));
+    await answer();
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe(`${BASE}/api/discord/reads/event-signups?id=${EVENT_ID}`);
+    expect(init.headers['x-discord-user-id']).toBe(CALLER);
+  });
+
+  it('says what the console said when the caller lacks the sign-ups permission', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      json({ ok: false, error: 'Your permissions do not include this. Ask an admin.', code: 'AUTH-104' })
+    );
+    const data = await answer();
+    expect(data.embeds).toBeUndefined();
+    expect(data.flags).toBe(64);
+    expect(data.content).toBe('Your permissions do not include this. Ask an admin.');
+  });
+
+  it('points an unlinked caller at /link', async () => {
+    fetchSpy.mockResolvedValueOnce(json({ ok: false, refusal: 'not_linked' }));
+    const data = await answer();
+    expect(data.embeds).toBeUndefined();
+    expect(data.content).toContain('/link');
+  });
+
+  it('says so when the event is gone', async () => {
+    fetchSpy.mockResolvedValueOnce(json({ ok: true, data: { event: null } }));
+    expect((await answer()).content).toBe('That event no longer exists.');
+  });
+
+  it('shows the event, the count against the cap, and a numbered list with plain-word markers', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      json({
+        ok: true,
+        data: {
+          event: EVENT,
+          taken: 2,
+          signups: ['Ada Member', 'Eve Outside', 'Gus *Guest*'],
+          people: [
+            { name: 'Ada Member', kind: 'member', checkedIn: true, noShow: false, walkIn: false },
+            { name: 'Eve Outside', kind: 'external', checkedIn: false, noShow: false, walkIn: true },
+            { name: 'Gus *Guest*', kind: 'guest', checkedIn: false, noShow: true, walkIn: false },
+          ],
+          waitlist: ['Wes Waiting'],
+        },
+      })
+    );
+    const data = await answer();
+    expect(data.flags).toBe(64);
+    expect(data.allowed_mentions).toEqual({ parse: [] });
+    const embed = data.embeds![0]!;
+    expect(embed.title).toBe('Halloween social');
+    expect(embed.url).toBe(EVENT.url);
+    expect(embed.description).toBe(
+      [
+        'Oct 30, 2026, 7:00 PM · 2 signed up / 20 · 1 waitlisted',
+        '',
+        '1. Ada Member (checked in)',
+        '2. Eve Outside (external, walk-in)',
+        '3. Gus \\*Guest\\* (guest, no-show)',
+        '4. Wes Waiting (waitlisted)',
+      ].join('\n')
+    );
+  });
+
+  it('leaves the cap out of an uncapped event and says when nobody has signed up', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      json({ ok: true, data: { event: { ...EVENT, capacity: null, status: 'draft' }, taken: 0, signups: [], people: [] } })
+    );
+    const embed = (await answer()).embeds![0]!;
+    expect(embed.description).toBe('Oct 30, 2026, 7:00 PM · 0 signed up · Draft\n\nNobody has signed up yet.');
+  });
+
+  it('still lists names from an older console that sends only plain names', async () => {
+    fetchSpy.mockResolvedValueOnce(json({ ok: true, data: { event: { id: EVENT_ID, label: 'Pub night', capacity: null }, signups: ['Ada'] } }));
+    const embed = (await answer()).embeds![0]!;
+    expect(embed.title).toBe('Pub night');
+    expect(embed.description).toBe('1 signed up\n\n1. Ada');
+  });
+
+  it('fits a long list under the embed limit and counts the rest, with the link', async () => {
+    const people = Array.from({ length: 300 }, (_, i) => ({
+      name: `Member number ${String(i + 1).padStart(3, '0')} with a longish name`,
+      kind: 'member',
+      checkedIn: false,
+      noShow: false,
+      walkIn: false,
+    }));
+    fetchSpy.mockResolvedValueOnce(
+      json({ ok: true, data: { event: { ...EVENT, capacity: 300 }, taken: 300, signups: people.map((p) => p.name), people } })
+    );
+    const description = (await answer()).embeds![0]!.description;
+    expect(description.length).toBeLessThanOrEqual(4096);
+    const shown = description.split('\n').filter((line) => /^\d+\. /.test(line)).length;
+    expect(shown).toBeGreaterThan(10);
+    expect(shown).toBeLessThan(300);
+    expect(description.endsWith(`...and ${300 - shown} more, see the website: ${EVENT.url}`)).toBe(true);
+  });
+
+  it('says to see the website without a link when the console has no public address', async () => {
+    const people = Array.from({ length: 300 }, (_, i) => ({
+      name: `Member ${i} ${'x'.repeat(30)}`,
+      kind: 'member',
+      checkedIn: false,
+      noShow: false,
+      walkIn: false,
+    }));
+    fetchSpy.mockResolvedValueOnce(json({ ok: true, data: { event: { ...EVENT, url: null }, taken: 300, people } }));
+    const embed = (await answer()).embeds![0]!;
+    expect(embed.url).toBeUndefined();
+    expect(embed.description).toMatch(/\.\.\.and \d+ more, see the website\.$/);
+  });
+});

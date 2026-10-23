@@ -1026,6 +1026,7 @@ export type Database = {
           automod_spray_channels: number
           automod_spray_window_minutes: number
           automod_timeout_minutes: number
+          automod_trap_action: string
           automod_trap_channel_ids: string[]
           automod_words: string[]
           automod_words_action: string
@@ -1041,6 +1042,7 @@ export type Database = {
           automod_spray_channels?: number
           automod_spray_window_minutes?: number
           automod_timeout_minutes?: number
+          automod_trap_action?: string
           automod_trap_channel_ids?: string[]
           automod_words?: string[]
           automod_words_action?: string
@@ -1056,6 +1058,7 @@ export type Database = {
           automod_spray_channels?: number
           automod_spray_window_minutes?: number
           automod_timeout_minutes?: number
+          automod_trap_action?: string
           automod_trap_channel_ids?: string[]
           automod_words?: string[]
           automod_words_action?: string
