@@ -455,15 +455,24 @@ BEGIN
   END IF;
 
   -- One row per Discord server (00302): staging's own log channel and scam
-  -- guard switch for the test server. No FK, so any rank works.
+  -- guard setup for the test server. No FK, so any rank works.
+  --
+  -- WHOLE ROWS, by the columns staging has tonight, so a column added later
+  -- (00303 added four) is carried without editing this. A column prod gains
+  -- that staging has not got yet is left to its default by the replay.
   IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
     EXECUTE $q$
       INSERT INTO _captured
+      -- One INSERT per row, because only lines starting INSERT INTO public.
+      -- survive the grep below.
       SELECT 2, format(
-        'INSERT INTO public.discord_server_settings (guild_id, server_log_channel_id, scam_guard) VALUES (%L, %L, %L) '
-        'ON CONFLICT (guild_id) DO UPDATE SET server_log_channel_id = EXCLUDED.server_log_channel_id, '
-        'scam_guard = EXCLUDED.scam_guard;', guild_id, server_log_channel_id, scam_guard)
-      FROM public.discord_server_settings
+        'INSERT INTO public.discord_server_settings (%1$s) '
+        'SELECT %1$s FROM jsonb_populate_record(NULL::public.discord_server_settings, %2$L::jsonb) '
+        'ON CONFLICT (guild_id) DO UPDATE SET (%1$s) = ROW(%3$s);',
+        (SELECT string_agg(quote_ident(column_key), ', ') FROM jsonb_object_keys(row_data) AS column_key),
+        row_data,
+        (SELECT string_agg('EXCLUDED.' || quote_ident(column_key), ', ') FROM jsonb_object_keys(row_data) AS column_key))
+      FROM (SELECT to_jsonb(settings) AS row_data FROM public.discord_server_settings AS settings) AS captured_rows
     $q$;
   END IF;
 

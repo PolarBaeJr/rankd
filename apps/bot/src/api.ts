@@ -1154,11 +1154,27 @@ export async function checkDiscordManager(
 // whichever server the bot is in, one row each (00302). The app checks the
 // caller again in a club server; see its route.
 
+export type AutomodAction = 'timeout_then_softban' | 'timeout' | 'softban' | 'flag';
+export type AutomodWordsAction = 'delete' | 'punish' | 'flag';
+
 export interface ServerSettings {
   guildId: string;
   serverLogChannelId: string | null;
+  /** Auto mod's master switch (00302's name for it). */
   scamGuard: boolean;
+  /** Auto mod's rules and what they do (00303). */
+  automodAction: AutomodAction;
+  automodTimeoutMinutes: number;
+  automodSpray: boolean;
+  automodSprayChannels: number;
+  automodSprayWindowMinutes: number;
+  automodFlagSuspects: boolean;
+  automodWords: string[];
+  automodWordsAction: AutomodWordsAction;
+  automodTrapChannelIds: string[];
 }
+
+export type ServerSettingsChange = Partial<Omit<ServerSettings, 'guildId'>>;
 
 /** Every server that has settings. Read by the server log and the scam guard. */
 export function fetchServerSettings(): Promise<{ servers: ServerSettings[] }> {
@@ -1168,7 +1184,7 @@ export function fetchServerSettings(): Promise<{ servers: ServerSettings[] }> {
 /** Change the caller's own server. A key left out is left alone; a null log channel switches it off. */
 export function writeServerSettings(
   caller: ManagerCaller,
-  change: { serverLogChannelId?: string | null; scamGuard?: boolean }
+  change: ServerSettingsChange
 ): Promise<{ ok: true }> {
   return send<{ ok: true }>('POST', '/api/discord/server-settings', { ...caller, ...change });
 }

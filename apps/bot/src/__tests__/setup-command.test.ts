@@ -79,7 +79,7 @@ describe("/setup in somebody else's server", () => {
   it('sets their log and scam guard with no club account, and makes no club roles', async () => {
     const { title, text } = await setup([
       { name: 'server_log', type: 7, value: LOG },
-      { name: 'scam_guard', type: 5, value: true },
+      { name: 'automod', type: 5, value: true },
     ]);
     expect(title).toBe('Server set up');
     expect(api.checkDiscordManager).not.toHaveBeenCalled();
@@ -90,12 +90,12 @@ describe("/setup in somebody else's server", () => {
     expect(discord.createGuildRole).not.toHaveBeenCalled();
     expect(api.writeGuildConfig).not.toHaveBeenCalled();
     // The checklist says what is missing and what it stops.
-    expect(text).toContain('**Ban Members**: the scam guard and /softban');
+    expect(text).toContain('**Ban Members**: auto mod and /softban');
     expect(text).not.toContain('Manage Events');
   });
 
   it('refuses somebody without Manage Server', async () => {
-    const { text } = await setup([{ name: 'scam_guard', type: 5, value: true }], { permissions: '0' });
+    const { text } = await setup([{ name: 'automod', type: 5, value: true }], { permissions: '0' });
     expect(text).toContain('Manage Server');
     expect(api.writeServerSettings).not.toHaveBeenCalled();
   });
@@ -112,7 +112,7 @@ describe("/setup in somebody else's server", () => {
 describe('/setup in the club server', () => {
   it('makes the club roles, then this server and the club checklist', async () => {
     api.fetchDiscordSettings.mockResolvedValue({ settings: { announcement_channel_id: '1' } });
-    const { title, text } = await setup([{ name: 'scam_guard', type: 5, value: true }], { guildId: 'club' });
+    const { title, text } = await setup([{ name: 'automod', type: 5, value: true }], { guildId: 'club' });
     expect(title).toBe('Club roles configured');
     expect(api.checkDiscordManager).toHaveBeenCalledWith({ discordUserId: '42', guildId: 'club' }, { setup: true });
     expect(api.writeGuildConfig).toHaveBeenCalled();

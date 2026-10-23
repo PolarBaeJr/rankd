@@ -267,6 +267,17 @@ export class DiscordApi {
     return this.moderationCall('DELETE', `/guilds/${guildId}/bans/${userId}`, reason);
   }
 
+  /**
+   * Time a member out until `until` (Discord caps it at 28 days). They stay
+   * in the server and can read, but cannot post, react or speak. Needs
+   * Moderate Members, and the same role order as a ban.
+   */
+  async timeoutMember(guildId: string, userId: string, until: Date, reason: string): Promise<RoleCallResult> {
+    return this.moderationCall('PATCH', `/guilds/${guildId}/members/${userId}`, reason, {
+      communication_disabled_until: until.toISOString(),
+    });
+  }
+
   private async moderationCall(
     method: string,
     path: string,

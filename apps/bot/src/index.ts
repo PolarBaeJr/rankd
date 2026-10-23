@@ -73,7 +73,7 @@ import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
 import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
-import { createScamGuard } from './scam-guard.js';
+import { createScamGuard, type GuardRules } from './scam-guard.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -1085,6 +1085,7 @@ function serverLogOptions(token: string) {
   // A failed read keeps the last answer; before any answer, nothing posts.
   let servers: { byGuild: Map<string, ServerSettings>; at: number } | null = null;
   let reading: Promise<Map<string, ServerSettings>> | null = null;
+  let lastReadFailure = 0;
   async function serverSettings(guildId: string): Promise<ServerSettings | undefined> {
     if (!servers || Date.now() - servers.at >= 60_000) {
       reading ??= fetchServerSettings()
@@ -1093,6 +1094,14 @@ function serverLogOptions(token: string) {
           return servers.byGuild;
         })
         .catch((error) => {
+          // Said out loud, at most every ten minutes: before the first answer a
+          // failed read means no server log and no scam guard anywhere.
+          if (Date.now() - lastReadFailure >= 600_000) {
+            lastReadFailure = Date.now();
+            console.error(
+              `[server-log] could not read the server settings${servers ? ', using the last ones' : ', so nothing is logged yet'}: ${String(error)}`
+            );
+          }
           if (!servers) throw error;
           return servers.byGuild;
         })
@@ -1104,14 +1113,28 @@ function serverLogOptions(token: string) {
     return servers?.byGuild.get(guildId);
   }
   const resolveChannel = async (guildId: string) => (await serverSettings(guildId))?.serverLogChannelId ?? null;
-  const enabledIn = async (guildId: string) => (await serverSettings(guildId))?.scamGuard === true;
+  const rulesFor = async (guildId: string): Promise<GuardRules | null> => {
+    const settings = await serverSettings(guildId);
+    if (!settings?.scamGuard) return null;
+    return {
+      action: settings.automodAction,
+      timeoutMinutes: settings.automodTimeoutMinutes,
+      spray: settings.automodSpray,
+      channels: settings.automodSprayChannels,
+      windowMinutes: settings.automodSprayWindowMinutes,
+      flagSuspects: settings.automodFlagSuspects,
+      words: settings.automodWords,
+      wordsAction: settings.automodWordsAction,
+      trapChannelIds: settings.automodTrapChannelIds,
+    };
+  };
 
   const api = new DiscordApi({ token });
   const serverLog = createServerLog({ api, scopes, resolveChannel });
   if (!scopes.has('scam')) return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
 
   // The scam guard reads the same messages. See scam-guard.ts.
-  const guard = createScamGuard({ api, enabledIn, report: serverLog.post });
+  const guard = createScamGuard({ api, rulesFor, report: serverLog.post });
   return {
     intents: intentsFor(scopes),
     onDispatch: (type: string, data: unknown) => {

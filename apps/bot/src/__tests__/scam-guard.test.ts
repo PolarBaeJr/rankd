@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  SPRAY_WINDOW_MS,
+  DEFAULT_RULES,
+  STRIKE_MS,
   SprayTracker,
   createScamGuard,
+  type GuardRules,
   fingerprint,
+  matchWord,
   isModerator,
   isSuspect,
   readMessage,
@@ -12,6 +15,7 @@ import {
 import { intentsFor, parseServerLogScopes } from '../server-log.js';
 import type { ServerLogEntry } from '../server-log.js';
 
+const WINDOW_MS = DEFAULT_RULES.windowMinutes * 60_000;
 const BAIT = 'Gifting free stuff to the first 5 people, DM me!';
 const PHOTOS = [
   { size: 48211, content_type: 'image/png' },
@@ -121,7 +125,7 @@ describe('SprayTracker', () => {
     };
     expect(tracker.verdict(message('a', plain), 0).kind).toBe('none');
     expect(tracker.verdict(message('b', plain), 1000).kind).toBe('none');
-    expect(tracker.verdict(message('c', plain), 2000)).toEqual({
+    expect(tracker.verdict(message('c', plain), 2000)).toMatchObject({
       kind: 'spray',
       channels: 3,
     });
@@ -130,10 +134,35 @@ describe('SprayTracker', () => {
   it('calls a giveaway with pictures in two channels a spray', () => {
     const tracker = new SprayTracker();
     expect(tracker.verdict(message('a'), 0).kind).toBe('suspect');
-    expect(tracker.verdict(message('b'), 1000)).toEqual({
+    expect(tracker.verdict(message('b'), 1000)).toMatchObject({
       kind: 'spray',
       channels: 2,
     });
+  });
+
+  it("follows the server's own channel count and window", () => {
+    const tracker = new SprayTracker();
+    const plain = { content: 'join my server for exclusive deals today', attachments: [] };
+    const strict = { ...DEFAULT_RULES, channels: 2, windowMinutes: 10 };
+    expect(tracker.verdict(message('a', plain), 0, strict).kind).toBe('none');
+    // Eight minutes later: outside the default window, inside this one.
+    expect(tracker.verdict(message('b', plain), 8 * 60_000, strict)).toMatchObject({ kind: 'spray', channels: 2 });
+    const loose = { ...DEFAULT_RULES, channels: 5 };
+    const other = new SprayTracker();
+    for (const channel of ['a', 'b', 'c', 'd']) {
+      expect(other.verdict(message(channel, plain), 0, loose).kind).toBe('none');
+    }
+    expect(other.verdict(message('e', plain), 0, loose).kind).toBe('spray');
+  });
+
+  it('hands back every copy, so a timeout can delete them', () => {
+    const tracker = new SprayTracker();
+    tracker.verdict(message('a', { id: 'first' }), 0);
+    const verdict = tracker.verdict(message('b', { id: 'second' }), 1000);
+    expect(verdict.kind === 'spray' && verdict.copies).toEqual([
+      { channelId: 'a', messageId: 'first' },
+      { channelId: 'b', messageId: 'second' },
+    ]);
   });
 
   it('does not count one channel twice, or posts outside the window', () => {
@@ -144,8 +173,8 @@ describe('SprayTracker', () => {
     };
     tracker.verdict(message('a', plain), 0);
     tracker.verdict(message('a', plain), 500);
-    tracker.verdict(message('b', plain), SPRAY_WINDOW_MS + 1000);
-    expect(tracker.verdict(message('c', plain), SPRAY_WINDOW_MS + 1001).kind).toBe('none');
+    tracker.verdict(message('b', plain), WINDOW_MS + 1000);
+    expect(tracker.verdict(message('c', plain), WINDOW_MS + 1001).kind).toBe('none');
   });
 
   it('keeps accounts apart', () => {
@@ -157,6 +186,17 @@ describe('SprayTracker', () => {
     tracker.verdict(message('a', { ...plain, author: { id: 'one' } }), 0);
     tracker.verdict(message('b', { ...plain, author: { id: 'two' } }), 0);
     expect(tracker.verdict(message('c', { ...plain, author: { id: 'three' } }), 0).kind).toBe('none');
+  });
+});
+
+describe('matchWord', () => {
+  it('matches whole words and phrases, ignoring case, and not inside other words', () => {
+    expect(matchWord('Get FREE Nitro here', ['nitro'])).toBe('nitro');
+    expect(matchWord('free steam keys!', ['steam keys'])).toBe('steam keys');
+    expect(matchWord('my nitrogen tank', ['nitro'])).toBeNull();
+    expect(matchWord('anything', [])).toBeNull();
+    expect(matchWord('a.b c', ['a.b'])).toBe('a.b');
+    expect(matchWord('axb c', ['a.b'])).toBeNull();
   });
 });
 
@@ -180,36 +220,108 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
     getOwnRolePosition: vi.fn(async () => 8),
     banMember: vi.fn(async () => 'ok' as const),
     unbanMember: vi.fn(async () => 'ok' as const),
+    timeoutMember: vi.fn(async () => 'ok' as const),
+    deleteMessage: vi.fn(async () => true),
     ...overrides,
   };
 }
 
-function guardWith(api: ReturnType<typeof fakeApi>, servers = ['club']) {
+function guardWith(api: ReturnType<typeof fakeApi>, servers = ['club'], rules: Partial<GuardRules> = {}) {
   const reports: { guildId: string; entry: ServerLogEntry }[] = [];
-  let clock = Date.parse('2026-10-22T18:00:00Z');
+  const clock = { at: Date.parse('2026-10-22T18:00:00Z') };
   const guard = createScamGuard({
     api,
-    enabledIn: async (guildId) => servers.includes(guildId),
+    rulesFor: async (guildId) => (servers.includes(guildId) ? { ...DEFAULT_RULES, ...rules } : null),
     report: (guildId, entry) => reports.push({ guildId, entry }),
     log: () => {},
-    now: () => new Date((clock += 1000)),
+    now: () => new Date((clock.at += 1000)),
     sleep: async () => {},
   });
-  return { guard, reports };
+  return { guard, reports, clock };
 }
 
+const outcome = (reports: { entry: ServerLogEntry }[]) => reports.at(-1)?.entry.embed.fields?.[0]?.value ?? '';
+
 describe('createScamGuard', () => {
-  it('soft-bans a spray once, deleting the last hour, and reports it', async () => {
+  it('times a first spray out, once, deletes its copies, and reports it', async () => {
     const api = fakeApi();
     const { guard, reports } = guardWith(api);
     for (const channel of ['a', 'b', 'c', 'd']) guard.onMessage(raw(channel));
     await guard.drain();
-    expect(api.banMember).toHaveBeenCalledTimes(1);
-    expect(api.banMember).toHaveBeenCalledWith('club', 'hacked', 3600, expect.stringContaining('scam guard'));
-    expect(api.unbanMember).toHaveBeenCalledTimes(1);
+    expect(api.timeoutMember).toHaveBeenCalledTimes(1);
+    const [, who, until, reason] = api.timeoutMember.mock.calls[0] as unknown as [string, string, Date, string];
+    expect(who).toBe('hacked');
+    expect(until.getTime() - Date.parse('2026-10-22T18:00:00Z')).toBe(2000 + 60 * 60_000);
+    expect(reason).toContain('Auto mod');
+    expect(api.banMember).not.toHaveBeenCalled();
+    // The two copies the verdict saw, then the two that were already on their way.
+    expect(api.deleteMessage).toHaveBeenCalledTimes(4);
     const titles = reports.map((r) => r.entry.embed.title);
-    expect(titles).toEqual(['Possible scam post (no action taken)', 'Scam spray caught']);
-    expect(reports[1]?.entry.embed.fields?.[0]?.value).toMatch(/^Soft-banned/);
+    expect(titles).toEqual(['Auto mod: possible scam post (no action taken)', 'Auto mod caught a spray']);
+    expect(outcome(reports)).toMatch(/^Timed out for 1 hour .*soft-banned/);
+  });
+
+  it('soft-bans the same account spraying again within a day, and not after', async () => {
+    const api = fakeApi();
+    const { guard, reports, clock } = guardWith(api);
+    for (const channel of ['a', 'b']) guard.onMessage(raw(channel));
+    await guard.drain();
+    clock.at += 2 * 3_600_000;
+    for (const channel of ['a', 'b']) guard.onMessage(raw(channel));
+    await guard.drain();
+    expect(api.banMember).toHaveBeenCalledTimes(1);
+    expect(api.banMember).toHaveBeenCalledWith('club', 'hacked', 3600, expect.stringContaining('again after a timeout'));
+    expect(outcome(reports)).toMatch(/^Caught again after a timeout, so soft-banned/);
+
+    const later = fakeApi();
+    const second = guardWith(later);
+    for (const channel of ['a', 'b']) second.guard.onMessage(raw(channel));
+    await second.guard.drain();
+    second.clock.at += STRIKE_MS + 60_000;
+    for (const channel of ['a', 'b']) second.guard.onMessage(raw(channel));
+    await second.guard.drain();
+    expect(later.banMember).not.toHaveBeenCalled();
+    expect(later.timeoutMember).toHaveBeenCalledTimes(2);
+  });
+
+  it('does what the server chose: soft-ban at once, timeout only, or only flag', async () => {
+    const softbanApi = fakeApi();
+    const softban = guardWith(softbanApi, ['club'], { action: 'softban' });
+    for (const channel of ['a', 'b']) softban.guard.onMessage(raw(channel));
+    await softban.guard.drain();
+    expect(softbanApi.banMember).toHaveBeenCalledTimes(1);
+    expect(softbanApi.timeoutMember).not.toHaveBeenCalled();
+    expect(outcome(softban.reports)).toMatch(/^soft-banned/);
+
+    const timeoutApi = fakeApi();
+    const timeoutOnly = guardWith(timeoutApi, ['club'], { action: 'timeout', timeoutMinutes: 30 });
+    for (const channel of ['a', 'b']) timeoutOnly.guard.onMessage(raw(channel));
+    await timeoutOnly.guard.drain();
+    timeoutOnly.clock.at += 3_600_000;
+    for (const channel of ['a', 'b']) timeoutOnly.guard.onMessage(raw(channel));
+    await timeoutOnly.guard.drain();
+    expect(timeoutApi.timeoutMember).toHaveBeenCalledTimes(2);
+    expect(timeoutApi.banMember).not.toHaveBeenCalled();
+    expect(outcome(timeoutOnly.reports)).toMatch(/^Timed out for 30 minutes/);
+    expect(outcome(timeoutOnly.reports)).not.toMatch(/soft-banned/);
+
+    const flagApi = fakeApi();
+    const flag = guardWith(flagApi, ['club'], { action: 'flag' });
+    for (const channel of ['a', 'b']) flag.guard.onMessage(raw(channel));
+    await flag.guard.drain();
+    expect(flagApi.timeoutMember).not.toHaveBeenCalled();
+    expect(flagApi.banMember).not.toHaveBeenCalled();
+    expect(flagApi.deleteMessage).not.toHaveBeenCalled();
+    expect(outcome(flag.reports)).toMatch(/^No action taken: this server only flags/);
+  });
+
+  it('says what is missing when Discord refuses the timeout', async () => {
+    const api = fakeApi({ timeoutMember: vi.fn(async () => 'forbidden' as const) });
+    const { guard, reports } = guardWith(api);
+    for (const channel of ['a', 'b']) guard.onMessage(raw(channel));
+    await guard.drain();
+    expect(outcome(reports)).toMatch(/Moderate Members/);
+    expect(api.deleteMessage).not.toHaveBeenCalled();
   });
 
   it('never acts in a server that has not switched it on', async () => {
@@ -217,6 +329,7 @@ describe('createScamGuard', () => {
     const { guard, reports } = guardWith(api, ['other']);
     for (const channel of ['a', 'b', 'c']) guard.onMessage(raw(channel));
     await guard.drain();
+    expect(api.timeoutMember).not.toHaveBeenCalled();
     expect(api.banMember).not.toHaveBeenCalled();
     expect(reports).toEqual([]);
   });
@@ -227,26 +340,28 @@ describe('createScamGuard', () => {
     for (const channel of ['a', 'b', 'c']) guard.onMessage(raw(channel, { member: { roles: ['mod'] } }));
     for (const channel of ['a', 'b', 'c']) guard.onMessage(raw(channel, { author: { id: 'owner' } }));
     await guard.drain();
+    expect(api.timeoutMember).not.toHaveBeenCalled();
     expect(api.banMember).not.toHaveBeenCalled();
     expect(reports).toEqual([]);
   });
 
-  it('reports instead of banning someone ranked at or above the bot', async () => {
+  it('reports instead of acting on someone ranked at or above the bot', async () => {
     const api = fakeApi();
     const { guard, reports } = guardWith(api);
     for (const channel of ['a', 'b']) guard.onMessage(raw(channel, { member: { roles: ['top'] } }));
     await guard.drain();
+    expect(api.timeoutMember).not.toHaveBeenCalled();
     expect(api.banMember).not.toHaveBeenCalled();
-    expect(reports.at(-1)?.entry.embed.fields?.[0]?.value).toMatch(/at or above mine/);
+    expect(outcome(reports)).toMatch(/at or above mine/);
   });
 
   it('says so loudly when the unban never lands', async () => {
     const api = fakeApi({ unbanMember: vi.fn(async () => 'failed' as const) });
-    const { guard, reports } = guardWith(api);
+    const { guard, reports } = guardWith(api, ['club'], { action: 'softban' });
     for (const channel of ['a', 'b']) guard.onMessage(raw(channel));
     await guard.drain();
     expect(api.unbanMember).toHaveBeenCalledTimes(3);
-    expect(reports.at(-1)?.entry.embed.fields?.[0]?.value).toMatch(/still BANNED/);
+    expect(outcome(reports)).toMatch(/still BANNED/);
   });
 
   it('only flags a lone giveaway post', async () => {
@@ -260,7 +375,66 @@ describe('createScamGuard', () => {
       })
     );
     await guard.drain();
+    expect(api.timeoutMember).not.toHaveBeenCalled();
     expect(api.banMember).not.toHaveBeenCalled();
-    expect(reports.map((r) => r.entry.embed.title)).toEqual(['Possible scam post (no action taken)']);
+    expect(reports.map((r) => r.entry.embed.title)).toEqual(['Auto mod: possible scam post (no action taken)']);
+  });
+
+  it('catches any post in a trap channel, deleting it, and deletes later ones too', async () => {
+    const api = fakeApi();
+    const { guard, reports } = guardWith(api, ['club'], { trapChannelIds: ['trap'] });
+    guard.onMessage(raw('trap', { content: 'hello', attachments: [] }));
+    await guard.drain();
+    guard.onMessage(raw('trap', { content: 'hello again', attachments: [] }));
+    await guard.drain();
+    expect(api.timeoutMember).toHaveBeenCalledTimes(1);
+    expect(api.deleteMessage).toHaveBeenCalledTimes(2);
+    expect(reports.map((r) => r.entry.embed.title)).toEqual(['Auto mod: post in a trap channel']);
+    expect(outcome(reports)).toMatch(/^Timed out for 1 hour and the post is deleted/);
+  });
+
+  it("leaves a moderator's post in a trap channel alone", async () => {
+    const api = fakeApi();
+    const { guard, reports } = guardWith(api, ['club'], { trapChannelIds: ['trap'] });
+    guard.onMessage(raw('trap', { member: { roles: ['mod'] } }));
+    await guard.drain();
+    expect(api.deleteMessage).not.toHaveBeenCalled();
+    expect(reports).toEqual([]);
+  });
+
+  it("deletes a post with one of the server's words, or punishes, or only flags, as chosen", async () => {
+    const chatter = { content: 'anyone want free nitro', attachments: [] };
+    const deleteApi = fakeApi();
+    const deleting = guardWith(deleteApi, ['club'], { words: ['nitro'] });
+    deleting.guard.onMessage(raw('a', chatter));
+    await deleting.guard.drain();
+    expect(deleteApi.deleteMessage).toHaveBeenCalledWith('a', expect.any(String));
+    expect(deleteApi.timeoutMember).not.toHaveBeenCalled();
+    expect(deleting.reports.map((r) => [r.entry.embed.title, r.entry.embed.fields?.[0]?.value])).toEqual([
+      ['Auto mod: blocked word', 'Deleted.'],
+    ]);
+
+    const punishApi = fakeApi();
+    const punishing = guardWith(punishApi, ['club'], { words: ['nitro'], wordsAction: 'punish' });
+    punishing.guard.onMessage(raw('a', chatter));
+    await punishing.guard.drain();
+    expect(punishApi.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(punishApi.timeoutMember).toHaveBeenCalledTimes(1);
+
+    const flagApi = fakeApi();
+    const flagging = guardWith(flagApi, ['club'], { words: ['nitro'], wordsAction: 'flag' });
+    flagging.guard.onMessage(raw('a', chatter));
+    await flagging.guard.drain();
+    expect(flagApi.deleteMessage).not.toHaveBeenCalled();
+    expect(outcome(flagging.reports)).toMatch(/only flags its words/);
+  });
+
+  it('does nothing about a spray or a giveaway post when those rules are off', async () => {
+    const api = fakeApi();
+    const { guard, reports } = guardWith(api, ['club'], { spray: false, flagSuspects: false });
+    for (const channel of ['a', 'b', 'c', 'd']) guard.onMessage(raw(channel));
+    await guard.drain();
+    expect(api.timeoutMember).not.toHaveBeenCalled();
+    expect(reports).toEqual([]);
   });
 });

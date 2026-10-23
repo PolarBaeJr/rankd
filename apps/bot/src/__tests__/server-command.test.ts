@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// /config server_log and /config scam_guard: a server's own settings (00302).
+// /config server_log and /config automod: a server's own settings (00302).
 // What is pinned is who may, that every write names the server it was typed
 // in and nothing else, and that a server outside the club gets only these.
 
@@ -66,7 +66,7 @@ beforeEach(() => {
 describe('/config definition', () => {
   it('carries the per-server settings, and there is no separate /server', () => {
     const config = COMMAND_DEFINITIONS.find((c) => c.name === 'config') as { options: { name: string }[] };
-    expect(config.options.map((o) => o.name)).toEqual(expect.arrayContaining(['server_log', 'scam_guard']));
+    expect(config.options.map((o) => o.name)).toEqual(expect.arrayContaining(['server_log', 'automod']));
     expect(COMMAND_DEFINITIONS.find((c) => c.name === 'server')).toBeUndefined();
   });
 });
@@ -99,10 +99,69 @@ describe("/config in somebody else's server", () => {
     expect(writeServerSettings).not.toHaveBeenCalled();
   });
 
+  it('sets only the auto mod options filled in, edits the lists, and shows the setup', async () => {
+    const saved = {
+      guildId: 'theirs',
+      serverLogChannelId: null,
+      scamGuard: true,
+      automodAction: 'timeout',
+      automodTimeoutMinutes: 30,
+      automodSpray: true,
+      automodSprayChannels: 2,
+      automodSprayWindowMinutes: 5,
+      automodFlagSuspects: true,
+      automodWords: ['nitro', 'steam keys'],
+      automodWordsAction: 'delete',
+      automodTrapChannelIds: ['111111111111111111'],
+    };
+    fetchServerSettings.mockResolvedValue({ servers: [saved] });
+    const reply = await run('automod', [
+      { name: 'action', type: 3, value: 'timeout' },
+      { name: 'timeout_minutes', type: 4, value: 30 },
+      { name: 'spray_channels', type: 4, value: 2 },
+      { name: 'spray_minutes', type: 4, value: 5 },
+      { name: 'add_words', type: 3, value: ' Free Robux , nitro' },
+      { name: 'remove_words', type: 3, value: 'steam keys' },
+      { name: 'add_trap', type: 7, value: CHANNEL },
+      { name: 'remove_trap', type: 7, value: '111111111111111111' },
+    ]);
+    expect(writeServerSettings).toHaveBeenCalledWith(
+      { discordUserId: '42', guildId: 'theirs' },
+      {
+        automodAction: 'timeout',
+        automodTimeoutMinutes: 30,
+        automodSprayChannels: 2,
+        automodSprayWindowMinutes: 5,
+        automodWords: ['nitro', 'free robux'],
+        automodTrapChannelIds: [CHANNEL],
+      }
+    );
+    expect(reply).toContain('**2 channels** within **5 minutes**');
+    expect(reply).toContain('**30-minute timeout**');
+    expect(reply).toContain('`nitro`');
+    expect(reply).toContain(`Tell your members not to post in <#${CHANNEL}>`);
+  });
+
+  it('clears the word list with "all", and refuses a word that is too long', async () => {
+    fetchServerSettings.mockResolvedValue({ servers: [] });
+    await run('automod', [{ name: 'remove_words', type: 3, value: 'all' }]);
+    expect(writeServerSettings).toHaveBeenCalledWith(expect.anything(), { automodWords: [] });
+    writeServerSettings.mockClear();
+    const reply = await run('automod', [{ name: 'add_words', type: 3, value: 'x'.repeat(31) }]);
+    expect(reply).toContain('too long');
+    expect(writeServerSettings).not.toHaveBeenCalled();
+  });
+
+  it('with no options, shows the guard and changes nothing', async () => {
+    const reply = await run('automod');
+    expect(writeServerSettings).not.toHaveBeenCalled();
+    expect(reply).toContain('**Auto mod**: off');
+  });
+
   it('turns the log off and the scam guard on and off', async () => {
     await run('server_log', [{ name: 'off', type: 5, value: true }]);
-    await run('scam_guard', [{ name: 'enabled', type: 5, value: true }]);
-    await run('scam_guard', [{ name: 'enabled', type: 5, value: false }]);
+    await run('automod', [{ name: 'enabled', type: 5, value: true }]);
+    await run('automod', [{ name: 'enabled', type: 5, value: false }]);
     expect(writeServerSettings.mock.calls.map((call) => call[1])).toEqual([
       { serverLogChannelId: null },
       { scamGuard: true },
@@ -125,7 +184,7 @@ describe("/config in somebody else's server", () => {
       ],
     });
     const shown = await run('show');
-    expect(shown).toContain('**Scam guard**: off');
+    expect(shown).toContain('**Auto mod**: off');
     expect(shown).not.toContain('111111111111111111');
     expect(checkDiscordManager).not.toHaveBeenCalled();
   });
@@ -134,7 +193,7 @@ describe("/config in somebody else's server", () => {
 describe('/config in a club server', () => {
   it('also needs the club check before it writes anything', async () => {
     checkDiscordManager.mockResolvedValue('not_linked');
-    const reply = await run('scam_guard', [{ name: 'enabled', type: 5, value: false }], { guildId: 'club' });
+    const reply = await run('automod', [{ name: 'enabled', type: 5, value: false }], { guildId: 'club' });
     expect(checkDiscordManager).toHaveBeenCalledWith({ discordUserId: '42', guildId: 'club' });
     expect(writeServerSettings).not.toHaveBeenCalled();
     expect(reply).toContain('/link');

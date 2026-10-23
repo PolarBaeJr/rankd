@@ -34,6 +34,9 @@ import {
   checkDiscordManager,
   fetchServerSettings,
   writeServerSettings,
+  type AutomodAction,
+  type AutomodWordsAction,
+  type ServerSettingsChange,
   type ManagerRefusal,
   submitAnnouncement,
   setMembership,
@@ -74,6 +77,7 @@ import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipR
 import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
+import { CRYPTO_WORDS, GIVEAWAY_WORDS } from './scam-guard.js';
 import { socialsReply, type SocialsPayload } from './socials.js';
 import {
   ALL_SETTINGS,
@@ -678,7 +682,7 @@ export const COMMAND_DEFINITIONS = [
         channel_types: [0, 5],
       },
       // THIS SERVER'S OWN (00302), in any server: the same as /config
-      // server_log and /config scam_guard, offered here so a first run sets
+      // server_log and /config automod, offered here so a first run sets
       // everything at once.
       {
         type: 7,
@@ -689,8 +693,8 @@ export const COMMAND_DEFINITIONS = [
       },
       {
         type: 5,
-        name: 'scam_guard',
-        description: 'Soft-ban accounts that spray the same post across channels (optional)',
+        name: 'automod',
+        description: 'Stop accounts that spray the same post across channels (optional)',
         required: false,
       },
       {
@@ -759,9 +763,89 @@ export const COMMAND_DEFINITIONS = [
       },
       {
         type: 1,
-        name: 'scam_guard',
-        description: 'Soft-ban accounts in this server that spray the same post across channels',
-        options: [{ type: 5, name: 'enabled', description: 'On or off', required: true }],
+        name: 'automod',
+        description: "This server's auto mod: what it catches and what a catch gets",
+        // All optional: only the ones filled in change, and none shows the
+        // current setup.
+        options: [
+          { type: 5, name: 'enabled', description: 'Auto mod on or off', required: false },
+          {
+            type: 3,
+            name: 'action',
+            description: 'What a caught account gets',
+            required: false,
+            choices: [
+              { name: 'Timeout, then soft-ban if caught again (default)', value: 'timeout_then_softban' },
+              { name: 'Timeout only', value: 'timeout' },
+              { name: 'Soft-ban at once', value: 'softban' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
+          {
+            type: 4,
+            name: 'timeout_minutes',
+            description: 'How long the timeout lasts, in minutes (default 60, up to a week)',
+            required: false,
+            min_value: 1,
+            max_value: 10080,
+          },
+          { type: 5, name: 'spray', description: 'Catch the same post in several channels (default on)', required: false },
+          {
+            type: 4,
+            name: 'spray_channels',
+            description: 'How many channels the same post must reach (default 3)',
+            required: false,
+            min_value: 2,
+            max_value: 10,
+          },
+          {
+            type: 4,
+            name: 'spray_minutes',
+            description: 'Within how many minutes (default 2)',
+            required: false,
+            min_value: 1,
+            max_value: 10,
+          },
+          {
+            type: 5,
+            name: 'flag_giveaways',
+            description: 'Log a lone post that reads like a giveaway scam (default on)',
+            required: false,
+          },
+          {
+            type: 3,
+            name: 'add_words',
+            description: 'Words to catch, separated by commas',
+            required: false,
+            max_length: 500,
+          },
+          {
+            type: 3,
+            name: 'remove_words',
+            description: 'Words to stop catching, separated by commas ("all" clears the list)',
+            required: false,
+            max_length: 500,
+          },
+          {
+            type: 3,
+            name: 'words_action',
+            description: 'What a post with one of the words gets',
+            required: false,
+            choices: [
+              { name: 'Delete it (default)', value: 'delete' },
+              { name: 'Delete it, and the action above for the author', value: 'punish' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
+          {
+            type: 7,
+            name: 'add_trap',
+            description: 'A channel nobody should post in: any post there is caught',
+            required: false,
+            channel_types: [0, 5],
+          },
+          { type: 7, name: 'remove_trap', description: 'Stop treating a channel as a trap', required: false, channel_types: [0, 5] },
+        ],
       },
       {
         type: 1,
@@ -4197,7 +4281,7 @@ export async function handleSetup(
   // After the roles, and never fatal to them: they are already made and saved.
   const serverLines = await applyServerOptions(api, options, manager).catch((error) => {
     console.error('[bot] setup could not apply the server settings:', error);
-    return ["I could not save or read this server's settings. Use **/config server_log** and **/config scam_guard**."];
+    return ["I could not save or read this server's settings. Use **/config server_log** and **/config automod**."];
   });
   lines.push('', '__This server__', ...serverLines);
   lines.push(...(await permissionLines(api, guildId, true)));
@@ -4216,7 +4300,7 @@ function clip4096(text: string): string {
 }
 
 /**
- * /setup's server_log and scam_guard options, applied for this server, then
+ * /setup's server_log and automod options, applied for this server, then
  * where each stands. The caller has already passed whatever check this server
  * needs; the app checks again.
  */
@@ -4233,7 +4317,7 @@ async function applyServerOptions(
     if (await proveCanPost(api, logChannel, "This server's log")) change.serverLogChannelId = logChannel;
     else lines.push(`I could not post in <#${logChannel}>, so the server log was left as it was. Let me see and post there.`);
   }
-  const guard = option(options, 'scam_guard');
+  const guard = option(options, 'automod');
   if (typeof guard === 'boolean') change.scamGuard = guard;
   if (Object.keys(change).length > 0) await writeServerSettings(caller, change);
   lines.push(await serverSettingsText(caller.guildId));
@@ -4245,7 +4329,9 @@ const PERMISSION_NEEDS: { bit: bigint; name: string; why: string; clubOnly?: boo
   { bit: 1n << 11n, name: 'Send Messages', why: 'replies and logs' },
   { bit: 1n << 14n, name: 'Embed Links', why: 'every log entry is an embed' },
   { bit: 1n << 7n, name: 'View Audit Log', why: 'the server log names who banned, kicked or changed roles' },
-  { bit: 1n << 2n, name: 'Ban Members', why: 'the scam guard and /softban' },
+  { bit: 1n << 2n, name: 'Ban Members', why: 'auto mod and /softban' },
+  { bit: 1n << 40n, name: 'Timeout Members', why: 'auto mod times out a spraying account' },
+  { bit: 1n << 13n, name: 'Manage Messages', why: 'auto mod deletes the copies of a spray' },
   { bit: 1n << 28n, name: 'Manage Roles', why: 'role pickers, and the club roles' },
   { bit: 1n << 33n, name: 'Manage Events', why: 'tournaments become Discord events', clubOnly: true },
 ];
@@ -4639,7 +4725,7 @@ async function handleConfig(
   const { name: sub, options: args } = subcommand(options);
 
   // THIS SERVER'S OWN SETTINGS work in any server; see handleServerSetting.
-  if (sub === 'server_log' || sub === 'scam_guard') return handleServerSetting(sub, args, context);
+  if (sub === 'server_log' || sub === 'automod') return handleServerSetting(sub, args, context);
   const clubServer = await isClubServer(context.guildId);
   if (sub === 'show' && !clubServer) {
     if (!canManageServer(context.permissions)) return ephemeral(NEEDS_MANAGE_SERVER);
@@ -4647,13 +4733,13 @@ async function handleConfig(
       title: "This server's bot settings",
       color: CLUB_RED,
       description: await serverSettingsText(context.guildId),
-      footer: { text: 'Change these with /config server_log or /config scam_guard.' },
+      footer: { text: 'Change these with /config server_log or /config automod.' },
     });
   }
   if (!clubServer) {
     return ephemeral(
       "That one is the club's setup, which lives in the club's own servers. Here you can use " +
-        '**/config show**, **/config server_log** and **/config scam_guard**.'
+        '**/config show**, **/config server_log** and **/config automod**.'
     );
   }
 
@@ -4702,7 +4788,7 @@ async function handleConfig(
         text:
           'Tournaments become Discord events, not messages — that relay runs with no channel. ' +
           'Change any of these with /config channels, /config ping_roles, /config tournament, ' +
-          '/config server_log or /config scam_guard.',
+          '/config server_log or /config automod.',
       },
     });
   }
@@ -7613,6 +7699,34 @@ export function canManageServer(permissions: string | null | undefined): boolean
   }
 }
 
+/** What each auto mod action does, in words, given the timeout length. */
+const AUTOMOD_ACTION_TEXT: Record<AutomodAction, (timeoutMinutes: number) => string> = {
+  timeout_then_softban: (minutes) =>
+    `a **${minutes}-minute timeout** and the posts deleted; a **soft-ban** if caught again within a day`,
+  timeout: (minutes) => `a **${minutes}-minute timeout** and the posts deleted`,
+  softban: () => 'a **soft-ban** at once (removed, last hour of messages deleted, free to rejoin)',
+  flag: () => 'a **server log entry** only, nothing done to them',
+};
+
+const WORDS_ACTION_TEXT: Record<AutomodWordsAction, string> = {
+  delete: 'deleted',
+  punish: 'deleted, and the author gets the action above',
+  flag: 'flagged in the server log only',
+};
+
+const MAX_AUTOMOD_WORDS = 100;
+const MAX_AUTOMOD_WORD_LENGTH = 30;
+const MAX_TRAP_CHANNELS = 10;
+
+/** A comma list from an option: trimmed, lowercased, no blanks. */
+function wordList(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+  return value
+    .split(',')
+    .map((word) => word.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 const NEEDS_MANAGE_SERVER = 'You need the Manage Server permission in this server to see or change its bot settings.';
 
 /** This server's log channel and scam guard, as /config show prints them. */
@@ -7622,17 +7736,34 @@ async function serverSettingsText(guildId: string): Promise<string> {
   const { scopes } = parseServerLogScopes(process.env.DISCORD_SERVER_LOG);
   const lines = [
     `**Server log**: ${mine?.serverLogChannelId ? `<#${mine.serverLogChannelId}>` : 'off, so nothing here is logged'}`,
-    `**Scam guard**: ${mine?.scamGuard ? 'on' : 'off'}`,
+    `**Auto mod**: ${mine?.scamGuard ? 'on' : 'off'}`,
   ];
+  if (mine?.scamGuard) {
+    const minutes = mine.automodSprayWindowMinutes;
+    lines.push(
+      `- **Caught accounts get**: ${AUTOMOD_ACTION_TEXT[mine.automodAction](mine.automodTimeoutMinutes)}`,
+      mine.automodSpray
+        ? `- **Spray**: the same post in **${mine.automodSprayChannels} channels** within **${minutes} minute${minutes === 1 ? '' : 's'}**`
+        : '- **Spray**: off',
+      `- **Trap channels**: ${mine.automodTrapChannelIds.length ? mine.automodTrapChannelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`,
+      mine.automodWords.length
+        ? `- **Your words** (${WORDS_ACTION_TEXT[mine.automodWordsAction]}): ${mine.automodWords.map((word) => `\`${word.replace(/`/g, '')}\``).join(', ')}`
+        : '- **Your words**: none',
+      mine.automodFlagSuspects
+        ? `- **Giveaway posts are flagged** when they read like a giveaway (${GIVEAWAY_WORDS.join(', ')}) and carry 2+ pictures, a link, or crypto words (${CRYPTO_WORDS.join(', ')})`
+        : '- **Giveaway posts**: not flagged',
+      '- Never touches the owner, moderators, bots, or anyone ranked at or above me'
+    );
+  }
   // The scopes are the bot's, not the server's, so say when they make a
   // setting here do nothing rather than letting it look broken.
   if (scopes.size === 0) lines.push('The server log is switched off for this bot, so nothing is logged anywhere.');
-  else if (!scopes.has('scam') && mine?.scamGuard) lines.push('The scam guard is switched off for this bot, so it does nothing yet.');
+  else if (!scopes.has('scam') && mine?.scamGuard) lines.push('Auto mod is switched off for this bot, so it does nothing yet.');
   return lines.join('\n');
 }
 
 /**
- * /config server_log and /config scam_guard: the settings that belong to the
+ * /config server_log and /config automod: the settings that belong to the
  * server they are typed in (00302), in any server.
  *
  * THE SERVER IS ALWAYS THIS ONE. Every write names context.guildId, and the
@@ -7645,7 +7776,7 @@ async function serverSettingsText(guildId: string): Promise<string> {
  * enough.
  */
 async function handleServerSetting(
-  sub: 'server_log' | 'scam_guard',
+  sub: 'server_log' | 'automod',
   args: CommandOption[] | undefined,
   context: InteractionContext
 ): Promise<BotResponse> {
@@ -7658,16 +7789,63 @@ async function handleServerSetting(
     if (refusal) return ephemeral(managerRefusalText(refusal));
   }
 
-  if (sub === 'scam_guard') {
-    const enabled = option(args, 'enabled') === true;
-    await writeServerSettings(caller, { scamGuard: enabled });
-    return ephemeral(
-      enabled
-        ? 'Scam guard on. An account posting the same thing in several channels within two minutes is soft-banned: ' +
-            'removed, its last hour of messages deleted, and free to rejoin. A lone giveaway post is only flagged in the server log. ' +
-            'Moderators are never touched. I need Ban Members, and my role above theirs.'
-        : 'Scam guard off. Nobody is soft-banned automatically in this server.'
-    );
+  if (sub === 'automod') {
+    const change: ServerSettingsChange = {};
+    const flag = (name: string, field: 'scamGuard' | 'automodSpray' | 'automodFlagSuspects') => {
+      const value = option(args, name);
+      if (typeof value === 'boolean') change[field] = value;
+    };
+    const count = (name: string, field: 'automodTimeoutMinutes' | 'automodSprayChannels' | 'automodSprayWindowMinutes') => {
+      const value = option(args, name);
+      if (typeof value === 'number') change[field] = value;
+    };
+    flag('enabled', 'scamGuard');
+    flag('spray', 'automodSpray');
+    flag('flag_giveaways', 'automodFlagSuspects');
+    count('timeout_minutes', 'automodTimeoutMinutes');
+    count('spray_channels', 'automodSprayChannels');
+    count('spray_minutes', 'automodSprayWindowMinutes');
+    const action = option(args, 'action');
+    if (typeof action === 'string' && action in AUTOMOD_ACTION_TEXT) change.automodAction = action as AutomodAction;
+    const wordsAction = option(args, 'words_action');
+    if (typeof wordsAction === 'string' && wordsAction in WORDS_ACTION_TEXT) {
+      change.automodWordsAction = wordsAction as AutomodWordsAction;
+    }
+
+    // The lists are edited, not replaced, so they start from what is saved.
+    const adding = wordList(option(args, 'add_words'));
+    const removing = wordList(option(args, 'remove_words'));
+    const addTrap = option(args, 'add_trap');
+    const removeTrap = option(args, 'remove_trap');
+    if (adding.length || removing.length || typeof addTrap === 'string' || typeof removeTrap === 'string') {
+      const { servers } = await fetchServerSettings();
+      const mine = servers.find((row) => row.guildId === guildId);
+      if (adding.length || removing.length) {
+        const tooLong = adding.find((word) => word.length > MAX_AUTOMOD_WORD_LENGTH);
+        if (tooLong) return ephemeral(`"${tooLong.slice(0, 40)}" is too long: a word or phrase can be up to ${MAX_AUTOMOD_WORD_LENGTH} letters.`);
+        const kept = removing.includes('all') ? [] : (mine?.automodWords ?? []).filter((word) => !removing.includes(word));
+        const words = [...new Set([...kept, ...adding])];
+        if (words.length > MAX_AUTOMOD_WORDS) return ephemeral(`That is over ${MAX_AUTOMOD_WORDS} words. Remove some first.`);
+        change.automodWords = words;
+      }
+      if (typeof addTrap === 'string' || typeof removeTrap === 'string') {
+        const traps = (mine?.automodTrapChannelIds ?? []).filter((id) => id !== removeTrap);
+        if (typeof addTrap === 'string' && !traps.includes(addTrap)) traps.push(addTrap);
+        if (traps.length > MAX_TRAP_CHANNELS) return ephemeral(`A server can have up to ${MAX_TRAP_CHANNELS} trap channels.`);
+        change.automodTrapChannelIds = traps;
+      }
+    }
+
+    if (Object.keys(change).length > 0) await writeServerSettings(caller, change);
+    const now = await serverSettingsText(guildId);
+    if (Object.keys(change).length === 0) {
+      return ephemeral(`${now}\n\nFill in any option of **/config automod** to change it.`);
+    }
+    const trapNote =
+      typeof addTrap === 'string'
+        ? `\n\nTell your members not to post in <#${addTrap}>: anything posted there is caught. Hide it from new members' view or say so in its topic.`
+        : '';
+    return ephemeral(`Saved.\n\n${now}${trapNote}`);
   }
 
   if (option(args, 'off') === true) {
