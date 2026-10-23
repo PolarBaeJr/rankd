@@ -109,9 +109,9 @@ function payeeName(lines: string[], collapsed: string): string | null {
 }
 
 // A capital I in an email address is a lower case l the OCR misread: the two
-// are the same shape in most banking fonts ("Isa139@sfu.ca" for lsa139), and
-// banks show an address in lower case. A real "i" reads as a lower case i, so
-// isa139 still never matches lsa139.
+// are the same shape in most banking fonts, and banks show an address in lower
+// case. A real "i" reads as a lower case i, so an address that differs by an i
+// for an l still never matches.
 const emailText = (address: string) => address.replace(/I/g, 'l').toLowerCase();
 
 function payeeEmail(lines: string[], text: string): string | null {
