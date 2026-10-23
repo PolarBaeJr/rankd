@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // What this file guards, beyond what the tournament route's test already
 // covers for the shared shape:
@@ -219,6 +219,12 @@ beforeEach(() => {
   deleted.mockReset();
   clubEvents = [clubEvent()];
 });
+
+// Loading the route is slow on a cold CI runner; done once here with room to
+// spare, so the first test is not the one that pays for it and times out.
+beforeAll(async () => {
+  await import("../route");
+}, 30_000);
 
 describe("GET /api/discord/club-events", () => {
   it("refuses without the service secret", async () => {

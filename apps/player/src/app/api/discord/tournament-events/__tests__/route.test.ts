@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // What this file guards: the app decides, and the two decisions that are easy
 // to get subtly wrong are (a) never announce something that is not public, and
@@ -191,6 +191,12 @@ beforeEach(() => {
   ];
   tournaments = [tournament()];
 });
+
+// Loading the route is slow on a cold CI runner; done once here with room to
+// spare, so the first test is not the one that pays for it and times out.
+beforeAll(async () => {
+  await import("../route");
+}, 30_000);
 
 describe("GET /api/discord/tournament-events", () => {
   it("refuses without the service secret", async () => {
