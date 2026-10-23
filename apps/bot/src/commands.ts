@@ -1026,25 +1026,14 @@ export const COMMAND_DEFINITIONS = [
     // there is nothing to parameterise, and an option or a subcommand here
     // would only invite a second invite to exist.
     options: [],
-    // EXEC_ONLY, on /guidepost's argument: this is the link an exec pastes into
-    // a slide or a poster, and handing every member a one-keystroke way to
-    // spray it is how an invite ends up somewhere the club did not put it. No
-    // app-side capability check to pair it with, like /say and /guidepost,
-    // because nothing here reads or writes club data.
-    default_member_permissions: EXEC_ONLY,
-    // LOAD-BEARING, not copied boilerplate. default_member_permissions is a
-    // GUILD-ONLY filter and has no meaning in a DM, so without this line any
-    // member could DM the bot and the exec gate above would be decorative.
-    dm_permission: false,
+    // Open to every member, like /socials: the invite is public anyway, and
+    // the owner wants members able to share it.
   },
   {
     name: 'socials',
     description: "The club's links: Discord, Instagram and the website",
     options: [],
-    // UNGATED, like /sessions: a read anybody may do, answered only to them.
-    // This does print the invite /discord keeps exec-only, but as a link a
-    // member can already copy from the website's footer, not as a QR code for
-    // a poster.
+    // UNGATED, like /sessions and /discord: a read anybody may do.
   },
   {
     name: 'challenge',
