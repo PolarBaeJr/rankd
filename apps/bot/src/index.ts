@@ -1084,7 +1084,10 @@ function serverLogOptions(token: string) {
     return cached.channelId;
   }
 
-  const serverLog = createServerLog({ api: new DiscordApi({ token }), scopes, resolveChannel });
+  // Only the club's own servers are logged. loadConfig caches for a minute.
+  const clubServers = async () => new Set((await loadConfig()).registry.keys());
+
+  const serverLog = createServerLog({ api: new DiscordApi({ token }), scopes, resolveChannel, clubServers });
   return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
 }
 

@@ -22,6 +22,12 @@ vi.mock('../api.js', async (importOriginal) => ({
   removeSelfRole,
 }));
 
+// g1 is one of the club's servers; 'elsewhere' is somebody else's.
+vi.mock('../config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../config.js')>()),
+  loadConfig: async () => ({ registry: new Map([['g1', {}]]), auditChannelId: undefined }),
+}));
+
 vi.mock('../discord-api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../discord-api.js')>()),
   DiscordApi: class {
@@ -189,5 +195,17 @@ describe('isSelfRoleButton', () => {
     expect(isSelfRoleButton('something-else')).toBe(false);
     expect(isSelfRoleButton(undefined)).toBe(false);
     expect(isSelfRoleButton(null)).toBe(false);
+  });
+});
+
+describe('/rolepicker outside the club', () => {
+  it('says so instead of failing on the write', async () => {
+    const { dispatch } = await import('../commands.js');
+    const reply = (await dispatch(
+      'rolepicker',
+      [{ name: 'list', type: 1, options: [] }],
+      { discordUserId: '42', guildId: 'elsewhere' }
+    )) as { data: { content: string } };
+    expect(reply.data.content).toContain("club's own Discord server");
   });
 });

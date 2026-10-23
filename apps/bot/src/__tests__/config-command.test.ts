@@ -12,7 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // vi.hoisted, not bare consts: this file imports COMMANDS statically so the
 // mock factories run during hoisting, before a plain `const` would have been
 // initialised.
-const { fetchDiscordSettings, writeDiscordSettings, createMessage } = vi.hoisted(() => ({
+const { fetchDiscordSettings, writeDiscordSettings, createMessage, checkDiscordManager } = vi.hoisted(() => ({
+  checkDiscordManager: vi.fn(),
   fetchDiscordSettings: vi.fn(),
   writeDiscordSettings: vi.fn(),
   createMessage: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('../api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api.js')>()),
   fetchDiscordSettings,
   writeDiscordSettings,
+  checkDiscordManager,
 }));
 
 vi.mock('../discord-api.js', async (importOriginal) => ({
@@ -35,6 +37,8 @@ import { COMMAND_DEFINITIONS, DEFERRED_COMMANDS, dispatch } from '../commands.js
 import { CHANNEL_SETTINGS, VALUE_SETTINGS, ALL_SETTINGS } from '../settings.js';
 
 const CTX = { discordUserId: '42', guildId: 'g1' };
+// Who the app is asked about, and what every write carries.
+const MANAGER = { discordUserId: '42', guildId: 'g1' };
 const CHANNEL = '123456789012345678';
 
 interface Reply {
@@ -60,6 +64,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'token';
   fetchDiscordSettings.mockResolvedValue({ settings: {} });
+  checkDiscordManager.mockResolvedValue(null);
   writeDiscordSettings.mockResolvedValue({ ok: true, written: 1, cleared: 0 });
   createMessage.mockResolvedValue(true);
 });
@@ -112,7 +117,7 @@ describe('/config channels', () => {
     expect(createMessage).toHaveBeenCalledWith(CHANNEL, expect.objectContaining({
       content: expect.stringContaining('Announcements'),
     }));
-    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL });
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL }, MANAGER);
   });
 
   it('SAVES NOTHING for a channel it cannot post in', async () => {
@@ -141,7 +146,7 @@ describe('/config channels', () => {
       { name: 'match_results', type: 7, value: '999999999999999999' },
     ]);
 
-    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL });
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL }, MANAGER);
     expect(reply.data.content).toContain('Match results');
   });
 
@@ -208,7 +213,7 @@ describe('/config tournament', () => {
     expect(writeDiscordSettings).toHaveBeenCalledWith({
       tournament_event_location: 'SFU Burnaby, West Gym',
       session_ping_lead_minutes: '90',
-    });
+    }, MANAGER);
   });
 });
 
@@ -218,7 +223,7 @@ describe('/config clear', () => {
     // relay routes use, and they would post to a channel id of ''.
     await run('clear', [{ name: 'setting', type: 3, value: 'announcements' }]);
 
-    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: null });
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: null }, MANAGER);
   });
 
   it('says what stops happening, not that something was cleared', async () => {
@@ -236,7 +241,7 @@ describe('/config ping_roles', () => {
       session_ping_all_role_id: '1547801288119558234',
       session_ping_competitive_role_id: '1547801288119558234',
       session_ping_recreational_role_id: '1547801288119558234',
-    });
+    }, MANAGER);
   });
 
   it('lets a specific group override every_session', async () => {
@@ -248,7 +253,7 @@ describe('/config ping_roles', () => {
       session_ping_all_role_id: '11111111111111111',
       session_ping_competitive_role_id: '22222222222222222',
       session_ping_recreational_role_id: '11111111111111111',
-    });
+    }, MANAGER);
   });
 
   it('writes nothing when no role was picked', async () => {
@@ -319,5 +324,24 @@ describe('the command definition', () => {
     // writes to the app. Three seconds is not enough, and the failure is
     // Discord telling the member the application did not respond.
     expect(DEFERRED_COMMANDS.has('config')).toBe(true);
+  });
+});
+
+describe('/config answers to the club, not to Discord admin rights', () => {
+  it('asks the app about the caller and the server before anything else', async () => {
+    await run('show');
+    expect(checkDiscordManager).toHaveBeenCalledWith(MANAGER);
+  });
+
+  it.each([
+    ['not_linked', '/link'],
+    ['not_permitted', 'Only club execs'],
+    ['server_not_connected', 'not connected to the club'],
+  ])('refuses %s and changes nothing', async (refusal, words) => {
+    checkDiscordManager.mockResolvedValue(refusal);
+    const reply = await run('channels', [{ name: 'announcements', type: 7, value: CHANNEL }]);
+    expect(reply.data.content).toContain(words);
+    expect(writeDiscordSettings).not.toHaveBeenCalled();
+    expect(fetchDiscordSettings).not.toHaveBeenCalled();
   });
 });
