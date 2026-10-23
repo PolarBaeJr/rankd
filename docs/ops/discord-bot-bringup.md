@@ -620,6 +620,32 @@ an auth gate.
 survives, and the relay only ever posts what has no mapping, so it is never
 re-posted. Hand deletion is permanent here by design.
 
+### Event sign-ups on Discord (`/event signups`)
+
+`/event` is the console's club-event commands on Discord: `create`, `publish`,
+`cancel`, `delete`, `list` and `signups`. `/event signups` picks an event from
+the same list as the others (drafts and published events that have not started
+more than a day ago) and answers, only to the caller, with one embed: the start
+time, places taken against the capacity, then a numbered list in sign-up order
+with the waitlist after it. Each name carries plain-word markers: guest (a
+guest record from a linked tournament), external (a Google Form or door
+non-member), walk-in, checked in, no-show, waitlisted. A list too long for one
+embed ends "...and N more, see the website", linking the event's console page
+when `NEXT_PUBLIC_ADMIN_URL` is set on the console.
+
+**Who can run it is the console's decision, not the bot's.** The bot asks the
+console's `reads/event-signups` as the caller; the console resolves their
+linked account and asks `requireCapability('events.signups.read')`, the same
+gate the console's own sign-ups list uses. Unlinked callers are told to run
+`/link`; anyone without the capability gets the console's own refusal. Only
+names and statuses leave the console: no email, no preferred partner. A failed
+read is a 503, never an empty list.
+
+Discord hides `/event` from everybody but server admins until a server admin
+grants it to a role under **Server Settings, Integrations**. Grant it to the
+roles whose members hold the capability; the console check still applies to
+whoever runs it.
+
 ---
 
 ## 8. Check it worked

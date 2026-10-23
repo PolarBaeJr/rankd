@@ -1382,7 +1382,7 @@ export const COMMAND_DEFINITIONS = [
       {
         type: 1,
         name: 'signups',
-        description: 'Who has signed up',
+        description: 'Who has signed up, with check-in and the waitlist',
         options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
       },
     ],
@@ -6923,12 +6923,17 @@ export function consoleRefusalText(reply: Exclude<ConsoleReply<unknown>, { ok: t
 
 /** finish() for a console subcommand: never throws, always answers. */
 function consoleFinish(work: () => Promise<string>): BotResponse {
+  return consoleFinishResponse(async () => consoleLine(await work()));
+}
+
+/** consoleFinish for an answer that is more than a line, such as an embed. */
+function consoleFinishResponse(work: () => Promise<BotResponse>): BotResponse {
   return {
     type: 5,
     data: { flags: 64 },
     finish: async () => {
       try {
-        return consoleLine(await work());
+        return await work();
       } catch (error) {
         if (error instanceof ConsoleNotConfiguredError) return consoleLine(CONSOLE_NOT_CONFIGURED);
         if (error instanceof ConsoleNotAvailableError) return consoleLine(CONSOLE_NOT_AVAILABLE);
@@ -7238,24 +7243,130 @@ export function handleEventAdmin(
         return `**Upcoming club events**\n${reply.data.events.map((e) => `- ${e.label}`).join('\n')}`;
       });
     case 'signups':
-      return consoleFinish(async () => {
-        const reply = await adminGet<{
-          event: { id: string; label: string; capacity: number | null } | null;
-          signups?: string[];
-        }>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
-        if (!reply.ok) return consoleRefusalText(reply);
-        if (!reply.data.event) return 'That event no longer exists.';
-        const names = reply.data.signups ?? [];
-        const cap = reply.data.event.capacity;
-        return (
-          `**${reply.data.event.label}**\n` +
-          `Signed up: ${names.length}${cap ? ` of ${cap}` : ''}` +
-          (names.length > 0 ? `\n${names.map((n) => `- ${n}`).join('\n')}` : '')
-        ).slice(0, 1900);
+      return consoleFinishResponse(async () => {
+        const reply = await adminGet<EventSignupsRead>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
+        if (!reply.ok) return consoleLine(consoleRefusalText(reply));
+        const event = reply.data.event;
+        if (!event) return consoleLine('That event no longer exists.');
+        return {
+          type: 4,
+          data: {
+            embeds: [eventSignupsEmbed({ ...reply.data, event })],
+            flags: 64,
+            allowed_mentions: { parse: [] },
+          },
+        };
       });
     default:
       return consoleLine('Unknown subcommand.');
   }
+}
+
+type EventSignupsEvent = {
+  id: string;
+  label: string;
+  title?: string;
+  when?: string;
+  status?: string;
+  capacity: number | null;
+  url?: string | null;
+};
+
+export type EventSignupsPerson = {
+  name: string;
+  kind: 'member' | 'guest' | 'external';
+  checkedIn: boolean;
+  noShow: boolean;
+  walkIn: boolean;
+};
+
+/**
+ * The console's event-signups read. An older console sends only `signups`
+ * (plain names), so the embed falls back to it when `people` is absent: the
+ * bot and the console deploy separately.
+ */
+export type EventSignupsRead = {
+  event: EventSignupsEvent | null;
+  taken?: number;
+  signups?: string[];
+  people?: EventSignupsPerson[];
+  waitlist?: string[];
+};
+
+// Discord's limit for an embed description.
+const SIGNUPS_DESCRIPTION_MAX = 4096;
+
+/** A member typed their name, so markdown in it is shown, not applied. */
+function plainName(name: string): string {
+  return name.slice(0, 120).replace(/[\\*_~`|[\]]/g, '\\$&');
+}
+
+function signupMarkers(person: EventSignupsPerson): string[] {
+  const markers: string[] = [];
+  if (person.kind === 'guest') markers.push('guest');
+  if (person.kind === 'external') markers.push('external');
+  if (person.walkIn) markers.push('walk-in');
+  if (person.checkedIn) markers.push('checked in');
+  if (person.noShow) markers.push('no-show');
+  return markers;
+}
+
+/**
+ * /event signups as one embed: the event, how many places are taken, then a
+ * numbered list in sign-up order with the waitlist after it. Whole lines are
+ * packed under the description limit; whatever does not fit is counted and
+ * left to the console's page.
+ */
+export function eventSignupsEmbed(read: EventSignupsRead & { event: EventSignupsEvent }): Record<string, unknown> {
+  const { event } = read;
+  const people: EventSignupsPerson[] =
+    read.people ??
+    (read.signups ?? []).map((name) => ({ name, kind: 'member', checkedIn: false, noShow: false, walkIn: false }));
+  const waitlist = read.waitlist ?? [];
+  const taken = read.taken ?? people.filter((p) => !p.noShow).length;
+  const status = event.status === 'draft' ? 'Draft' : event.status === 'cancelled' ? 'Cancelled' : null;
+  const header = [
+    event.when ?? null,
+    `${taken} signed up${event.capacity ? ` / ${event.capacity}` : ''}`,
+    waitlist.length > 0 ? `${waitlist.length} waitlisted` : null,
+    status,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const lines = [
+    ...people.map((person, index) => {
+      const markers = signupMarkers(person);
+      return `${index + 1}. ${plainName(person.name)}${markers.length ? ` (${markers.join(', ')})` : ''}`;
+    }),
+    ...waitlist.map((name, index) => `${people.length + index + 1}. ${plainName(name)} (waitlisted)`),
+  ];
+
+  let description: string;
+  if (lines.length === 0) {
+    description = `${header}\n\nNobody has signed up yet.`;
+  } else if (`${header}\n\n${lines.join('\n')}`.length <= SIGNUPS_DESCRIPTION_MAX) {
+    description = `${header}\n\n${lines.join('\n')}`;
+  } else {
+    const more = (count: number) => `...and ${count} more, see the website${event.url ? `: ${event.url}` : '.'}`;
+    // Room for the cut line at its longest, so it always fits once it is needed.
+    const room = SIGNUPS_DESCRIPTION_MAX - more(lines.length).length - 1;
+    description = `${header}\n`;
+    let shown = 0;
+    for (const line of lines) {
+      if (description.length + 1 + line.length > room) break;
+      description += `\n${line}`;
+      shown += 1;
+    }
+    description += `\n${more(lines.length - shown)}`;
+  }
+
+  return {
+    title: (event.title ?? event.label).slice(0, 256),
+    ...(event.url ? { url: event.url } : {}),
+    color: CLUB_RED,
+    description,
+  };
 }
 
 function eventCreate(options: CommandOption[] | undefined, callerId: string): BotResponse {
