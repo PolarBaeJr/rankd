@@ -209,6 +209,25 @@ describe('createServerLog', () => {
     );
   });
 
+  it("posts each server's events in that server's own channel, and nothing for a server with none", async () => {
+    const createMessage = vi.fn(async () => true);
+    const channels: Record<string, string> = { b: 'b-log' };
+    const serverLog = createServerLog({
+      api: { createMessage },
+      scopes: new Set<ServerLogScope>(['moderation']),
+      resolveChannel: async (guildId) => channels[guildId] ?? null,
+      log: () => {},
+      now: () => NOW,
+    });
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', { id: 'a1', guild_id: 'a', action_type: 22 });
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', { id: 'b1', guild_id: 'b', action_type: 22 });
+    serverLog.post('a', { key: 'scam-a', embed: { title: 'Scam spray caught', color: 0 } });
+    serverLog.post('b', { key: 'scam-b', embed: { title: 'Scam spray caught', color: 0 } });
+    await serverLog.drain();
+    const posted = createMessage.mock.calls.map((call) => (call as unknown[])[0]);
+    expect(posted).toEqual(['b-log', 'b-log']);
+  });
+
   it('drops past the queue limit and says how many', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {

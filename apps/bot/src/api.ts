@@ -1148,6 +1148,31 @@ export async function checkDiscordManager(
   return reply.ok ? null : reply.refusal;
 }
 
+// ---- ONE SERVER'S OWN SETTINGS ---------------------------------------------
+//
+// Not the club's (that is discord_settings above): the settings that belong to
+// whichever server the bot is in, one row each (00302). The app checks the
+// caller again in a club server; see its route.
+
+export interface ServerSettings {
+  guildId: string;
+  serverLogChannelId: string | null;
+  scamGuard: boolean;
+}
+
+/** Every server that has settings. Read by the server log and the scam guard. */
+export function fetchServerSettings(): Promise<{ servers: ServerSettings[] }> {
+  return get<{ servers: ServerSettings[] }>('/api/discord/server-settings');
+}
+
+/** Change the caller's own server. A key left out is left alone; a null log channel switches it off. */
+export function writeServerSettings(
+  caller: ManagerCaller,
+  change: { serverLogChannelId?: string | null; scamGuard?: boolean }
+): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/server-settings', { ...caller, ...change });
+}
+
 // ---- SESSION BOARD ---------------------------------------------------------
 //
 // Separate from the settings pair above because the channel and the state are

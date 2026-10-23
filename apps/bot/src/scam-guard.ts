@@ -39,8 +39,9 @@
 // ban; a ban and an unban are idempotent, and the log entry is deduped by
 // nonce like every other server log entry.
 //
-// Club servers only. The bot runs anywhere, and somebody else's server is
-// theirs to moderate.
+// Only where the server switched it on (/server scam_guard, 00302). The bot
+// runs anywhere, and banning people in somebody else's server needs their yes.
+// The club's own servers were switched on by the migration.
 
 import type { DiscordApi } from './discord-api.js';
 import type { DiscordRole } from './setup.js';
@@ -198,8 +199,8 @@ export interface ScamGuardOptions {
     DiscordApi,
     'getBotUserId' | 'getGuildOwnerId' | 'listGuildRoles' | 'getOwnRolePosition' | 'banMember' | 'unbanMember'
   >;
-  /** The club's connected servers. Anything else, or no answer, means hands off. */
-  clubServers: () => Promise<ReadonlySet<string>>;
+  /** Whether this server switched the guard on. No answer means hands off. */
+  enabledIn: (guildId: string) => Promise<boolean>;
   /** Posts an entry to the server log of that guild. */
   report: (guildId: string, entry: ServerLogEntry) => void;
   log?: (line: string) => void;
@@ -216,7 +217,7 @@ export interface ScamGuard {
 export function createScamGuard(options: ScamGuardOptions): ScamGuard {
   const {
     api,
-    clubServers,
+    enabledIn,
     report,
     log = (line: string) => console.error(line),
     now = () => new Date(),
@@ -238,8 +239,7 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
   }
 
   async function handle(message: ScamMessage, verdict: Exclude<Verdict, { kind: 'none' }>, at: Date) {
-    const servers = await clubServers().catch(() => null);
-    if (!servers?.has(message.guildId)) return;
+    if (!(await enabledIn(message.guildId).catch(() => false))) return;
     const [roles, ownerId, botId] = await Promise.all([
       guildRoles(message.guildId),
       api.getGuildOwnerId(message.guildId),

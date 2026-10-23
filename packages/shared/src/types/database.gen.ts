@@ -984,15 +984,7 @@ export type Database = {
           sort_order?: number
           track?: Database["public"]["Enums"]["session_group"] | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "discord_self_roles_guild_id_fkey"
-            columns: ["guild_id"]
-            isOneToOne: false
-            referencedRelation: "discord_guilds"
-            referencedColumns: ["guild_id"]
-          },
-        ]
+        Relationships: []
       }
       discord_server_roles: {
         Row: {
@@ -1025,6 +1017,27 @@ export type Database = {
             referencedColumns: ["guild_id"]
           },
         ]
+      }
+      discord_server_settings: {
+        Row: {
+          guild_id: string
+          scam_guard: boolean
+          server_log_channel_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          guild_id: string
+          scam_guard?: boolean
+          server_log_channel_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          guild_id?: string
+          scam_guard?: boolean
+          server_log_channel_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       discord_session_pings: {
         Row: {

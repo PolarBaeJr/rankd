@@ -454,6 +454,19 @@ BEGIN
     $q$;
   END IF;
 
+  -- One row per Discord server (00302): staging's own log channel and scam
+  -- guard switch for the test server. No FK, so any rank works.
+  IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT 2, format(
+        'INSERT INTO public.discord_server_settings (guild_id, server_log_channel_id, scam_guard) VALUES (%L, %L, %L) '
+        'ON CONFLICT (guild_id) DO UPDATE SET server_log_channel_id = EXCLUDED.server_log_channel_id, '
+        'scam_guard = EXCLUDED.scam_guard;', guild_id, server_log_channel_id, scam_guard)
+      FROM public.discord_server_settings
+    $q$;
+  END IF;
+
   IF to_regclass('public.cron_config') IS NOT NULL THEN
     -- Named explicitly, not LIKE 'discord%': `_` is a LIKE wildcard, and this
     -- table holds unrelated secrets that are none of this script's business.
@@ -719,6 +732,17 @@ BEGIN
   IF to_regclass('public.discord_settings') IS NOT NULL THEN
     DELETE FROM public.discord_settings;
   END IF;
+  -- Prod's servers' own settings (00302): prod's log channel ids.
+  IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
+    DELETE FROM public.discord_server_settings;
+  END IF;
+  -- Prod's role pickers. These used to go with the discord_guilds delete above
+  -- by cascade; 00302 dropped that FK so any server can have a picker, so they
+  -- are cleared by name now. Staging loses its own pickers nightly, as it
+  -- always has: they were never captured.
+  IF to_regclass('public.discord_self_roles') IS NOT NULL THEN
+    DELETE FROM public.discord_self_roles;
+  END IF;
   IF to_regclass('public.cron_config') IS NOT NULL THEN
     DELETE FROM public.cron_config
      WHERE key IN ('discord_bot_url', 'discord_service_secret');
@@ -798,6 +822,9 @@ DECLARE
 BEGIN
   IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
     EXECUTE 'DELETE FROM public.discord_guild_roles WHERE md5(guild_id) = ANY ($1)' USING guilds;
+  END IF;
+  IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.discord_server_settings WHERE md5(guild_id) = ANY ($1)' USING guilds;
   END IF;
   IF to_regclass('public.discord_guilds') IS NOT NULL THEN
     EXECUTE 'DELETE FROM public.discord_guilds WHERE md5(guild_id) = ANY ($1)' USING guilds;

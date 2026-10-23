@@ -189,7 +189,7 @@ function guardWith(api: ReturnType<typeof fakeApi>, servers = ['club']) {
   let clock = Date.parse('2026-10-22T18:00:00Z');
   const guard = createScamGuard({
     api,
-    clubServers: async () => new Set(servers),
+    enabledIn: async (guildId) => servers.includes(guildId),
     report: (guildId, entry) => reports.push({ guildId, entry }),
     log: () => {},
     now: () => new Date((clock += 1000)),
@@ -212,7 +212,7 @@ describe('createScamGuard', () => {
     expect(reports[1]?.entry.embed.fields?.[0]?.value).toMatch(/^Soft-banned/);
   });
 
-  it('never acts outside the club servers', async () => {
+  it('never acts in a server that has not switched it on', async () => {
     const api = fakeApi();
     const { guard, reports } = guardWith(api, ['other']);
     for (const channel of ['a', 'b', 'c']) guard.onMessage(raw(channel));

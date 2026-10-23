@@ -32,6 +32,8 @@ import {
   fetchClubSocials,
   writeDiscordSettings,
   checkDiscordManager,
+  fetchServerSettings,
+  writeServerSettings,
   type ManagerRefusal,
   submitAnnouncement,
   setMembership,
@@ -63,6 +65,7 @@ import {
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { SOFTBAN_WINDOWS, describeWindow, softban, windowSeconds } from './moderation.js';
+import { parseServerLogScopes } from './server-log.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
@@ -1425,6 +1428,35 @@ export const COMMAND_DEFINITIONS = [
         description: 'Why, for the logs',
         required: false,
         max_length: 300,
+      },
+    ],
+  },
+  {
+    // THIS SERVER'S OWN SETTINGS (00302), in any server the bot is in, as
+    // opposed to /config, which is the club's. MANAGE_GUILD: whoever holds it
+    // runs the server already. In one of the club's servers the log carries
+    // deleted messages' text, so there a club exec account is needed as well,
+    // checked in handleServer and again by the app.
+    name: 'server',
+    description: "This server's own bot settings: its log channel and the scam guard",
+    default_member_permissions: MANAGE_GUILD,
+    dm_permission: false,
+    options: [
+      { type: 1, name: 'show', description: 'What this server has set', options: [] },
+      {
+        type: 1,
+        name: 'log',
+        description: "Post this server's log (bans, joins, deleted messages) in a channel",
+        options: [
+          { type: 7, name: 'channel', description: 'Where the log posts', required: true, channel_types: [0, 5] },
+        ],
+      },
+      { type: 1, name: 'log_off', description: "Stop posting this server's log", options: [] },
+      {
+        type: 1,
+        name: 'scam_guard',
+        description: 'Soft-ban accounts that spray the same post across channels',
+        options: [{ type: 5, name: 'enabled', description: 'On or off', required: true }],
       },
     ],
   },
@@ -4630,11 +4662,9 @@ async function handleRolePicker(
   if (!context.guildId) {
     return ephemeral('Run this in a server, not a DM.');
   }
-  // Role pickers are kept in the club's records, which only hold the club's
-  // own servers. Anywhere else this says so rather than failing on the write.
-  if (!(await isClubServer(context.guildId))) {
-    return ephemeral('Role pickers only work in the club\'s own Discord server.');
-  }
+  // Any server: a picker is that server's own (00302 opened the table to every
+  // server). EXEC_ONLY keeps it to that server's admins until they grant it,
+  // and the role option can only name roles from the server it was typed in.
   const { name: sub, options: args } = subcommand(options);
 
   if (sub === 'add') {
@@ -7397,6 +7427,90 @@ export async function handleTourneyAutocomplete(
   return empty;
 }
 
+const MANAGE_GUILD_BIT = 1n << 5n;
+const ADMINISTRATOR_BIT = 1n << 3n;
+
+/** Manage Server or Administrator, from the caller's own mask. Missing or unreadable is no. */
+export function canManageServer(permissions: string | null | undefined): boolean {
+  if (!permissions) return false;
+  try {
+    return (BigInt(permissions) & (MANAGE_GUILD_BIT | ADMINISTRATOR_BIT)) !== 0n;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * /server: the settings that belong to the server it is typed in (00302).
+ *
+ * THE SERVER IS ALWAYS THIS ONE. Every write names context.guildId, and the
+ * log channel is a channel option, which Discord only fills from this server,
+ * so nobody can point another server's log, or the club's, anywhere.
+ *
+ * Who may: Manage Server here, re-checked from the caller's own mask because
+ * a server admin can open any command to anyone. In a club server, also the
+ * club check /config uses, since a Discord admin there is not enough.
+ */
+export async function handleServer(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { guildId, discordUserId } = context;
+  if (!guildId || !discordUserId) return ephemeral('Run /server in the server you want to change.');
+  if (!canManageServer(context.permissions)) {
+    return ephemeral("You need the Manage Server permission in this server to change its bot settings.");
+  }
+  const caller = { discordUserId, guildId };
+  const { name: sub, options: args } = subcommand(options);
+
+  if (sub === 'show') {
+    const { servers } = await fetchServerSettings();
+    const mine = servers.find((row) => row.guildId === guildId);
+    const { scopes } = parseServerLogScopes(process.env.DISCORD_SERVER_LOG);
+    const logLine = mine?.serverLogChannelId
+      ? `posts in <#${mine.serverLogChannelId}>`
+      : 'off. Turn it on with **/server log**';
+    const guardLine = mine?.scamGuard ? 'on' : 'off';
+    const lines = [`**Server log:** ${logLine}`, `**Scam guard:** ${guardLine}`];
+    // The scopes are the bot's, not the server's, so say when they make a
+    // setting here do nothing rather than letting it look broken.
+    if (scopes.size === 0) lines.push('The server log is switched off for this bot, so nothing is logged anywhere.');
+    else if (!scopes.has('scam') && mine?.scamGuard) lines.push('The scam guard is switched off for this bot, so it does nothing yet.');
+    return ephemeral(lines.join('\n'));
+  }
+
+  if (await isClubServer(guildId)) {
+    const refusal = await checkDiscordManager(caller);
+    if (refusal) return ephemeral(managerRefusalText(refusal));
+  }
+
+  if (sub === 'log') {
+    const channelId = String(option(args, 'channel') ?? '');
+    if (!channelId) return ephemeral('Pick a channel.');
+    await writeServerSettings(caller, { serverLogChannelId: channelId });
+    return ephemeral(
+      `This server's log now posts in <#${channelId}>. Make sure I can see and post there. ` +
+        'It includes the text of deleted and edited messages, so keep it to moderators.'
+    );
+  }
+  if (sub === 'log_off') {
+    await writeServerSettings(caller, { serverLogChannelId: null });
+    return ephemeral("This server's log is off. Nothing is posted until you set a channel again.");
+  }
+  if (sub === 'scam_guard') {
+    const enabled = option(args, 'enabled') === true;
+    await writeServerSettings(caller, { scamGuard: enabled });
+    return ephemeral(
+      enabled
+        ? 'Scam guard on. An account posting the same thing in several channels within two minutes is soft-banned: ' +
+            'removed, its last hour of messages deleted, and free to rejoin. A lone giveaway post is only flagged in the server log. ' +
+            'Moderators are never touched. I need Ban Members, and my role above theirs.'
+        : 'Scam guard off. Nobody is soft-banned automatically in this server.'
+    );
+  }
+  return ephemeral('Use **/server show**, **/server log**, **/server log_off** or **/server scam_guard**.');
+}
+
 export async function handleSoftban(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -7511,6 +7625,8 @@ export async function dispatch(
         return handleTourney(options, context);
       case 'softban':
         return await handleSoftban(options, context);
+      case 'server':
+        return await handleServer(options, context);
       default:
         return ephemeral('Unknown command.');
     }

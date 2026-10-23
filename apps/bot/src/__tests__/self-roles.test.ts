@@ -199,13 +199,15 @@ describe('isSelfRoleButton', () => {
 });
 
 describe('/rolepicker outside the club', () => {
-  it('says so instead of failing on the write', async () => {
+  it("works there too, reading that server's own picker", async () => {
+    fetchSelfRoles.mockResolvedValueOnce({ roles: [], truncated: false });
     const { dispatch } = await import('../commands.js');
     const reply = (await dispatch(
       'rolepicker',
       [{ name: 'list', type: 1, options: [] }],
       { discordUserId: '42', guildId: 'elsewhere' }
-    )) as { data: { content: string } };
-    expect(reply.data.content).toContain("club's own Discord server");
+    )) as unknown as { data: { content: string } };
+    expect(fetchSelfRoles).toHaveBeenLastCalledWith('elsewhere');
+    expect(reply.data.content).toContain('No ping roles are on offer yet');
   });
 });
