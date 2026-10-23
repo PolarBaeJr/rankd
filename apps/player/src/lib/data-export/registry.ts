@@ -951,7 +951,8 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   guest_waiver_invites:
     'Waiver emails owed to non-members a form entered (00283). No member column; it holds non-members\' emails, which a member export cannot reach.',
   club_event_external_signups:
-    'Non-members a form signed up for a club event (00284). No member column; it holds non-members\' names and emails.',
+    'Non-members a form signed up for a club event (00284). No member column; it holds non-members\' names and emails.',  club_event_activity:
+    'When each club event\'s sign-ups last changed, so the console page updates live (00301). An event id and a time; no person.',
 };
 
 /**
