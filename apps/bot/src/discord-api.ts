@@ -150,6 +150,19 @@ export class DiscordApi {
   }
 
   /**
+   * A user's display name (their global name, else their username), or null
+   * if Discord does not know them. Any user, not only a member.
+   */
+  async getUserName(userId: string): Promise<string | null> {
+    const response = await this.request('GET', `/users/${userId}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GET user -> ${response.status}`);
+    const body = (await response.json()) as { username?: unknown; global_name?: unknown };
+    const name = typeof body.global_name === 'string' && body.global_name ? body.global_name : body.username;
+    return typeof name === 'string' && name ? name : null;
+  }
+
+  /**
    * Every role in the guild, including @everyone and Discord-managed ones.
    *
    * Filtering happens in setup.ts rather than here: what counts as usable

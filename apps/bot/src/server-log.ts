@@ -106,6 +106,8 @@ export interface CachedMessage {
   /** Only held while the content scope is on. */
   content: string | null;
   attachments: number;
+  /** A bot's or webhook's message: never logged, only remembered so its delete is not. */
+  bot?: boolean;
 }
 
 export class MessageCache {
@@ -264,6 +266,14 @@ function accountCreated(userId: string): number | null {
   }
 }
 
+/** A user mention, not a role one (<@&id>). */
+const USER_MENTION = /<@!?(\d{17,20})>/g;
+
+/** A name as plain text, so a name like *x* or a backtick cannot restyle the entry. */
+export function escapeMarkdown(text: string): string {
+  return text.replace(/[\\*_`~|>#\[\]()-]/g, (c) => `\\${c}`);
+}
+
 export interface ServerLogEntry {
   /** Unique per event; becomes the nonce. */
   key: string;
@@ -299,10 +309,14 @@ export function describeDispatch(
   switch (type) {
     case 'MESSAGE_CREATE': {
       const author = d.author as { id?: string; bot?: boolean } | undefined;
-      // Bots and webhooks are not cached: their deletes are the bot tidying up
-      // (the session board replaces its own messages) and would be noise.
-      if (!author?.id || author.bot || d.webhook_id) return null;
-      if (typeof d.id !== 'string' || typeof d.channel_id !== 'string') return null;
+      if (!author?.id || typeof d.id !== 'string' || typeof d.channel_id !== 'string') return null;
+      // Bots and webhooks are held as a marker only: their deletes are the bot
+      // tidying up (the session board replaces its own messages), and without
+      // the marker they would look like an unknown message deleted.
+      if (author.bot || d.webhook_id) {
+        context.cache.set(d.id, { authorId: author.id, channelId: d.channel_id, content: null, attachments: 0, bot: true });
+        return null;
+      }
       context.cache.set(d.id, {
         authorId: author.id,
         channelId: d.channel_id,
@@ -350,9 +364,23 @@ export function describeDispatch(
       if (typeof d.id !== 'string' || typeof d.channel_id !== 'string') return null;
       if (d.channel_id === context.logChannelId) return null;
       const cached = context.cache.take(d.id);
-      // Uncached means older than the process, or a bot's own message. Either
-      // way there is nothing to say about it but its id, which helps nobody.
-      if (!cached) return null;
+      if (cached?.bot) return null;
+      // Uncached means posted before the bot last started (the cache lives in
+      // memory, and every update restarts it). Still worth an entry: who and
+      // what are gone, but where and when are not.
+      if (!cached) {
+        return {
+          key: `delete:${d.id}`,
+          embed: {
+            title: 'Message deleted',
+            description:
+              `In <#${d.channel_id}>\nIt was posted before I last restarted, so I do not know who sent it or what it said.`,
+            color: COLOR_REMOVAL,
+            footer: { text: `Message ${d.id}` },
+            timestamp,
+          },
+        };
+      }
       const body = keepContent
         ? cached.content
           ? `\n\n${quoted(cached.content)}`
@@ -380,7 +408,7 @@ export function describeDispatch(
       const authors = new Map<string, number>();
       for (const id of ids) {
         const cached = context.cache.take(id);
-        if (cached) authors.set(cached.authorId, (authors.get(cached.authorId) ?? 0) + 1);
+        if (cached && !cached.bot) authors.set(cached.authorId, (authors.get(cached.authorId) ?? 0) + 1);
       }
       const byAuthor = [...authors.entries()]
         .slice(0, 20)
@@ -484,11 +512,12 @@ function decodeReason(reason: string): string {
 // ---- the poster ----
 
 export interface ServerLogOptions {
-  api: Pick<DiscordApi, 'createMessage'>;
+  /** getUserName is optional: without it, people show as a bare mention. */
+  api: Pick<DiscordApi, 'createMessage'> & Partial<Pick<DiscordApi, 'getUserName'>>;
   scopes: ReadonlySet<ServerLogScope>;
   /**
-   * Where this server's log posts, or null while that server has none (/server
-   * log). Each server has its own (00302), so an event is only ever posted in
+   * Where this server's log posts, or null while that server has none
+   * (/config server_log). Each server has its own (00302), so an event is only ever posted in
    * the server it happened in.
    */
   resolveChannel: (guildId: string) => Promise<string | null>;
@@ -560,8 +589,9 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
           if (!built) describeDispatch(type, data, { cache, scopes, logChannelId: '', now: at });
           return;
         }
-        const entry = built ?? describeDispatch(type, data, { cache, scopes, logChannelId: channelId, now: at });
-        if (!entry) return;
+        const described = built ?? describeDispatch(type, data, { cache, scopes, logChannelId: channelId, now: at });
+        if (!described) return;
+        const entry = await withNames(described);
         if (dropped > 0) {
           await api.createMessage(channelId, {
             content: `${dropped} server log entr${dropped === 1 ? 'y was' : 'ies were'} dropped: too many at once.`,
@@ -583,6 +613,43 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
         waiting -= 1;
       }
     });
+  }
+
+  // A mention in an embed only shows a name when the reader's Discord already
+  // knows that user; otherwise it shows the raw <@id>. So each person's name is
+  // written beside the mention, looked up once and held for an hour.
+  const names = new Map<string, { name: string | null; at: number }>();
+  async function nameOf(userId: string): Promise<string | null> {
+    const held = names.get(userId);
+    if (held && Date.now() - held.at < 3_600_000) return held.name;
+    if (!api.getUserName) return null;
+    const name = await api.getUserName(userId).catch(() => held?.name ?? null);
+    if (names.size >= 2000) names.clear();
+    names.set(userId, { name, at: Date.now() });
+    return name;
+  }
+  async function withNames(entry: ServerLogEntry): Promise<ServerLogEntry> {
+    const texts = [entry.embed.description ?? '', ...(entry.embed.fields ?? []).map((f) => f.value)];
+    const ids = new Set<string>();
+    for (const text of texts) for (const match of text.matchAll(USER_MENTION)) ids.add(match[1] as string);
+    if (ids.size === 0) return entry;
+    const found = new Map<string, string>();
+    for (const id of [...ids].slice(0, 10)) {
+      const name = await nameOf(id);
+      if (name) found.set(id, name);
+    }
+    const named = (text: string) =>
+      text.replace(USER_MENTION, (mention, id: string) =>
+        found.has(id) ? `**${escapeMarkdown(found.get(id) as string)}** (${mention})` : mention
+      );
+    return {
+      ...entry,
+      embed: {
+        ...entry.embed,
+        description: entry.embed.description === undefined ? undefined : named(entry.embed.description),
+        fields: entry.embed.fields?.map((f) => ({ ...f, value: named(f.value) })),
+      },
+    };
   }
 
   return {
