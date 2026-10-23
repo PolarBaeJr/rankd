@@ -324,9 +324,17 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `event_feedback_channel_id` | tournament survey comments (00173) | SQL |
 
 The server log is not in this table: since 00302 each server sets its own, with
-`/config server_log channel:` (and `/config scam_guard` for the scam guard). It lives in
-`discord_server_settings`, one row per server. In a club server the caller also
-needs the club check `/config` uses.
+`/config server_log channel:`. Auto mod (the scam guard in the code) is set the
+same way with `/config automod`: on or off, what a caught account gets (timeout
+then soft-ban, timeout, soft-ban, or flag only), the spray rule's channels and
+minutes, the server's own words, trap channels, and whether lone giveaway posts
+are flagged (00303). `/config automod` with no options shows the setup. Both
+live in `discord_server_settings`, one row per server. In a club server the
+caller also needs the club check `/config` uses.
+
+Auto mod needs **Moderate Members** to time out and **Manage Messages** to
+delete, besides Ban Members for the soft-ban. `/setup` lists any that are
+missing.
 
 **The server log also needs `DISCORD_SERVER_LOG`** on the bot, a comma list of
 scopes, each costing a gateway intent:

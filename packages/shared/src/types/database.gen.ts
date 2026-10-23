@@ -1020,18 +1020,45 @@ export type Database = {
       }
       discord_server_settings: {
         Row: {
+          automod_action: string
+          automod_flag_suspects: boolean
+          automod_spray: boolean
+          automod_spray_channels: number
+          automod_spray_window_minutes: number
+          automod_timeout_minutes: number
+          automod_trap_channel_ids: string[]
+          automod_words: string[]
+          automod_words_action: string
           guild_id: string
           scam_guard: boolean
           server_log_channel_id: string | null
           updated_at: string
         }
         Insert: {
+          automod_action?: string
+          automod_flag_suspects?: boolean
+          automod_spray?: boolean
+          automod_spray_channels?: number
+          automod_spray_window_minutes?: number
+          automod_timeout_minutes?: number
+          automod_trap_channel_ids?: string[]
+          automod_words?: string[]
+          automod_words_action?: string
           guild_id: string
           scam_guard?: boolean
           server_log_channel_id?: string | null
           updated_at?: string
         }
         Update: {
+          automod_action?: string
+          automod_flag_suspects?: boolean
+          automod_spray?: boolean
+          automod_spray_channels?: number
+          automod_spray_window_minutes?: number
+          automod_timeout_minutes?: number
+          automod_trap_channel_ids?: string[]
+          automod_words?: string[]
+          automod_words_action?: string
           guild_id?: string
           scam_guard?: boolean
           server_log_channel_id?: string | null

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // not; the row written is always the caller's server; bad values never land.
 
 let clubGuilds: string[] = [];
-let rows: { guild_id: string; server_log_channel_id: string | null; scam_guard: boolean }[] = [];
+let rows: Record<string, unknown>[] = [];
 const upserted = vi.fn();
 
 const { checkDiscordManager } = vi.hoisted(() => ({
@@ -65,9 +65,41 @@ beforeEach(() => {
 
 describe('GET', () => {
   it('lists every server, and refuses without the service secret', async () => {
-    rows = [{ guild_id: CLUB, server_log_channel_id: CHANNEL, scam_guard: true }];
+    rows = [
+      {
+        guild_id: CLUB,
+        server_log_channel_id: CHANNEL,
+        scam_guard: true,
+        automod_action: 'timeout_then_softban',
+        automod_timeout_minutes: 60,
+        automod_spray: true,
+        automod_spray_channels: 3,
+        automod_spray_window_minutes: 2,
+        automod_flag_suspects: true,
+        automod_words: ['nitro'],
+        automod_words_action: 'delete',
+        automod_trap_channel_ids: [CHANNEL],
+      },
+    ];
     const response = await GET(new Request('http://localhost/api/discord/server-settings', { headers: { authorization: 'Bearer test-secret' } }));
-    expect(await response.json()).toEqual({ servers: [{ guildId: CLUB, serverLogChannelId: CHANNEL, scamGuard: true }] });
+    expect(await response.json()).toEqual({
+      servers: [
+        {
+          guildId: CLUB,
+          serverLogChannelId: CHANNEL,
+          scamGuard: true,
+          automodAction: 'timeout_then_softban',
+          automodTimeoutMinutes: 60,
+          automodSpray: true,
+          automodSprayChannels: 3,
+          automodSprayWindowMinutes: 2,
+          automodFlagSuspects: true,
+          automodWords: ['nitro'],
+          automodWordsAction: 'delete',
+          automodTrapChannelIds: [CHANNEL],
+        },
+      ],
+    });
     expect((await GET(new Request('http://localhost/api/discord/server-settings'))).status).toBe(401);
   });
 });
@@ -93,6 +125,47 @@ describe('POST', () => {
     const written = upserted.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(written.server_log_channel_id).toBeNull();
     expect('scam_guard' in written).toBe(false);
+  });
+
+  it('writes every auto mod setting, cleaning the word list', async () => {
+    await POST(
+      post({
+        automodAction: 'timeout',
+        automodTimeoutMinutes: 30,
+        automodSpray: false,
+        automodSprayChannels: 2,
+        automodSprayWindowMinutes: 5,
+        automodFlagSuspects: false,
+        automodWords: [' Nitro ', 'nitro', '', 'FREE STEAM'],
+        automodWordsAction: 'punish',
+        automodTrapChannelIds: [CHANNEL, CHANNEL],
+      })
+    );
+    expect(upserted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        automod_action: 'timeout',
+        automod_timeout_minutes: 30,
+        automod_spray: false,
+        automod_spray_channels: 2,
+        automod_spray_window_minutes: 5,
+        automod_flag_suspects: false,
+        automod_words: ['nitro', 'free steam'],
+        automod_words_action: 'punish',
+        automod_trap_channel_ids: [CHANNEL],
+      })
+    );
+  });
+
+  it('refuses an unknown action, a number out of range, or a bad list', async () => {
+    expect((await POST(post({ automodAction: 'ban' }))).status).toBe(400);
+    expect((await POST(post({ automodWordsAction: 'timeout' }))).status).toBe(400);
+    expect((await POST(post({ automodSprayChannels: 1 }))).status).toBe(400);
+    expect((await POST(post({ automodSprayWindowMinutes: 11 }))).status).toBe(400);
+    expect((await POST(post({ automodTimeoutMinutes: 2.5 }))).status).toBe(400);
+    expect((await POST(post({ automodWords: ['x'.repeat(31)] }))).status).toBe(400);
+    expect((await POST(post({ automodWords: 'nitro' }))).status).toBe(400);
+    expect((await POST(post({ automodTrapChannelIds: ['general'] }))).status).toBe(400);
+    expect(upserted).not.toHaveBeenCalled();
   });
 
   it('refuses a bad channel, a bad switch, or nothing to change', async () => {
