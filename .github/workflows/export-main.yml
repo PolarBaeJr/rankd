@@ -14,6 +14,12 @@ name: Export public main
 #                                not after the prod push
 #   workflow_dispatch            a dry run, unless dispatched on the prod branch
 #
+# ONCE PER VERSION. A push only exports when the public branch does not already
+# hold an export of the version in package.json, so the fixes added to a
+# release after it went out (no version bump, by the owner's rule) do not each
+# re-run it. They reach the public copy with the next version. A failed export
+# publishes nothing, so the next push retries it. A manual run always runs.
+#
 # Actions logs on a public repo are public. Nothing here prints file contents
 # or the personal patterns; the export reports `path:line: [category] rule id`.
 on:
@@ -33,7 +39,55 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/deploy/docker-prod' }}
 
 jobs:
+  # Is this version already exported? Two small files and one ref read, so a
+  # skipped push costs seconds rather than a full export.
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            package.json
+            .github/export/targets.json
+          sparse-checkout-cone-mode: false
+
+      # Export commits are titled "Export of <version> (<sha>)" (publish below).
+      # The repo is public, so reading the branch needs no credentials.
+      - name: Check the public branch for this version
+        id: check
+        env:
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          branch=$(node -p "require('./.github/export/targets.json').find((t) => t.name === 'self').branch")
+          subject=none
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            git fetch -q --depth=1 origin "refs/heads/$branch"
+            subject=$(git log -1 --format=%s FETCH_HEAD)
+          fi
+          case "$subject" in
+            "Export of $version "*)
+              if [ "$MANUAL" = true ]; then
+                echo "$version is already exported; running anyway because this run was started by hand"
+                echo needed=true >> "$GITHUB_OUTPUT"
+              else
+                echo "$version is already exported to $branch; skipping"
+                echo needed=false >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              echo "$branch does not hold $version yet; exporting"
+              echo needed=true >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
   export:
+    needs: version
+    if: needs.version.outputs.needed == 'true'
     runs-on: ubuntu-24.04
     # About one CI checks run: type-check builds both Next apps.
     timeout-minutes: 30
