@@ -384,18 +384,49 @@ describe('role changes, stacked', () => {
 
   function stacker() {
     const createMessage = vi.fn(async () => true);
+    const postMessage = vi.fn(async () => 'posted');
+    const editMessage = vi.fn(async () => ({ ok: true }) as never);
     const serverLog = createServerLog({
-      api: { createMessage },
+      api: { createMessage, postMessage, editMessage },
       scopes: new Set<ServerLogScope>(['moderation']),
       resolveChannel: async () => 'log',
       log: () => {},
       now: () => NOW,
       stackMs: 60_000,
     });
-    const posted = () =>
-      createMessage.mock.calls.map((call) => ((call as unknown[])[1] as { embeds: { description: string }[] }).embeds[0]);
-    return { serverLog, posted };
+    // What the channel shows: the post, as last edited.
+    const posted = () => {
+      const embedOf = (call: unknown[], at: number) => (call[at] as { embeds: { description: string }[] }).embeds[0];
+      const last = editMessage.mock.calls.at(-1) as unknown[] | undefined;
+      return [last ? embedOf(last, 2) : embedOf(postMessage.mock.calls[0] as unknown[], 1)];
+    };
+    return { serverLog, posted, postMessage, editMessage, createMessage };
   }
+
+  it('posts at the first change, then edits that post to the whole burst at the end', async () => {
+    const { serverLog, postMessage, editMessage, createMessage } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'm', [add('Exec')]));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(((postMessage.mock.calls[0] as unknown[])[1] as { embeds: { description: string }[] }).embeds[0]?.description).toBe(
+      '<@m> **roles changed**\n**Added:** `Exec`'
+    );
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'm', [remove('Land Crab')]));
+    await serverLog.drain();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(editMessage).toHaveBeenCalledWith('log', 'posted', expect.objectContaining({ embeds: [expect.objectContaining({
+      description: '<@m> **roles changed**\n**Added:** `Exec`\n**Removed:** `Land Crab`',
+    })] }));
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not edit when nothing came after the first post', async () => {
+    const { serverLog, editMessage } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'm', [add('Exec')]));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await serverLog.drain();
+    expect(editMessage).not.toHaveBeenCalled();
+  });
 
   it("puts one member's changes in a burst into one entry, Added and Removed", async () => {
     const { serverLog, posted } = stacker();
@@ -414,11 +445,11 @@ describe('role changes, stacked', () => {
     await serverLog.drain();
     expect(posted()).toHaveLength(1);
     expect(posted()[0]?.description).toBe(
-      "**3 members' roles changed**\n\n**Removed `Land Crab`:** <@a>, <@b>, <@c>"
+      "**3 members' roles changed**\n**Removed:** `Land Crab`\n\n**Members:** <@a>, <@b>, <@c>"
     );
   });
 
-  it('adds and removes in one entry, grouped by role, keeps separate people apart, and drops an undone change', async () => {
+  it('lists each member when their changes differ, keeps separate people apart, and drops an undone change', async () => {
     const { serverLog, posted } = stacker();
     serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'a', [add('Exec')]));
     serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'b', [remove('Coach')]));
@@ -426,6 +457,6 @@ describe('role changes, stacked', () => {
     serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('4', 'c', [remove('Exec')], 'other-mod'));
     await serverLog.drain();
     expect(posted()).toHaveLength(1);
-    expect(posted()[0]?.description).toBe("**2 members' roles changed**\n\n**Added `Exec`:** <@a>\n**Removed `Coach`:** <@b>");
+    expect(posted()[0]?.description).toBe("**2 members' roles changed**\n\n<@a>: added `Exec`\n<@b>: removed `Coach`");
   });
 });
