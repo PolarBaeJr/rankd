@@ -70,8 +70,20 @@ describe('legacyTabRedirect', () => {
 });
 
 describe('adminNavItemHasContent', () => {
-  it('shows an exec on the floor Finances and not Fees', () => {
+  // The floor reads the books since 2026-10-23 ("read to everything"), so an
+  // officer on it sees both. Fees still hides for somebody without either
+  // fee-list read, which is the case below.
+  it('shows an exec on the floor both Fees and Finances', () => {
     const held = effectiveCapabilities('exec', UNRESTRICTED);
+    expect(adminNavItemHasContent('/fees', held)).toBe(true);
+    expect(adminNavItemHasContent('/finances', held)).toBe(true);
+  });
+
+  it('shows an exec with the fee-list reads revoked Finances and not Fees', () => {
+    const narrowed = resolvePermissions(
+      'exec', 'custom', [], ['fees.clubfees.read', 'fees.reinstatements.read'],
+    );
+    const held = effectiveCapabilities('exec', narrowed);
     expect(adminNavItemHasContent('/fees', held)).toBe(false);
     expect(adminNavItemHasContent('/finances', held)).toBe(true);
   });
