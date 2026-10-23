@@ -84,14 +84,19 @@ async function createImpl(input: ClubEventInput): Promise<{ id: string }> {
   return { id };
 }
 
-export async function updateClubEvent(id: string, input: ClubEventInput): Promise<ActionResult> {
-  return runAction(() => updateImpl(id, input));
+/**
+ * `reason` is what /event edit asks for and the club audit log records. The
+ * console form sends none, and the row then says the event was edited.
+ */
+export async function updateClubEvent(id: string, input: ClubEventInput, reason?: string): Promise<ActionResult> {
+  return runAction(() => updateImpl(id, input, reason));
 }
 
-async function updateImpl(id: string, input: ClubEventInput): Promise<void> {
+async function updateImpl(id: string, input: ClubEventInput, reason?: string): Promise<void> {
   const actor = await requireCapability('events.manage.update.write');
   parseOrThrow(z.string().uuid(), id);
   const parsed = parseOrThrow(clubEventSchema, input);
+  const why = parseOrThrow(z.string().trim().max(500, 'Keep the reason to 500 characters'), reason ?? '');
   const adminClient = createAdminClient();
 
   const current = await loadEvent(adminClient, id);
@@ -130,7 +135,7 @@ async function updateImpl(id: string, input: ClubEventInput): Promise<void> {
       target_id: id,
       old_value: { title: current.title, status: current.status },
       new_value: { title: parsed.title, kind: parsed.kind, status: nextStatus },
-      reason: `Club event "${parsed.title}" edited`,
+      reason: why || `Club event "${parsed.title}" edited`,
     },
     { eventId: id },
   );

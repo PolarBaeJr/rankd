@@ -177,50 +177,35 @@ describe('/config channels', () => {
   });
 });
 
-describe('/config tournament', () => {
-  it('refuses a time it cannot parse, before the app sees it', async () => {
-    const reply = await run('tournament', [{ name: 'start_time', type: 3, value: '9am' }]);
+describe('/config ping_lead', () => {
+  it('saves the lead time', async () => {
+    const reply = await run('ping_lead', [{ name: 'ping_lead_minutes', type: 4, value: 90 }]);
 
-    expect(writeDiscordSettings).not.toHaveBeenCalled();
-    expect(reply.data.content).toContain('24-hour');
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ session_ping_lead_minutes: '90' }, MANAGER);
+    expect(reply.data.content).toContain('90');
   });
 
-  it('refuses an end at or before the start', async () => {
-    // Discord rejects an event that ends before it begins, and the relay's own
-    // guard skips it as `end_before_start` — into a log nobody reads. Answering
-    // here is the difference between one wrong answer now and every tournament
-    // silently not being announced.
-    const reply = await run('tournament', [
-      { name: 'start_time', type: 3, value: '18:00' },
-      { name: 'end_time', type: 3, value: '09:00' },
-    ]);
+  it('refuses a lead time the ping job cannot hit, before the app sees it', async () => {
+    const reply = await run('ping_lead', [{ name: 'ping_lead_minutes', type: 4, value: 2 }]);
 
     expect(writeDiscordSettings).not.toHaveBeenCalled();
-    expect(reply.data.content).toContain('cannot end');
+    expect(reply.data.content).toContain('between 5 and 1440');
   });
+});
 
-  it('checks a new start against the end ALREADY SAVED', async () => {
-    // Half a change is the case that actually happens: somebody moves the
-    // start later next season and leaves the end where it was. Validating only
-    // what arrived in this call would let that through.
-    fetchDiscordSettings.mockResolvedValue({ settings: { tournament_event_end_time: '12:00' } });
+describe('/config no longer sets tournament times', () => {
+  it('has no tournament subcommand, and /config show does not list those settings', async () => {
+    // Each tournament keeps its own times and location since 00304. Listing a
+    // club-wide "not set, so events start at 09:00" here would be wrong.
+    const config = COMMAND_DEFINITIONS.find((c) => c.name === 'config');
+    const names = (config?.options as { name: string }[]).map((o) => o.name);
+    expect(names).not.toContain('tournament');
 
-    const reply = await run('tournament', [{ name: 'start_time', type: 3, value: '20:00' }]);
-
-    expect(writeDiscordSettings).not.toHaveBeenCalled();
-    expect(reply.data.content).toContain('cannot end');
-  });
-
-  it('saves a location and a lead time', async () => {
-    await run('tournament', [
-      { name: 'location', type: 3, value: 'SFU Burnaby, West Gym' },
-      { name: 'ping_lead_minutes', type: 4, value: 90 },
-    ]);
-
-    expect(writeDiscordSettings).toHaveBeenCalledWith({
-      tournament_event_location: 'SFU Burnaby, West Gym',
-      session_ping_lead_minutes: '90',
-    }, MANAGER);
+    const reply = await run('show');
+    const text = description(reply);
+    expect(text).not.toContain('Tournament start time');
+    expect(text).not.toContain('events start at 09:00');
+    expect(reply.data.embeds?.[0]?.footer?.text).toContain('/tourney details');
   });
 });
 
@@ -300,7 +285,7 @@ describe('the command definition', () => {
     }
   });
 
-  it('names the tournament options exactly as the specs do', async () => {
+  it('names the ping_lead options exactly as the specs do', async () => {
     // THE DRIFT THIS DESIGN IS EXPOSED TO. These options are typed out rather
     // than generated (they have per-option types and bounds), while the handler
     // reads them back by spec.option. A rename on one side and not the other is
@@ -308,10 +293,10 @@ describe('the command definition', () => {
     // `default: return null` waves the unknown option through, so the app's 400
     // reaches the member as "couldn't reach the club app".
     const config = COMMAND_DEFINITIONS.find((c) => c.name === 'config');
-    const tournament = (config?.options as { name: string; options?: unknown[] }[]).find(
-      (o) => o.name === 'tournament'
+    const pingLead = (config?.options as { name: string; options?: unknown[] }[]).find(
+      (o) => o.name === 'ping_lead'
     );
-    const opts = tournament?.options as { name: string }[];
+    const opts = pingLead?.options as { name: string }[];
 
     expect(opts.map((o) => o.name)).toEqual(VALUE_SETTINGS.map((s) => s.option));
   });

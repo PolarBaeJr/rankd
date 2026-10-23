@@ -248,6 +248,8 @@ export function recordTournamentEvent(input: {
   name: string;
   syncedStartsAt: string;
   syncedEndsAt: string;
+  /** The app's value (00304), null when unset, never the fallback the bot sent. */
+  location: string | null;
 }): Promise<{ ok: true }> {
   return send<{ ok: true }>('POST', '/api/discord/tournament-events', input);
 }

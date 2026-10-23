@@ -1200,6 +1200,7 @@ export type Database = {
           discord_event_id: string
           guild_id: string
           synced_ends_at: string
+          synced_location: string | null
           synced_name: string
           synced_starts_at: string
           tournament_id: string
@@ -1210,6 +1211,7 @@ export type Database = {
           discord_event_id: string
           guild_id: string
           synced_ends_at: string
+          synced_location?: string | null
           synced_name: string
           synced_starts_at: string
           tournament_id: string
@@ -1220,6 +1222,7 @@ export type Database = {
           discord_event_id?: string
           guild_id?: string
           synced_ends_at?: string
+          synced_location?: string | null
           synced_name?: string
           synced_starts_at?: string
           tournament_id?: string
@@ -3919,8 +3922,10 @@ export type Database = {
           created_at: string
           created_by: string | null
           end_date: string | null
+          ends_time: string | null
           event_multiplier: number
           id: string
+          location: string | null
           max_events_per_player: number | null
           name: string
           placement_bonus_amounts: Json | null
@@ -3929,6 +3934,7 @@ export type Database = {
           registration_opens_at: string | null
           season_id: string | null
           start_date: string
+          starts_time: string | null
           status: Database["public"]["Enums"]["tournament_status"]
           suspended_at: string | null
           suspension_reason: string | null
@@ -3942,8 +3948,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           end_date?: string | null
+          ends_time?: string | null
           event_multiplier?: number
           id?: string
+          location?: string | null
           max_events_per_player?: number | null
           name: string
           placement_bonus_amounts?: Json | null
@@ -3952,6 +3960,7 @@ export type Database = {
           registration_opens_at?: string | null
           season_id?: string | null
           start_date: string
+          starts_time?: string | null
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null
@@ -3965,8 +3974,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           end_date?: string | null
+          ends_time?: string | null
           event_multiplier?: number
           id?: string
+          location?: string | null
           max_events_per_player?: number | null
           name?: string
           placement_bonus_amounts?: Json | null
@@ -3975,6 +3986,7 @@ export type Database = {
           registration_opens_at?: string | null
           season_id?: string | null
           start_date?: string
+          starts_time?: string | null
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null

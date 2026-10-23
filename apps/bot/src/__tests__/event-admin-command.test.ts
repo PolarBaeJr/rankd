@@ -129,6 +129,88 @@ describe('/event publish', () => {
   });
 });
 
+describe('/event edit', () => {
+  const editInput = {
+    title: 'Pub night',
+    kind: 'social',
+    description: 'Upstairs',
+    location: 'The Pub',
+    starts_at: '2026-11-04T19:00',
+    ends_at: '2026-11-04T22:00',
+    signup_opens_at: null,
+    signup_closes_at: null,
+    capacity: 20,
+    cost_dollars: null,
+    publish: true,
+  };
+  const current = () =>
+    json({ ok: true, data: { events: [{ id: EVENT_ID, label: 'Pub night', status: 'published', editInput }] } });
+
+  it('overlays only what was typed and sends the reason, keeping it published', async () => {
+    fetchSpy.mockResolvedValueOnce(current()).mockResolvedValueOnce(json({ ok: true }));
+    const response = await dispatch(
+      'event',
+      sub('edit', [
+        { name: 'event', value: EVENT_ID },
+        { name: 'reason', value: 'Venue changed' },
+        { name: 'location', value: 'The Other Pub' },
+        { name: 'capacity', value: 30 },
+        { name: 'ends', value: '2026-11-04 23:00' },
+      ]),
+      CONTEXT
+    );
+    expect(await finished(response)).toContain('Its Discord event follows');
+    const [url, init] = fetchSpy.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe(`${BASE}/api/discord/actions/editClubEvent`);
+    expect(JSON.parse(String(init.body)).args).toEqual([
+      EVENT_ID,
+      { ...editInput, location: 'The Other Pub', capacity: 30, ends_at: '2026-11-04T23:00' },
+      'Venue changed',
+    ]);
+  });
+
+  it('refuses a short reason, a malformed start and an empty edit before calling the console', async () => {
+    const answer = async (options: { name: string; value: unknown }[]) =>
+      ((await dispatch('event', sub('edit', [{ name: 'event', value: EVENT_ID }, ...options]), CONTEXT)) as BotResponse)
+        .data as { content: string };
+    expect((await answer([{ name: 'reason', value: 'why' }, { name: 'title', value: 'X' }])).content).toContain('at least 5');
+    expect((await answer([{ name: 'reason', value: 'Moved again' }, { name: 'starts', value: 'next friday' }])).content).toContain(
+      'YYYY-MM-DD HH:MM'
+    );
+    expect((await answer([{ name: 'reason', value: 'Moved again' }])).content).toContain('at least one');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses an event that was typed rather than picked, reading nothing', async () => {
+    const response = (await dispatch(
+      'event',
+      sub('edit', [
+        { name: 'event', value: 'pub night' },
+        { name: 'reason', value: 'Venue changed' },
+        { name: 'title', value: 'Pub night two' },
+      ]),
+      CONTEXT
+    )) as BotResponse;
+    expect((response.data as { content: string }).content).toContain('Pick an event');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses an end before the start it would land on, writing nothing', async () => {
+    fetchSpy.mockResolvedValueOnce(current());
+    const response = await dispatch(
+      'event',
+      sub('edit', [
+        { name: 'event', value: EVENT_ID },
+        { name: 'reason', value: 'Starts later now' },
+        { name: 'starts', value: '2026-11-04 23:30' },
+      ]),
+      CONTEXT
+    );
+    expect(await finished(response)).toContain('end has to be after the start');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('/event cancel and delete', () => {
   it('opens a reason modal for cancel and sends the reason on submit', async () => {
     const opened = await dispatch('event', sub('cancel', [{ name: 'event', value: EVENT_ID }]), CONTEXT);

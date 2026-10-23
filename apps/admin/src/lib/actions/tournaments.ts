@@ -23,7 +23,10 @@ import {
   effectiveWindows,
   validateEffectiveWindows,
   windowColumnsFromWallClock,
+  parseTournamentDetails,
+  clockHHMM,
   type WindowColumns,
+  type TournamentDetails,
 } from '@badminton/shared';
 import type {
   TournamentStatus,
@@ -59,7 +62,7 @@ export async function createTournament(data: {
   placement_bonus_enabled: boolean;
   waiver_text?: string;
   max_events_per_player?: number | null;
-} & TournamentWindowFields): Promise<ActionResult<string>> {
+} & TournamentWindowFields & TournamentDetailFields): Promise<ActionResult<string>> {
   // Returned as a value, so a refusal (bad windows, no active season, missing
   // migration) reaches the exec as its own text instead of the generic message
   // a production build puts on a thrown server-action error.
@@ -75,6 +78,11 @@ export async function createTournament(data: {
     ) as WindowColumns;
     const windowRefusal = validateEffectiveWindows(effectiveWindows({ event: null, tournament: windows }));
     if (windowRefusal) throw new ExpectedError(windowRefusal);
+    // Same rule as the windows: only what was filled in is written, so a
+    // tournament created without times still saves before 00304 is applied.
+    const details = Object.fromEntries(
+      Object.entries(detailColumns(data, null)).filter(([, v]) => v !== null),
+    ) as Partial<TournamentDetails>;
 
     const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
     // Refuse rather than stamp NULL — see requireActiveSeasonId. A row with no
@@ -99,6 +107,7 @@ export async function createTournament(data: {
       // spread would silently leave the old number in place.
       max_events_per_player: data.max_events_per_player ?? null,
       ...windows,
+      ...details,
       status: 'draft',
       season_id: seasonId,
       created_by: admin.id,
@@ -106,6 +115,7 @@ export async function createTournament(data: {
 
     if (error) {
       if (Object.keys(windows).length > 0 && isColumnMissing(error)) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+      if (Object.keys(details).length > 0 && isColumnMissing(error)) throw new ExpectedError(DETAILS_MIGRATION_MISSING);
       throw new Error(error.message);
     }
 
@@ -435,7 +445,45 @@ function isColumnMissing(error: { code?: string } | null): boolean {
   return !!error && ['42703', 'PGRST204'].includes(error.code ?? '');
 }
 
-type TournamentUpdate = TournamentWindowFields & {
+/**
+ * A tournament's own daily times and venue (00304): HH:MM strings and text.
+ * Blank or null clears one; omitted leaves it alone.
+ */
+type TournamentDetailFields = Partial<Record<keyof TournamentDetails, string | null>>;
+
+const DETAIL_KEYS = ['starts_time', 'ends_time', 'location'] as const;
+const DETAILS_MIGRATION_MISSING = 'Run migration 00304 first';
+
+/**
+ * The detail columns to write, checked against what the row already holds.
+ *
+ * MERGED BEFORE IT IS CHECKED, because the rule spans two fields: changing
+ * only the start, from Discord, must still be refused when it lands after the
+ * end that is already saved. The column CHECK would refuse it too, but as a
+ * constraint name rather than a sentence. `old` is null on create.
+ *
+ * select('*') names every column, so a row without starts_time is a database
+ * without 00304: anything set is refused, and an all-blank edit writes none.
+ */
+function detailColumns(
+  data: TournamentDetailFields,
+  old: Record<string, unknown> | null,
+): Partial<TournamentDetails> {
+  const given = DETAIL_KEYS.filter((key) => data[key] !== undefined);
+  if (given.length === 0) return {};
+  if (old && !('starts_time' in old)) {
+    if (given.some((key) => (data[key] ?? '').trim() !== '')) throw new ExpectedError(DETAILS_MIGRATION_MISSING);
+    return {};
+  }
+  const merged = Object.fromEntries(
+    DETAIL_KEYS.map((key) => [key, data[key] !== undefined ? data[key] : ((old?.[key] as string | null) ?? null)]),
+  );
+  const parsed = parseTournamentDetails(merged);
+  if (!parsed.ok) throw new ExpectedError(parsed.error);
+  return Object.fromEntries(given.map((key) => [key, parsed.details[key]])) as Partial<TournamentDetails>;
+}
+
+type TournamentUpdate = TournamentWindowFields & TournamentDetailFields & {
   name: string;
   allowed_memberships?: string[];
   start_date: string;
@@ -550,6 +598,8 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
     adminClient, tournamentId, old?.waiver_text as string | null | undefined, data.waiver_text,
   );
 
+  const details = detailColumns(data, old as Record<string, unknown> | null);
+
   const { error } = await adminClient.from('tournaments').update({
     name: data.name,
     // Omitted -> leave the column default (all three) rather than writing
@@ -567,6 +617,7 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
     max_events_per_player: data.max_events_per_player ?? null,
     ...(bonusAmounts ? { placement_bonus_amounts: bonusAmounts.value } : {}),
     ...windows,
+    ...details,
   }).eq('id', tournamentId);
 
   if (error) {
@@ -574,6 +625,7 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
       throw new ExpectedError('Run migration 00275 first');
     }
     if (isColumnMissing(error) && Object.keys(windows).length > 0) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+    if (isColumnMissing(error) && Object.keys(details).length > 0) throw new ExpectedError(DETAILS_MIGRATION_MISSING);
     throw new Error(error.message);
   }
 
@@ -589,6 +641,63 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
   scheduleManagedFormSync('tournament', tournamentId);
+}
+
+/**
+ * Change only a tournament's times and location (00304): /tourney details.
+ *
+ * ITS OWN ACTION rather than updateTournament, which takes the whole form and
+ * reads an absent field as "clear it": a Discord command that knows three
+ * fields cannot send the waiver, the windows and the bonus amounts back
+ * unchanged without reading them first, and a stale read would blank whatever
+ * changed in between. Only the fields given are written; omitted stays as it
+ * is. Same capability and the same audit row as the full edit.
+ */
+export async function updateTournamentDetails(
+  tournamentId: string,
+  input: TournamentDetailFields,
+): Promise<ActionResult<TournamentDetails & { name: string }>> {
+  return runAction(async () => {
+    const admin = await requireCapability('tournaments.manage.update.write');
+    const adminClient = createAdminClient();
+
+    const { data: old, error: readError } = await adminClient
+      .from('tournaments').select('*').eq('id', tournamentId).maybeSingle();
+    if (readError) throw new Error(readError.message);
+    if (!old) throw new ExpectedError('That tournament no longer exists.');
+
+    const details = detailColumns(input, old as Record<string, unknown>);
+    if (Object.keys(details).length === 0) throw new ExpectedError('Nothing to change.');
+
+    const { error } = await adminClient.from('tournaments').update(details).eq('id', tournamentId);
+    if (error) {
+      if (isColumnMissing(error)) throw new ExpectedError(DETAILS_MIGRATION_MISSING);
+      throw new Error(error.message);
+    }
+
+    const before = Object.fromEntries(DETAIL_KEYS.map((key) => [key, (old as Record<string, unknown>)[key] ?? null]));
+    await logAdminAudit(adminClient, {
+      actor_id: admin.id,
+      action_type: 'tournament_updated',
+      target_type: 'tournament',
+      target_id: tournamentId,
+      old_value: before,
+      new_value: details,
+      reason: `Times and location of "${old.name as string}" changed`,
+    }, { tournamentId });
+
+    revalidatePath('/tournaments');
+    revalidatePath(`/tournaments/${tournamentId}`);
+
+    const after = { ...before, ...details } as Record<string, string | null>;
+    return {
+      name: old.name as string,
+      // A time read back from the row is HH:MM:SS.
+      starts_time: clockHHMM(after.starts_time),
+      ends_time: clockHHMM(after.ends_time),
+      location: after.location ?? null,
+    };
+  });
 }
 
 /**

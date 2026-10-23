@@ -28,7 +28,12 @@ import {
 } from '@/lib/tournament-actions/participants';
 import { enterMatchResult, enterWalkover } from '@/lib/tournament-actions/results';
 import { setMatchCourt, setMatchLive } from '@/lib/tournament-actions/scheduling';
-import { resumeTournament, suspendTournament, updateTournamentStatus } from '@/lib/actions/tournaments';
+import {
+  resumeTournament,
+  suspendTournament,
+  updateTournamentDetails,
+  updateTournamentStatus,
+} from '@/lib/actions/tournaments';
 import { markTournamentFeePaid, markTournamentFeeUnpaid } from '@/lib/actions/tournament-fees';
 import {
   getOrCreateTournamentCheckinToken,
@@ -106,6 +111,19 @@ async function enterMatchResultFromScores(matchId: string, scores: { a: number; 
   return enterMatchResult(matchId, scores, winner, false);
 }
 
+// /tourney details (00304). Only the fields given change; the action re-checks
+// them with the shared parser, so these only bound the shape.
+const tournamentDetailsInput = z
+  .object({
+    starts_time: clockTime.optional(),
+    ends_time: clockTime.optional(),
+    location: z.string().max(200).optional(),
+  })
+  .strict();
+
+// /event edit asks for a reason the way /session edit does: required, 5 to 500.
+const editReason = z.string().trim().min(5).max(500);
+
 const feePaidInput = z
   .object({ tournament_id: uuid, player_id: uuid, method: z.string().max(40).optional() })
   .strict();
@@ -120,6 +138,9 @@ const ACTIONS: Record<string, { args: z.ZodTypeAny; run: AnyAction }> = {
   // clubEventSchema is .strict() itself, so the object is checked there.
   createClubEvent: { args: z.tuple([object]), run: createClubEvent as AnyAction },
   updateClubEvent: { args: z.tuple([uuid, object]), run: updateClubEvent as AnyAction },
+  // Its own name rather than a third element on updateClubEvent, so /event
+  // publish and an older bot keep sending the tuple they always have.
+  editClubEvent: { args: z.tuple([uuid, object, editReason]), run: updateClubEvent as AnyAction },
   cancelClubEvent: { args: z.tuple([uuid, reason]), run: cancelClubEvent as AnyAction },
   deleteClubEvent: { args: z.tuple([uuid]), run: deleteClubEvent as AnyAction },
   checkInParticipant: { args: z.tuple([uuid]), run: checkInParticipant as AnyAction },
@@ -137,6 +158,10 @@ const ACTIONS: Record<string, { args: z.ZodTypeAny; run: AnyAction }> = {
   updateTournamentStatus: {
     args: z.tuple([uuid, z.enum(['draft', 'active', 'completed', 'archived'])]),
     run: updateTournamentStatus as AnyAction,
+  },
+  updateTournamentDetails: {
+    args: z.tuple([uuid, tournamentDetailsInput]),
+    run: updateTournamentDetails as AnyAction,
   },
   suspendTournament: { args: z.tuple([uuid, z.string().min(2).max(500)]), run: wrap(suspendTournament) },
   resumeTournament: { args: z.tuple([uuid]), run: wrap(resumeTournament) },

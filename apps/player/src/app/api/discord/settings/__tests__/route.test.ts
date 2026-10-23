@@ -124,10 +124,19 @@ describe('validation', () => {
     expect(upserted).not.toHaveBeenCalled();
   });
 
-  it('takes a 24-hour time and refuses anything else', async () => {
-    expect((await POST(post({ settings: { tournament_event_start_time: '09:00' } }))).status).toBe(200);
-    expect((await POST(post({ settings: { tournament_event_start_time: '9am' } }))).status).toBe(400);
-    expect((await POST(post({ settings: { tournament_event_start_time: '24:00' } }))).status).toBe(400);
+  it('no longer writes the club-wide tournament times or location', async () => {
+    // Each tournament keeps its own since 00304, and the old keys are only a
+    // fallback for a tournament with none set. A bot older than that must not
+    // be able to move the fallback for every tournament at once.
+    const retired: [string, string][] = [
+      ['tournament_event_start_time', '09:00'],
+      ['tournament_event_end_time', '18:00'],
+      ['tournament_event_location', 'Court 1'],
+    ];
+    for (const [key, value] of retired) {
+      expect((await POST(post({ settings: { [key]: value } }))).status, key).toBe(400);
+    }
+    expect(upserted).not.toHaveBeenCalled();
   });
 
   it('holds the ping lead time to something the cron can actually hit', async () => {
@@ -149,11 +158,6 @@ describe('validation', () => {
       expect((await POST(post({ settings: { [key]: '1547801288119558234' } }))).status, key).toBe(200);
       expect((await POST(post({ settings: { [key]: '@session ping' } }))).status, key).toBe(400);
     }
-  });
-
-  it('refuses a location longer than Discord will take', async () => {
-    expect((await POST(post({ settings: { tournament_event_location: 'Court 1' } }))).status).toBe(200);
-    expect((await POST(post({ settings: { tournament_event_location: 'x'.repeat(101) } }))).status).toBe(400);
   });
 });
 

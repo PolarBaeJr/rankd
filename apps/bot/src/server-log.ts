@@ -602,6 +602,11 @@ export interface ServerLogOptions {
   maxQueue?: number;
   /** How long a delete waits for Discord to write its audit entry. */
   auditDelayMs?: number;
+  /**
+   * Role changes by one person are held this long after their last one and
+   * posted as a single entry, so a mass add or removal is one post, not fifty.
+   */
+  stackMs?: number;
 }
 
 export interface ServerLog {
@@ -631,6 +636,7 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     now = () => new Date(),
     maxQueue = 200,
     auditDelayMs = 1500,
+    stackMs = 4000,
   } = options;
   const cache = new MessageCache();
   // Posts go one at a time. Discord allows about five a channel every five
@@ -789,9 +795,139 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     };
   }
 
+  // ---- role changes, stacked ----
+  interface RoleStack {
+    guildId: string;
+    actorId: string | null;
+    firstAuditId: string;
+    entries: number;
+    startedAt: number;
+    members: Map<string, { added: string[]; removed: string[] }>;
+    reason: string | null;
+    timer: ReturnType<typeof setTimeout> | null;
+  }
+  const roleStacks = new Map<string, RoleStack>();
+
+  /** A plain role change (nothing but roles added or removed), or null. */
+  function roleChangeOf(data: unknown): { guildId: string; actorId: string | null; auditId: string; targetId: string; added: string[]; removed: string[]; reason: string | null } | null {
+    const d = data as Record<string, unknown> | null;
+    if (!d || d.action_type !== 25 || typeof d.id !== 'string' || typeof d.target_id !== 'string') return null;
+    const guildId = guildOf(d);
+    const changes = Array.isArray(d.changes) ? (d.changes as AuditChange[]) : [];
+    if (!guildId || changes.length === 0 || changes.some((c) => c.key !== '$add' && c.key !== '$remove')) return null;
+    return {
+      guildId,
+      actorId: typeof d.user_id === 'string' ? d.user_id : null,
+      auditId: d.id,
+      targetId: d.target_id,
+      added: changes.filter((c) => c.key === '$add').flatMap((c) => roleList(c.new_value)),
+      removed: changes.filter((c) => c.key === '$remove').flatMap((c) => roleList(c.new_value)),
+      reason: typeof d.reason === 'string' && d.reason ? decodeReason(d.reason) : null,
+    };
+  }
+
+  function stackRoleChange(change: NonNullable<ReturnType<typeof roleChangeOf>>) {
+    const key = `${change.guildId}:${change.actorId ?? ''}`;
+    let stack = roleStacks.get(key);
+    if (!stack) {
+      stack = {
+        guildId: change.guildId,
+        actorId: change.actorId,
+        firstAuditId: change.auditId,
+        entries: 0,
+        startedAt: Date.now(),
+        members: new Map(),
+        reason: null,
+        timer: null,
+      };
+      roleStacks.set(key, stack);
+    }
+    stack.entries += 1;
+    stack.reason = change.reason ?? stack.reason;
+    const member = stack.members.get(change.targetId) ?? { added: [], removed: [] };
+    for (const role of change.added) {
+      // Added back after being removed in the same burst: no net change.
+      if (member.removed.includes(role)) member.removed = member.removed.filter((r) => r !== role);
+      else if (!member.added.includes(role)) member.added.push(role);
+    }
+    for (const role of change.removed) {
+      if (member.added.includes(role)) member.added = member.added.filter((r) => r !== role);
+      else if (!member.removed.includes(role)) member.removed.push(role);
+    }
+    stack.members.set(change.targetId, member);
+    if (stack.timer) clearTimeout(stack.timer);
+    // Held until the burst goes quiet, but never more than a minute.
+    const wait = Date.now() - stack.startedAt > 60_000 ? 0 : stackMs;
+    stack.timer = setTimeout(() => flushRoleStack(key), wait);
+  }
+
+  function flushRoleStack(key: string) {
+    const stack = roleStacks.get(key);
+    if (!stack) return;
+    roleStacks.delete(key);
+    if (stack.timer) clearTimeout(stack.timer);
+    const built = describeRoleStack(stack);
+    if (built) enqueue('role changes', { guild_id: stack.guildId }, built);
+  }
+
+  const roleNames = (roles: string[]) => roles.map((role) => `\`${role}\``).join(', ');
+
+  function describeRoleStack(stack: RoleStack): ServerLogEntry | null {
+    const members = [...stack.members.entries()].filter(([, m]) => m.added.length || m.removed.length);
+    if (members.length === 0) return null;
+    const lists = (m: { added: string[]; removed: string[] }) =>
+      [m.added.length ? `**Added:** ${roleNames(m.added)}` : '', m.removed.length ? `**Removed:** ${roleNames(m.removed)}` : '']
+        .filter(Boolean)
+        .join('\n');
+    let description: string;
+    let footer: string;
+    if (members.length === 1) {
+      const [memberId, change] = members[0] as [string, { added: string[]; removed: string[] }];
+      description = `<@${memberId}> **roles changed**\n${lists(change)}`;
+      footer = `ID: ${memberId}`;
+    } else {
+      const same = (a: string[], b: string[]) => a.length === b.length && a.every((role) => b.includes(role));
+      const [, first] = members[0] as [string, { added: string[]; removed: string[] }];
+      const alike = members.every(([, m]) => same(m.added, first.added) && same(m.removed, first.removed));
+      const shown = members.slice(0, 60);
+      const more = members.length > shown.length ? `\n...and ${members.length - shown.length} more` : '';
+      description = alike
+        ? `**${members.length} members' roles changed**\n${lists(first)}\n\n**Members:** ${shown.map(([id]) => `<@${id}>`).join(', ')}${more}`
+        : `**${members.length} members' roles changed**\n\n` +
+          shown
+            .map(
+              ([id, m]) =>
+                `<@${id}>: ` +
+                [m.added.length ? `added ${roleNames(m.added)}` : '', m.removed.length ? `removed ${roleNames(m.removed)}` : '']
+                  .filter(Boolean)
+                  .join('; ')
+            )
+            .join('\n') +
+          more;
+      footer = `${members.length} members`;
+    }
+    return {
+      key: `roles:${stack.firstAuditId}:${stack.entries}`,
+      actorId: stack.actorId ?? undefined,
+      embed: {
+        description: clip(description, 4000),
+        color: COLOR_MODERATION,
+        fields: stack.reason ? [{ name: 'Reason', value: clip(stack.reason, 1000), inline: false }] : undefined,
+        footer: { text: footer },
+      },
+    };
+  }
+
   return {
     onDispatch(type, data) {
       if (!LOGGED_TYPES.has(type)) return;
+      if (type === 'GUILD_AUDIT_LOG_ENTRY_CREATE' && scopes.has('moderation')) {
+        const roleChange = roleChangeOf(data);
+        if (roleChange) {
+          stackRoleChange(roleChange);
+          return;
+        }
+      }
       // A new message only feeds the cache. Done at once rather than queued, so
       // a busy channel cannot fill the queue with work that posts nothing.
       if (type === 'MESSAGE_CREATE') {
@@ -805,6 +941,9 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     post(guildId, entry) {
       enqueue('scam guard', { guild_id: guildId }, entry);
     },
-    drain: () => chain,
+    drain: () => {
+      for (const key of [...roleStacks.keys()]) flushRoleStack(key);
+      return chain;
+    },
   };
 }
