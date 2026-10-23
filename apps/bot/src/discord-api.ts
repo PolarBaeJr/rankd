@@ -342,6 +342,43 @@ export class DiscordApi {
     }
   }
 
+  /** A channel's pinned messages, with who posted each and its first embed's text. Null when unreadable. */
+  async listPinnedMessages(
+    channelId: string
+  ): Promise<{ id: string; authorId: string | null; embed: { footer: string; description: string } | null }[] | null> {
+    try {
+      const response = await this.request('GET', `/channels/${channelId}/pins`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as {
+        id?: unknown;
+        author?: { id?: unknown };
+        embeds?: { footer?: { text?: unknown }; description?: unknown }[];
+      }[];
+      return body
+        .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
+        .map((message) => {
+          const embed = message.embeds?.[0];
+          return {
+            id: message.id,
+            authorId: typeof message.author?.id === 'string' ? message.author.id : null,
+            embed: embed
+              ? {
+                  footer: typeof embed.footer?.text === 'string' ? embed.footer.text : '',
+                  description: typeof embed.description === 'string' ? embed.description : '',
+                }
+              : null,
+          };
+        });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Pin a message. Needs Manage Messages (Pin Messages on newer servers). */
+  async pinMessage(channelId: string, messageId: string, reason: string): Promise<RoleCallResult> {
+    return this.moderationCall('PUT', `/channels/${channelId}/pins/${messageId}`, reason);
+  }
+
   /** A channel's latest messages, newest first (up to 100), or null when unreadable. */
   async listRecentMessages(
     channelId: string,

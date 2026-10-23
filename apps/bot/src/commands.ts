@@ -78,6 +78,7 @@ import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import { CRYPTO_WORDS, GIVEAWAY_WORDS } from './scam-guard.js';
+import { putUpTrapNotice, takeDownTrapNotice } from './trap-notice.js';
 import { socialsReply, type SocialsPayload } from './socials.js';
 import {
   ALL_SETTINGS,
@@ -846,6 +847,18 @@ export const COMMAND_DEFINITIONS = [
             channel_types: [0, 5],
           },
           { type: 7, name: 'remove_trap', description: 'Stop treating a channel as a trap', required: false, channel_types: [0, 5] },
+          {
+            type: 3,
+            name: 'trap_action',
+            description: 'What a post in a trap channel gets (default: soft-ban)',
+            required: false,
+            choices: [
+              { name: 'Soft-ban at once (default)', value: 'softban' },
+              { name: 'Timeout, then soft-ban if caught again', value: 'timeout_then_softban' },
+              { name: 'Timeout only', value: 'timeout' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
         ],
       },
       {
@@ -7823,6 +7836,40 @@ export function canManageServer(permissions: string | null | undefined): boolean
   }
 }
 
+/** Put up, take down or reword the trap channel warnings after a /config automod save. */
+async function updateTrapNotices(
+  guildId: string,
+  change: ServerSettingsChange,
+  added: string | null,
+  removed: string | null
+): Promise<string[]> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token || (!added && !removed && !change.automodTrapAction)) return [];
+  const api = new DiscordApi({ token });
+  const notes: string[] = [];
+  try {
+    if (removed) await takeDownTrapNotice(api, removed);
+    const { servers } = await fetchServerSettings();
+    const mine = servers.find((row) => row.guildId === guildId);
+    const action = mine?.automodTrapAction ?? 'softban';
+    // A new trap gets its warning; a changed answer rewords all of them.
+    const channels = change.automodTrapAction ? (mine?.automodTrapChannelIds ?? []) : added ? [added] : [];
+    for (const channelId of channels) {
+      const result = await putUpTrapNotice(api, channelId, action);
+      if (result === 'forbidden') {
+        notes.push(`I posted the warning in <#${channelId}> but could not pin it: I need **Manage Messages** (or **Pin Messages**) there.`);
+      } else if (result !== 'ok') {
+        notes.push(`I could not post the warning in <#${channelId}>. Check I can send messages there, then run this again.`);
+      }
+    }
+    if (added && notes.length === 0) notes.push(`<#${added}> now has a pinned warning that counts everyone caught there.`);
+  } catch (error) {
+    console.error('[bot] trap notice update failed:', error);
+    notes.push('The setting is saved, but I could not update the warning in the trap channel.');
+  }
+  return notes;
+}
+
 /** What each auto mod action does, in words, given the timeout length. */
 const AUTOMOD_ACTION_TEXT: Record<AutomodAction, (timeoutMinutes: number) => string> = {
   timeout_then_softban: (minutes) =>
@@ -7869,7 +7916,9 @@ async function serverSettingsText(guildId: string): Promise<string> {
       mine.automodSpray
         ? `- **Spray**: the same post in **${mine.automodSprayChannels} channels** within **${minutes} minute${minutes === 1 ? '' : 's'}**`
         : '- **Spray**: off',
-      `- **Trap channels**: ${mine.automodTrapChannelIds.length ? mine.automodTrapChannelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`,
+      mine.automodTrapChannelIds.length
+        ? `- **Trap channels**: ${mine.automodTrapChannelIds.map((id) => `<#${id}>`).join(', ')}; a post there gets ${AUTOMOD_ACTION_TEXT[mine.automodTrapAction ?? 'softban'](mine.automodTimeoutMinutes)}`
+        : '- **Trap channels**: none',
       mine.automodWords.length
         ? `- **Your words** (${WORDS_ACTION_TEXT[mine.automodWordsAction]}): ${mine.automodWords.map((word) => `\`${word.replace(/`/g, '')}\``).join(', ')}`
         : '- **Your words**: none',
@@ -7931,6 +7980,8 @@ async function handleServerSetting(
     count('spray_minutes', 'automodSprayWindowMinutes');
     const action = option(args, 'action');
     if (typeof action === 'string' && action in AUTOMOD_ACTION_TEXT) change.automodAction = action as AutomodAction;
+    const trapAction = option(args, 'trap_action');
+    if (typeof trapAction === 'string' && trapAction in AUTOMOD_ACTION_TEXT) change.automodTrapAction = trapAction as AutomodAction;
     const wordsAction = option(args, 'words_action');
     if (typeof wordsAction === 'string' && wordsAction in WORDS_ACTION_TEXT) {
       change.automodWordsAction = wordsAction as AutomodWordsAction;
@@ -7965,10 +8016,11 @@ async function handleServerSetting(
     if (Object.keys(change).length === 0) {
       return ephemeral(`${now}\n\nFill in any option of **/config automod** to change it.`);
     }
-    const trapNote =
-      typeof addTrap === 'string'
-        ? `\n\nTell your members not to post in <#${addTrap}>: anything posted there is caught. Hide it from new members' view or say so in its topic.`
-        : '';
+    // The warning in each trap channel: up when one is added, down when one
+    // is removed, and reworded everywhere when what a post there gets changes.
+    const trapNotes = await updateTrapNotices(guildId, change, typeof addTrap === 'string' ? addTrap : null,
+      typeof removeTrap === 'string' ? removeTrap : null);
+    const trapNote = trapNotes.length ? `\n\n${trapNotes.join('\n')}` : '';
     return ephemeral(`Saved.\n\n${now}${trapNote}`);
   }
 

@@ -84,6 +84,7 @@ export const DEFAULT_RULES: GuardRules = {
   words: [],
   wordsAction: 'delete',
   trapChannelIds: [],
+  trapAction: 'softban',
 };
 // The longest window a server may choose. Every account's recent posts are
 // held this long, whatever its own server picked.
@@ -107,6 +108,8 @@ export interface GuardRules {
   words: readonly string[];
   wordsAction: AutomodWordsAction;
   trapChannelIds: readonly string[];
+  /** What a post in a trap channel gets, apart from `action`. */
+  trapAction: AutomodAction;
 }
 
 const KICK_MEMBERS = 1n << 1n;
@@ -309,6 +312,8 @@ export interface ScamGuardOptions {
   rulesFor: (guildId: string) => Promise<GuardRules | null>;
   /** Posts an entry to the server log of that guild. */
   report: (guildId: string, entry: ServerLogEntry) => void;
+  /** An account was dealt with for posting in a trap channel: the channel's warning counts it. */
+  onTrapCaught?: (guildId: string, channelId: string, action: AutomodAction) => void;
   log?: (line: string) => void;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
@@ -331,6 +336,7 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
     api,
     rulesFor,
     report,
+    onTrapCaught,
     log = (line: string) => console.error(line),
     now = () => new Date(),
     sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -503,8 +509,12 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
         return;
       }
       const why = 'posted in a trap channel';
-      caught('Auto mod: post in a trap channel', `<@${message.authorId}> posted in <#${message.channelId}>.`,
-        await punish(message, rules, roles, thisPost, why, at, false));
+      const trapRules = { ...rules, action: rules.trapAction };
+      const outcome = await punish(message, trapRules, roles, thisPost, why, at, false);
+      caught('Auto mod: post in a trap channel', `<@${message.authorId}> posted in <#${message.channelId}>.`, outcome);
+      if (trapRules.action === 'flag' || /^(Caught again|soft-banned|Timed out)/.test(outcome)) {
+        onTrapCaught?.(message.guildId, message.channelId, trapRules.action);
+      }
       return;
     }
 

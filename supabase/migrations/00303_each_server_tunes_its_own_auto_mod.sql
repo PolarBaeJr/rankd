@@ -24,6 +24,10 @@
 --   automod_trap_channel_ids     channels nobody should post in. Any post there
 --                                is caught, which is how a bot spraying every
 --                                channel is stopped on its first message.
+--   automod_trap_action          what a post in a trap channel gets, from the
+--                                same four answers below. Its own setting,
+--                                defaulting to a soft ban: nobody posts there
+--                                by mistake once the bot's pinned warning is up.
 --
 -- THE ANSWER, automod_action, for a spray, a trap, or a punished word:
 --   timeout_then_softban  a timeout the first time, a soft ban if the same
@@ -62,13 +66,15 @@ ALTER TABLE public.discord_server_settings
   ADD COLUMN IF NOT EXISTS automod_words_action text NOT NULL DEFAULT 'delete'
     CHECK (automod_words_action IN ('delete', 'punish', 'flag')),
   ADD COLUMN IF NOT EXISTS automod_trap_channel_ids text[] NOT NULL DEFAULT '{}'
-    CHECK (cardinality(automod_trap_channel_ids) <= 10);
+    CHECK (cardinality(automod_trap_channel_ids) <= 10),
+  ADD COLUMN IF NOT EXISTS automod_trap_action text NOT NULL DEFAULT 'softban'
+    CHECK (automod_trap_action IN ('timeout_then_softban', 'timeout', 'softban', 'flag'));
 
 DO $verify$
 BEGIN
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'discord_server_settings'
-         AND column_name LIKE 'automod\_%') <> 9 THEN
+         AND column_name LIKE 'automod\_%') <> 10 THEN
     RAISE EXCEPTION '00303: the auto mod columns are missing';
   END IF;
   IF has_table_privilege('anon', 'public.discord_server_settings', 'SELECT')

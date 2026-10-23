@@ -335,8 +335,10 @@ The server log is not in this table: since 00302 each server sets its own, with
 `/config server_log channel:`. Auto mod (the scam guard in the code) is set the
 same way with `/config automod`: on or off, what a caught account gets (timeout
 then soft-ban, timeout, soft-ban, or flag only), the spray rule's channels and
-minutes, the server's own words, trap channels, and whether lone giveaway posts
-are flagged (00303). `/config automod` with no options shows the setup. Both
+minutes, the server's own words, trap channels (with their own answer,
+`trap_action:`, a soft ban unless changed), and whether lone giveaway posts
+are flagged (00303). Adding a trap channel posts and pins a warning there whose
+count goes up with each account caught; the count lives in that message. `/config automod` with no options shows the setup. Both
 live in `discord_server_settings`, one row per server. In a club server the
 caller also needs the club check `/config` uses.
 
