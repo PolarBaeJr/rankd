@@ -42,10 +42,10 @@
 // Club servers only. The bot runs anywhere, and somebody else's server is
 // theirs to moderate.
 
-import type { DiscordApi } from "./discord-api.js";
-import type { DiscordRole } from "./setup.js";
-import { banThenUnban, topPosition } from "./moderation.js";
-import type { ServerLogEntry } from "./server-log.js";
+import type { DiscordApi } from './discord-api.js';
+import type { DiscordRole } from './setup.js';
+import { banThenUnban, topPosition } from './moderation.js';
+import type { ServerLogEntry } from './server-log.js';
 
 export const SPRAY_WINDOW_MS = 2 * 60_000;
 export const SPRAY_CHANNELS = 3;
@@ -65,8 +65,7 @@ const MODERATOR = KICK_MEMBERS | BAN_MEMBERS | ADMINISTRATOR | MANAGE_MESSAGES;
 const COLOR_ACTION = 0xe74c3c;
 const COLOR_SUSPECT = 0xf1c40f;
 
-const GIVEAWAY =
-  /\b(giv(e|es|ing)\s*away|giveaways?|gift(s|ing|ed)?|free(bies?)?|first come)\b/i;
+const GIVEAWAY = /\b(giv(e|es|ing)\s*away|giveaways?|gift(s|ing|ed)?|free(bies?)?|first come)\b/i;
 const CRYPTO =
   /\b(crypto|bitcoin|btc|eth(ereum)?|usdt|nfts?|airdrops?|wallet|binance|coinbase|metamask|invest(ing|ment)?|profits?|trading)\b/i;
 const LINK = /https?:\/\/|discord\.gg\/|\bwww\./i;
@@ -83,48 +82,40 @@ export interface ScamMessage {
 
 /** A guild MESSAGE_CREATE in the shape the guard reads, or null when it is not one. */
 export function readMessage(raw: unknown): ScamMessage | null {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw || typeof raw !== 'object') return null;
   const d = raw as Record<string, unknown>;
   const author = d.author as { id?: unknown; bot?: unknown } | undefined;
-  if (typeof author?.id !== "string" || author.bot || d.webhook_id) return null;
-  if (
-    typeof d.id !== "string" ||
-    typeof d.channel_id !== "string" ||
-    typeof d.guild_id !== "string"
-  ) {
+  if (typeof author?.id !== 'string' || author.bot || d.webhook_id) return null;
+  if (typeof d.id !== 'string' || typeof d.channel_id !== 'string' || typeof d.guild_id !== 'string') {
     return null;
   }
   const member = d.member as { roles?: unknown } | undefined;
-  const attachments = Array.isArray(d.attachments)
-    ? (d.attachments as Record<string, unknown>[])
-    : [];
+  const attachments = Array.isArray(d.attachments) ? (d.attachments as Record<string, unknown>[]) : [];
   return {
     id: d.id,
     guildId: d.guild_id,
     channelId: d.channel_id,
     authorId: author.id,
     memberRoles: Array.isArray(member?.roles)
-      ? member.roles.filter((r): r is string => typeof r === "string")
+      ? member.roles.filter((r): r is string => typeof r === 'string')
       : [],
-    text: typeof d.content === "string" ? d.content : "",
+    text: typeof d.content === 'string' ? d.content : '',
     attachments: attachments.map((a) => ({
-      size: typeof a.size === "number" ? a.size : 0,
-      type: typeof a.content_type === "string" ? a.content_type : "",
+      size: typeof a.size === 'number' ? a.size : 0,
+      type: typeof a.content_type === 'string' ? a.content_type : '',
     })),
   };
 }
 
 /** The post with everything but its substance folded away, or null when there is too little to go on. */
-export function fingerprint(
-  message: Pick<ScamMessage, "text" | "attachments">,
-): string | null {
+export function fingerprint(message: Pick<ScamMessage, 'text' | 'attachments'>): string | null {
   const text = message.text
     .toLowerCase()
-    .replace(/<[@#&!:a-z0-9_]+>/g, "") // mentions and custom emoji
-    .replace(/[^a-z0-9]+/g, "");
+    .replace(/<[@#&!:a-z0-9_]+>/g, '') // mentions and custom emoji
+    .replace(/[^a-z0-9]+/g, '');
   const files = message.attachments.map((a) => `${a.size}:${a.type}`).sort();
   if (files.length === 0 && text.length < MIN_TEXT) return null;
-  return `${text}|${files.join(",")}`;
+  return `${text}|${files.join(',')}`;
 }
 
 export function looksLikeGiveaway(text: string): boolean {
@@ -132,21 +123,12 @@ export function looksLikeGiveaway(text: string): boolean {
 }
 
 /** One message on its own: worth a "suspected" log entry, never a ban. */
-export function isSuspect(
-  message: Pick<ScamMessage, "text" | "attachments">,
-): boolean {
+export function isSuspect(message: Pick<ScamMessage, 'text' | 'attachments'>): boolean {
   if (!looksLikeGiveaway(message.text)) return false;
-  return (
-    message.attachments.length >= 2 ||
-    LINK.test(message.text) ||
-    CRYPTO.test(message.text)
-  );
+  return message.attachments.length >= 2 || LINK.test(message.text) || CRYPTO.test(message.text);
 }
 
-export function isModerator(
-  roleIds: readonly string[],
-  roles: readonly DiscordRole[],
-): boolean {
+export function isModerator(roleIds: readonly string[], roles: readonly DiscordRole[]): boolean {
   const held = new Set(roleIds);
   return roles.some((role) => {
     if (!held.has(role.id) || !role.permissions) return false;
@@ -158,8 +140,7 @@ export function isModerator(
   });
 }
 
-export type Verdict =
-  { kind: "none" } | { kind: "suspect" } | { kind: "spray"; channels: number };
+export type Verdict = { kind: 'none' } | { kind: 'suspect' } | { kind: 'spray'; channels: number };
 
 interface Seen {
   fingerprint: string;
@@ -177,11 +158,8 @@ export class SprayTracker {
   verdict(message: ScamMessage, at: number): Verdict {
     const key = `${message.guildId}:${message.authorId}`;
     const print = fingerprint(message);
-    const recent = (this.accounts.get(key) ?? []).filter(
-      (seen) => at - seen.at < SPRAY_WINDOW_MS,
-    );
-    if (print)
-      recent.push({ fingerprint: print, channelId: message.channelId, at });
+    const recent = (this.accounts.get(key) ?? []).filter((seen) => at - seen.at < SPRAY_WINDOW_MS);
+    if (print) recent.push({ fingerprint: print, channelId: message.channelId, at });
     // Re-inserted so the Map's first key is the account heard from longest ago.
     this.accounts.delete(key);
     if (recent.length) this.accounts.set(key, recent.slice(-20));
@@ -193,17 +171,13 @@ export class SprayTracker {
 
     if (print) {
       const channels = new Set(
-        recent
-          .filter((seen) => seen.fingerprint === print)
-          .map((seen) => seen.channelId),
+        recent.filter((seen) => seen.fingerprint === print).map((seen) => seen.channelId)
       ).size;
-      if (channels >= SPRAY_CHANNELS) return { kind: "spray", channels };
-      const carriesBait =
-        message.attachments.length > 0 || LINK.test(message.text);
-      if (channels >= 2 && carriesBait && looksLikeGiveaway(message.text))
-        return { kind: "spray", channels };
+      if (channels >= SPRAY_CHANNELS) return { kind: 'spray', channels };
+      const carriesBait = message.attachments.length > 0 || LINK.test(message.text);
+      if (channels >= 2 && carriesBait && looksLikeGiveaway(message.text)) return { kind: 'spray', channels };
     }
-    return isSuspect(message) ? { kind: "suspect" } : { kind: "none" };
+    return isSuspect(message) ? { kind: 'suspect' } : { kind: 'none' };
   }
 }
 
@@ -212,22 +186,17 @@ function clip(text: string, limit: number): string {
 }
 
 function quoted(text: string): string {
-  if (!text.trim()) return "_no text_";
+  if (!text.trim()) return '_no text_';
   return clip(text, 800)
-    .split("\n")
+    .split('\n')
     .map((line) => `> ${line}`)
-    .join("\n");
+    .join('\n');
 }
 
 export interface ScamGuardOptions {
   api: Pick<
     DiscordApi,
-    | "getBotUserId"
-    | "getGuildOwnerId"
-    | "listGuildRoles"
-    | "getOwnRolePosition"
-    | "banMember"
-    | "unbanMember"
+    'getBotUserId' | 'getGuildOwnerId' | 'listGuildRoles' | 'getOwnRolePosition' | 'banMember' | 'unbanMember'
   >;
   /** The club's connected servers. Anything else, or no answer, means hands off. */
   clubServers: () => Promise<ReadonlySet<string>>;
@@ -268,11 +237,7 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
     return roles;
   }
 
-  async function handle(
-    message: ScamMessage,
-    verdict: Exclude<Verdict, { kind: "none" }>,
-    at: Date,
-  ) {
+  async function handle(message: ScamMessage, verdict: Exclude<Verdict, { kind: 'none' }>, at: Date) {
     const servers = await clubServers().catch(() => null);
     if (!servers?.has(message.guildId)) return;
     const [roles, ownerId, botId] = await Promise.all([
@@ -285,15 +250,15 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
 
     const timestamp = at.toISOString();
     const files = message.attachments.length
-      ? `\n${message.attachments.length} attachment${message.attachments.length === 1 ? "" : "s"}`
-      : "";
+      ? `\n${message.attachments.length} attachment${message.attachments.length === 1 ? '' : 's'}`
+      : '';
     const body = `${quoted(message.text)}${files}`;
 
-    if (verdict.kind === "suspect") {
+    if (verdict.kind === 'suspect') {
       report(message.guildId, {
         key: `scam-suspect:${message.id}`,
         embed: {
-          title: "Possible scam post (no action taken)",
+          title: 'Possible scam post (no action taken)',
           description: `<@${message.authorId}> in <#${message.channelId}>\n\n${body}`,
           color: COLOR_SUSPECT,
           footer: {
@@ -307,39 +272,34 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
 
     const where = `the same post in ${verdict.channels} channels within ${SPRAY_WINDOW_MS / 60_000} minutes`;
     let outcome: string;
-    if (
-      (await api.getOwnRolePosition(message.guildId)) <=
-      topPosition(message.memberRoles, roles)
-    ) {
-      outcome =
-        "Not soft-banned: their highest role is at or above mine. Remove them by hand.";
+    if ((await api.getOwnRolePosition(message.guildId)) <= topPosition(message.memberRoles, roles)) {
+      outcome = 'Not soft-banned: their highest role is at or above mine. Remove them by hand.';
     } else {
       const result = await banThenUnban(api, {
         guildId: message.guildId,
         targetId: message.authorId,
         deleteSeconds: DELETE_SECONDS,
         reason: `Auto soft-ban (scam guard): ${where}`,
-        liftReason: "Auto soft-ban (scam guard): lifting it",
+        liftReason: 'Auto soft-ban (scam guard): lifting it',
         sleep,
       });
       outcome =
-        result === "ok"
-          ? "Soft-banned: their last hour of messages is deleted and they can rejoin. If the account was hacked, tell them to change their password."
-          : result === "not_lifted"
-            ? "They are still BANNED: the unban failed. Lift it in Server Settings, Bans."
-            : result === "forbidden"
-              ? "Not soft-banned: Discord refused. I need the Ban Members permission."
-              : "Not soft-banned: the ban did not go through.";
-      if (result !== "ok")
-        log(`[scam-guard] ${message.guildId}/${message.authorId}: ${result}`);
+        result === 'ok'
+          ? 'Soft-banned: their last hour of messages is deleted and they can rejoin. If the account was hacked, tell them to change their password.'
+          : result === 'not_lifted'
+            ? 'They are still BANNED: the unban failed. Lift it in Server Settings, Bans.'
+            : result === 'forbidden'
+              ? 'Not soft-banned: Discord refused. I need the Ban Members permission.'
+              : 'Not soft-banned: the ban did not go through.';
+      if (result !== 'ok') log(`[scam-guard] ${message.guildId}/${message.authorId}: ${result}`);
     }
     report(message.guildId, {
       key: `scam-action:${message.guildId}:${message.authorId}:${message.id}`,
       embed: {
-        title: "Scam spray caught",
+        title: 'Scam spray caught',
         description: `<@${message.authorId}> posted ${where}.\n\n${body}`,
         color: COLOR_ACTION,
-        fields: [{ name: "Outcome", value: outcome }],
+        fields: [{ name: 'Outcome', value: outcome }],
         footer: { text: `User ${message.authorId}` },
         timestamp,
       },
@@ -352,7 +312,7 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
       if (!message) return;
       const at = now();
       const verdict = tracker.verdict(message, at.getTime());
-      if (verdict.kind === "none") return;
+      if (verdict.kind === 'none') return;
       // Kept apart, so a suspect entry never holds back a later spray.
       const key = `${verdict.kind}:${message.guildId}:${message.authorId}`;
       const last = lastActed.get(key);
@@ -361,11 +321,7 @@ export function createScamGuard(options: ScamGuardOptions): ScamGuard {
       if (lastActed.size > MAX_TRACKED_ACCOUNTS * 2) lastActed.clear();
 
       const job = handle(message, verdict, at)
-        .catch((error) =>
-          log(
-            `[scam-guard] ${message.guildId}/${message.authorId} failed: ${String(error)}`,
-          ),
-        )
+        .catch((error) => log(`[scam-guard] ${message.guildId}/${message.authorId} failed: ${String(error)}`))
         .finally(() => pending.delete(job));
       pending.add(job);
     },

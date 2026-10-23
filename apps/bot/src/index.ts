@@ -1,15 +1,7 @@
-import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
-import {
-  clearRevocations,
-  fetchDiscordSettings,
-  fetchLinkedMembers,
-} from "./api.js";
-import { postAuditEntry } from "./audit.js";
-import { loadConfig } from "./config.js";
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { clearRevocations, fetchDiscordSettings, fetchLinkedMembers } from './api.js';
+import { postAuditEntry } from './audit.js';
+import { loadConfig } from './config.js';
 import {
   DEFERRED_COMMANDS,
   LINKED_ACCOUNT_PICKERS,
@@ -58,31 +50,27 @@ import {
   type CommandOption,
   type ModalComponent,
   type ResolvedAttachment,
-} from "./commands.js";
-import { DiscordApi, editDeferredReply } from "./discord-api.js";
-import { warmHandles } from "./handles.js";
-import { syncMembersNow } from "./member-sync.js";
-import { sendMultipart } from "./multipart.js";
-import { reconcile } from "./reconcile.js";
-import { registerCommandsOnBoot } from "./register-commands.js";
-import { runSessionPings } from "./session-pings.js";
-import { runTournamentEvents } from "./tournament-events.js";
-import { runClubEvents } from "./club-events.js";
-import { runAnnouncements } from "./announcements.js";
-import { runOutbox } from "./outbox.js";
-import { runSessionBoard } from "./session-board.js";
-import { runServerRoleSync } from "./server-roles.js";
-import { runMatchResults } from "./match-results.js";
-import { runFeedback } from "./feedback.js";
-import { startGateway, type GatewayHandle } from "./gateway.js";
-import {
-  createServerLog,
-  intentsFor,
-  parseServerLogScopes,
-} from "./server-log.js";
-import { createScamGuard } from "./scam-guard.js";
-import { isAuthorizedService } from "./service-auth.js";
-import { verifyDiscordRequest } from "./verify.js";
+} from './commands.js';
+import { DiscordApi, editDeferredReply } from './discord-api.js';
+import { warmHandles } from './handles.js';
+import { syncMembersNow } from './member-sync.js';
+import { sendMultipart } from './multipart.js';
+import { reconcile } from './reconcile.js';
+import { registerCommandsOnBoot } from './register-commands.js';
+import { runSessionPings } from './session-pings.js';
+import { runTournamentEvents } from './tournament-events.js';
+import { runClubEvents } from './club-events.js';
+import { runAnnouncements } from './announcements.js';
+import { runOutbox } from './outbox.js';
+import { runSessionBoard } from './session-board.js';
+import { runServerRoleSync } from './server-roles.js';
+import { runMatchResults } from './match-results.js';
+import { runFeedback } from './feedback.js';
+import { startGateway, type GatewayHandle } from './gateway.js';
+import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
+import { createScamGuard } from './scam-guard.js';
+import { isAuthorizedService } from './service-auth.js';
+import { verifyDiscordRequest } from './verify.js';
 
 const PORT = Number(process.env.PORT ?? 3002);
 
@@ -99,8 +87,8 @@ const AUTOCOMPLETE_BUDGET_MS = 1_000;
 function send(res: ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(payload),
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(payload),
   });
   res.end(payload);
 }
@@ -115,7 +103,7 @@ function answerSignup(
   res: ServerResponse,
   response: BotResponse,
   appId: string | undefined,
-  interactionToken: string | undefined,
+  interactionToken: string | undefined
 ) {
   const { finish, ...ack } = response;
   send(res, 200, ack);
@@ -124,20 +112,15 @@ function answerSignup(
     try {
       const final = await finish();
       if (!appId || !interactionToken) {
-        console.error(
-          "[bot] signup step finished but had no interaction token",
-        );
+        console.error('[bot] signup step finished but had no interaction token');
         return;
       }
       await editDeferredReply(appId, interactionToken, final.data ?? {});
     } catch (error) {
-      console.error(
-        "[bot] signup step failed:",
-        error instanceof Error ? error.message : "unknown",
-      );
+      console.error('[bot] signup step failed:', error instanceof Error ? error.message : 'unknown');
       if (appId && interactionToken) {
         await editDeferredReply(appId, interactionToken, {
-          content: "Something went wrong. Run /signup again.",
+          content: 'Something went wrong. Run /signup again.',
           components: [],
           embeds: [],
         });
@@ -156,7 +139,7 @@ function answerDeferred(
   response: BotResponse,
   appId: string | undefined,
   interactionToken: string | undefined,
-  failureText: string,
+  failureText: string
 ) {
   const { finish, ...ack } = response;
   send(res, 200, ack);
@@ -165,21 +148,14 @@ function answerDeferred(
     try {
       const final = await finish();
       if (!appId || !interactionToken) {
-        console.error(
-          "[bot] deferred modal finished but had no interaction token",
-        );
+        console.error('[bot] deferred modal finished but had no interaction token');
         return;
       }
       await editDeferredReply(appId, interactionToken, final.data ?? {});
     } catch (error) {
-      console.error(
-        "[bot] deferred modal failed:",
-        error instanceof Error ? error.message : "unknown",
-      );
+      console.error('[bot] deferred modal failed:', error instanceof Error ? error.message : 'unknown');
       if (appId && interactionToken) {
-        await editDeferredReply(appId, interactionToken, {
-          content: failureText,
-        });
+        await editDeferredReply(appId, interactionToken, { content: failureText });
       }
     }
   })();
@@ -192,17 +168,17 @@ function readRawBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => {
+    req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error("body too large"));
+        reject(new Error('body too large'));
         req.destroy();
         return;
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
   });
 }
 
@@ -225,16 +201,15 @@ function readRawBody(req: IncomingMessage): Promise<string> {
 // convergent, so two of them reach the same end state.
 let sweepInFlight = false;
 
-async function runSweep(res: ServerResponse, trigger: "scheduled" | "manual") {
-  if (sweepInFlight) return send(res, 409, { error: "sweep_already_running" });
+async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
+  if (sweepInFlight) return send(res, 409, { error: 'sweep_already_running' });
   sweepInFlight = true;
   try {
     // force: the sweep runs nightly and has no reason to act on a role map
     // cached a minute ago. Everything else is happy with the cached copy.
     const { registry, auditChannelId } = await loadConfig({ force: true });
     const token = process.env.DISCORD_BOT_TOKEN;
-    if (!token)
-      return send(res, 500, { error: "DISCORD_BOT_TOKEN is not set" });
+    if (!token) return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
 
     const members = await fetchLinkedMembers();
     const api = new DiscordApi({ token });
@@ -247,7 +222,7 @@ async function runSweep(res: ServerResponse, trigger: "scheduled" | "manual") {
     try {
       await clearRevocations(summary.cleared);
     } catch (error) {
-      console.error("[bot] could not clear revocations:", error);
+      console.error('[bot] could not clear revocations:', error);
     }
 
     // One entry per sweep, never one per member — see rule 3 in audit.ts. It is
@@ -256,7 +231,7 @@ async function runSweep(res: ServerResponse, trigger: "scheduled" | "manual") {
     // the container is replaced right after a sweep, which is exactly when a
     // deploy happens.
     await postAuditEntry(new DiscordApi({ token }), auditChannelId, {
-      kind: "sweep",
+      kind: 'sweep',
       summary,
       guilds: registry.size,
       trigger,
@@ -267,8 +242,8 @@ async function runSweep(res: ServerResponse, trigger: "scheduled" | "manual") {
     // nothing about whether the sweep ran. The caller has to read the content.
     return send(res, 200, { ok: true, ...summary });
   } catch (error) {
-    console.error("[bot] sweep failed:", error);
-    return send(res, 500, { error: "sweep_failed" });
+    console.error('[bot] sweep failed:', error);
+    return send(res, 500, { error: 'sweep_failed' });
   } finally {
     sweepInFlight = false;
   }
@@ -277,29 +252,20 @@ async function runSweep(res: ServerResponse, trigger: "scheduled" | "manual") {
 async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
   let body: { discordUserIds?: unknown; reason?: unknown };
   try {
-    body = JSON.parse(await readRawBody(req)) as {
-      discordUserIds?: unknown;
-      reason?: unknown;
-    };
+    body = JSON.parse(await readRawBody(req)) as { discordUserIds?: unknown; reason?: unknown };
   } catch {
-    return send(res, 400, { error: "bad_request" });
+    return send(res, 400, { error: 'bad_request' });
   }
 
   const ids = body.discordUserIds;
-  if (
-    !Array.isArray(ids) ||
-    ids.some((id) => typeof id !== "string") ||
-    ids.length === 0
-  ) {
-    return send(res, 400, { error: "invalid_body" });
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string') || ids.length === 0) {
+    return send(res, 400, { error: 'invalid_body' });
   }
 
   // Cosmetic — it only picks the audit entry's title. Validated anyway rather
   // than interpolated, so a caller cannot write its own heading into the log.
-  const reason: "linked" | "unlinked" | "resynced" =
-    body.reason === "linked" || body.reason === "unlinked"
-      ? body.reason
-      : "resynced";
+  const reason: 'linked' | 'unlinked' | 'resynced' =
+    body.reason === 'linked' || body.reason === 'unlinked' ? body.reason : 'resynced';
 
   try {
     // CHECKED HERE as well as inside syncMembersNow, which throws on the same
@@ -307,17 +273,15 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
     // rather than the generic sync_failed, and that distinction is the whole
     // value of it: one names the thing an operator can fix.
     if (!process.env.DISCORD_BOT_TOKEN) {
-      return send(res, 500, { error: "DISCORD_BOT_TOKEN is not set" });
+      return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
     }
 
     // The sync itself is shared with /forcelink; see member-sync.ts. The audit
     // entry deliberately is not, which is why it is still written here.
-    const { summary, api, auditChannelId } = await syncMembersNow(
-      ids as string[],
-    );
+    const { summary, api, auditChannelId } = await syncMembersNow(ids as string[]);
 
     await postAuditEntry(api, auditChannelId, {
-      kind: "member",
+      kind: 'member',
       reason,
       discordUserIds: ids as string[],
       summary,
@@ -325,8 +289,8 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
 
     return send(res, 200, { ok: true, ...summary });
   } catch (error) {
-    console.error("[bot] member sync failed:", error);
-    return send(res, 500, { error: "sync_failed" });
+    console.error('[bot] member sync failed:', error);
+    return send(res, 500, { error: 'sync_failed' });
   }
 }
 
@@ -339,7 +303,7 @@ const server = createServer(async (req, res) => {
   // path falls back to a TCP dial, and a dial cannot tell "process is up" from
   // "process cannot reach the app API", so this endpoint exists to give the
   // proxy something meaningful to ask.
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.method === 'GET' && req.url === '/health') {
     // ok is deliberately not conditioned on the gateway. The proxy's health
     // check points here, so reporting a gateway blip as unhealthy would pull a perfectly
     // good interactions endpoint out of the pool -- the gateway only decides
@@ -347,7 +311,7 @@ const server = createServer(async (req, res) => {
     // Surface the state in the body so it is diagnosable without doing that.
     return send(res, 200, {
       ok: true,
-      gateway: gateway ? gateway.state() : "disabled",
+      gateway: gateway ? gateway.state() : 'disabled',
       gatewayConnectedSince: gateway?.connectedSince() ?? null,
     });
   }
@@ -357,19 +321,17 @@ const server = createServer(async (req, res) => {
   // same roles. One HTTP request reaches exactly one process no matter how
   // many are running, which is why this shape is right even though
   // proxy.unscalable is set and there is usually only one. See reconcile.ts.
-  if (req.method === "POST" && req.url === "/sync") {
+  if (req.method === 'POST' && req.url === '/sync') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
     // The nightly pg_cron job posts {} and is the only scheduled driver, so an
     // explicit "manual" is how a human-triggered sweep says so. Defaulting the
     // other way would label every hand-run curl as the nightly job.
-    let trigger: "scheduled" | "manual" = "scheduled";
+    let trigger: 'scheduled' | 'manual' = 'scheduled';
     try {
-      const parsed = JSON.parse(await readRawBody(req)) as {
-        trigger?: unknown;
-      };
-      if (parsed?.trigger === "manual") trigger = "manual";
+      const parsed = JSON.parse(await readRawBody(req)) as { trigger?: unknown };
+      if (parsed?.trigger === 'manual') trigger = 'manual';
     } catch {
       // No body, or not JSON. Both mean the scheduled default.
     }
@@ -383,16 +345,16 @@ const server = createServer(async (req, res) => {
   // Session pings, driven by pg_cron on the same schedule as the app's own
   // reminder job. One HTTP request reaches exactly one replica, which is the
   // whole reason this is not a setInterval in here.
-  if (req.method === "POST" && req.url === "/session-pings") {
+  if (req.method === 'POST' && req.url === '/session-pings') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
     try {
       const result = await runSessionPings();
       return send(res, 200, result);
     } catch (error) {
-      console.error("[bot] session pings failed:", error);
-      return send(res, 500, { error: "session_pings_failed" });
+      console.error('[bot] session pings failed:', error);
+      return send(res, 500, { error: 'session_pings_failed' });
     }
   }
 
@@ -405,28 +367,27 @@ const server = createServer(async (req, res) => {
   // for the reason the outbox rides /announcements: a new job is SQL an owner
   // has to run on production. Two try/catch blocks, so neither pass can abort
   // the other. The tournament counters stay flat at the top level, as before.
-  if (req.method === "POST" && req.url === "/tournament-events") {
+  if (req.method === 'POST' && req.url === '/tournament-events') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
-    let tournaments: Awaited<ReturnType<typeof runTournamentEvents>> | null =
-      null;
+    let tournaments: Awaited<ReturnType<typeof runTournamentEvents>> | null = null;
     let clubEvents: Awaited<ReturnType<typeof runClubEvents>> | null = null;
 
     try {
       tournaments = await runTournamentEvents();
     } catch (error) {
-      console.error("[bot] tournament events failed:", error);
+      console.error('[bot] tournament events failed:', error);
     }
 
     try {
       clubEvents = await runClubEvents();
     } catch (error) {
-      console.error("[bot] club events failed:", error);
+      console.error('[bot] club events failed:', error);
     }
 
     if (!tournaments && !clubEvents) {
-      return send(res, 500, { error: "tournament_events_failed" });
+      return send(res, 500, { error: 'tournament_events_failed' });
     }
 
     return send(res, 200, { ...(tournaments ?? {}), clubEvents });
@@ -436,9 +397,9 @@ const server = createServer(async (req, res) => {
   // tournament sweep because an announcement is the thing an exec publishes and
   // then watches for: "urgent, no session tonight" arriving a quarter of an
   // hour late is a different message from the one that was written.
-  if (req.method === "POST" && req.url === "/announcements") {
+  if (req.method === 'POST' && req.url === '/announcements') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
     // FOUR JOBS, FOUR try/catch BLOCKS, ONE TICK.
     //
@@ -457,35 +418,33 @@ const server = createServer(async (req, res) => {
     // to do with the other, and each reports its own counts. The catalogue makes
     // a Discord call per guild, so a 429 there is the likeliest of the four to
     // throw and the one that must certainly not cost somebody their message.
-    let announcements: Awaited<ReturnType<typeof runAnnouncements>> | null =
-      null;
+    let announcements: Awaited<ReturnType<typeof runAnnouncements>> | null = null;
     let outbox: Awaited<ReturnType<typeof runOutbox>> | null = null;
     let board: Awaited<ReturnType<typeof runSessionBoard>> | null = null;
-    let serverRoles: Awaited<ReturnType<typeof runServerRoleSync>> | null =
-      null;
+    let serverRoles: Awaited<ReturnType<typeof runServerRoleSync>> | null = null;
 
     try {
       announcements = await runAnnouncements();
     } catch (error) {
-      console.error("[bot] announcement relay failed:", error);
+      console.error('[bot] announcement relay failed:', error);
     }
 
     try {
       outbox = await runOutbox();
     } catch (error) {
-      console.error("[bot] outbox drain failed:", error);
+      console.error('[bot] outbox drain failed:', error);
     }
 
     try {
       board = await runSessionBoard();
     } catch (error) {
-      console.error("[bot] session board failed:", error);
+      console.error('[bot] session board failed:', error);
     }
 
     try {
       serverRoles = await runServerRoleSync();
     } catch (error) {
-      console.error("[bot] server role sync failed:", error);
+      console.error('[bot] server role sync failed:', error);
     }
 
     // A 500 only when BOTH of the first two halves fell over, which is the shape
@@ -494,15 +453,10 @@ const server = createServer(async (req, res) => {
     // tick into a 500, and the counters in the body are the only way this job is
     // diagnosed at all, because pg_net follows redirects and a 200 proves nothing.
     if (!announcements && !outbox) {
-      return send(res, 500, { error: "announcements_failed" });
+      return send(res, 500, { error: 'announcements_failed' });
     }
 
-    return send(res, 200, {
-      ...(announcements ?? {}),
-      outbox,
-      board,
-      serverRoles,
-    });
+    return send(res, 200, { ...(announcements ?? {}), outbox, board, serverRoles });
   }
 
   // The match result relay, driven by pg_cron every 10 minutes. Slower than
@@ -510,77 +464,72 @@ const server = createServer(async (req, res) => {
   // session tonight" — and faster than the tournament sweep, because results
   // land in bursts on a club night and a half-hour lag would make the channel
   // read as a digest rather than a feed.
-  if (req.method === "POST" && req.url === "/match-results") {
+  if (req.method === 'POST' && req.url === '/match-results') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
     try {
       const result = await runMatchResults();
       return send(res, 200, result);
     } catch (error) {
-      console.error("[bot] match result relay failed:", error);
-      return send(res, 500, { error: "match_results_failed" });
+      console.error('[bot] match result relay failed:', error);
+      return send(res, 500, { error: 'match_results_failed' });
     }
   }
 
   // The feedback relay, driven by pg_cron every 10 minutes. An inbox rather
   // than a feed: nobody stands in the exec channel waiting on a bug report the
   // way they wait on "no session tonight".
-  if (req.method === "POST" && req.url === "/feedback") {
+  if (req.method === 'POST' && req.url === '/feedback') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
     try {
       const result = await runFeedback();
       return send(res, 200, result);
     } catch (error) {
-      console.error("[bot] feedback relay failed:", error);
-      return send(res, 500, { error: "feedback_failed" });
+      console.error('[bot] feedback relay failed:', error);
+      return send(res, 500, { error: 'feedback_failed' });
     }
   }
 
-  if (req.method === "POST" && req.url === "/sync-member") {
+  if (req.method === 'POST' && req.url === '/sync-member') {
     if (!isAuthorizedService(req.headers.authorization)) {
-      return send(res, 401, { error: "unauthorized" });
+      return send(res, 401, { error: 'unauthorized' });
     }
     return runMemberSync(req, res);
   }
 
-  if (
-    req.method !== "POST" ||
-    (req.url !== "/" && req.url !== "/interactions")
-  ) {
-    return send(res, 404, { error: "not_found" });
+  if (req.method !== 'POST' || (req.url !== '/' && req.url !== '/interactions')) {
+    return send(res, 404, { error: 'not_found' });
   }
 
   const publicKey = process.env.DISCORD_PUBLIC_KEY;
   if (!publicKey) {
     // Fail closed. Without the key nothing can be verified, and answering
     // anything other than 401 would make an unconfigured deploy look healthy.
-    console.error(
-      "[bot] DISCORD_PUBLIC_KEY is not set — refusing all interactions",
-    );
-    return send(res, 401, { error: "unverified" });
+    console.error('[bot] DISCORD_PUBLIC_KEY is not set — refusing all interactions');
+    return send(res, 401, { error: 'unverified' });
   }
 
   let rawBody: string;
   try {
     rawBody = await readRawBody(req);
   } catch {
-    return send(res, 400, { error: "bad_request" });
+    return send(res, 400, { error: 'bad_request' });
   }
 
   const verified = verifyDiscordRequest(
     publicKey,
-    req.headers["x-signature-ed25519"] as string | undefined,
-    req.headers["x-signature-timestamp"] as string | undefined,
-    rawBody,
+    req.headers['x-signature-ed25519'] as string | undefined,
+    req.headers['x-signature-timestamp'] as string | undefined,
+    rawBody
   );
 
   // 401 on a bad signature is REQUIRED, not merely correct: Discord probes the
   // endpoint with a deliberately invalid signature during setup and rejects any
   // endpoint that answers 200.
-  if (!verified) return send(res, 401, { error: "invalid signature" });
+  if (!verified) return send(res, 401, { error: 'invalid signature' });
 
   let interaction: {
     type: number;
@@ -637,7 +586,7 @@ const server = createServer(async (req, res) => {
   try {
     interaction = JSON.parse(rawBody);
   } catch {
-    return send(res, 400, { error: "bad_request" });
+    return send(res, 400, { error: 'bad_request' });
   }
 
   // PING/PONG. Discord sends this on save and periodically after.
@@ -646,8 +595,7 @@ const server = createServer(async (req, res) => {
   // APPLICATION_COMMAND
   if (interaction.type === 2 && interaction.data) {
     const context = {
-      discordUserId:
-        interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
       // /say defaults to the channel it was typed in.
       channelId: interaction.channel_id ?? null,
@@ -685,9 +633,7 @@ const server = createServer(async (req, res) => {
           if (!appId || !interactionToken) {
             // Nothing to edit. Only reachable if Discord sent a command
             // interaction without a token, which should not happen.
-            console.error(
-              `[bot] ${name} finished but had no interaction token`,
-            );
+            console.error(`[bot] ${name} finished but had no interaction token`);
             return;
           }
           // dispatch returns a full interaction response; the webhook edit
@@ -701,7 +647,7 @@ const server = createServer(async (req, res) => {
           console.error(`[bot] deferred ${name} failed:`, error);
           if (appId && interactionToken) {
             await editDeferredReply(appId, interactionToken, {
-              content: "Something went wrong. Please try again.",
+              content: 'Something went wrong. Please try again.',
             });
           }
         }
@@ -709,11 +655,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const response = await dispatch(
-      interaction.data.name,
-      interaction.data.options,
-      context,
-    );
+    const response = await dispatch(interaction.data.name, interaction.data.options, context);
 
     // ACKNOWLEDGED MID-COMMAND. The branch above defers before dispatch, which
     // is all /setup can do — it is slow from its first byte. /profile is not:
@@ -733,31 +675,20 @@ const server = createServer(async (req, res) => {
         try {
           const final = await finish();
           if (!appId || !interactionToken) {
-            console.error(
-              "[bot] deferred command finished but had no interaction token",
-            );
+            console.error('[bot] deferred command finished but had no interaction token');
             return;
           }
           // The webhook edit takes a MESSAGE, not a callback, so the `data`
           // wrapper comes off — and the file travels beside it rather than in
           // it, for the same reason it does above.
-          await editDeferredReply(
-            appId,
-            interactionToken,
-            final.data ?? {},
-            fetch,
-            final.file,
-          );
+          await editDeferredReply(appId, interactionToken, final.data ?? {}, fetch, final.file);
         } catch (error) {
           // finish() is written not to throw, so reaching here is a bug rather
           // than a slow render. The member is still watching a spinner.
-          console.error(
-            `[bot] deferred ${interaction.data?.name} failed:`,
-            error,
-          );
+          console.error(`[bot] deferred ${interaction.data?.name} failed:`, error);
           if (appId && interactionToken) {
             await editDeferredReply(appId, interactionToken, {
-              content: "Something went wrong. Please try again.",
+              content: 'Something went wrong. Please try again.',
             });
           }
         }
@@ -795,8 +726,7 @@ const server = createServer(async (req, res) => {
     // Same two places a command reads its caller from: a guild submit populates
     // member.user, a DM submit populates user.
     const modalContext = {
-      discordUserId:
-        interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
       channelId: interaction.channel_id ?? null,
       // THE SUBMIT IS THE INTERACTION THAT POSTS, so it is the one that has to
@@ -810,13 +740,9 @@ const server = createServer(async (req, res) => {
     if (isSignupInteraction(customId)) {
       return answerSignup(
         res,
-        handleSignupInteraction(
-          customId as string,
-          interaction.data.components,
-          modalContext,
-        ),
+        handleSignupInteraction(customId as string, interaction.data.components, modalContext),
         interaction.application_id,
-        interaction.token,
+        interaction.token
       );
     }
 
@@ -826,14 +752,10 @@ const server = createServer(async (req, res) => {
     if (isConsoleModal(customId)) {
       return answerDeferred(
         res,
-        handleConsoleModal(
-          customId as string,
-          interaction.data.components,
-          modalContext,
-        ),
+        handleConsoleModal(customId as string, interaction.data.components, modalContext),
         interaction.application_id,
         interaction.token,
-        "Something went wrong. Check the console before you try again, in case it went through.",
+        "Something went wrong. Check the console before you try again, in case it went through."
       );
     }
 
@@ -842,7 +764,7 @@ const server = createServer(async (req, res) => {
         const response = await handleAnnounceModal(
           customId as string,
           interaction.data.components,
-          modalContext,
+          modalContext
         );
         return send(res, 200, response);
       } catch (error) {
@@ -860,14 +782,14 @@ const server = createServer(async (req, res) => {
         // back as a 200 with a code and are rendered as their own sentence. So
         // everything that lands in this branch is genuinely unknown, and the
         // reply says so and names the one place that settles it.
-        console.error("[bot] announce modal failed:", error);
+        console.error('[bot] announce modal failed:', error);
         return send(res, 200, {
           type: 4,
           data: {
             content:
               "Couldn't get an answer from the club app — I can't tell whether that went " +
-              "through. Check the announcements page before you try again, in case it did. " +
-              "Your words are gone from this box, so copy them somewhere first.",
+              'through. Check the announcements page before you try again, in case it did. ' +
+              'Your words are gone from this box, so copy them somewhere first.',
             flags: 64,
           },
         });
@@ -879,7 +801,7 @@ const server = createServer(async (req, res) => {
         const response = await handleSayModal(
           customId as string,
           interaction.data.components,
-          modalContext,
+          modalContext
         );
         return send(res, 200, response);
       } catch (error) {
@@ -887,13 +809,13 @@ const server = createServer(async (req, res) => {
         // handler talks to Discord and nothing else, it returns its own refusal
         // for a channel Discord would not take, and a throw from it is a bug
         // here rather than an answer lost in flight.
-        console.error("[bot] say modal failed:", error);
+        console.error('[bot] say modal failed:', error);
         return send(res, 200, {
           type: 4,
           data: {
             content:
-              "Something went wrong posting that, and nothing was sent. Your words are gone " +
-              "from this box, so copy them somewhere before you try again.",
+              'Something went wrong posting that, and nothing was sent. Your words are gone ' +
+              'from this box, so copy them somewhere before you try again.',
             flags: 64,
           },
         });
@@ -905,11 +827,11 @@ const server = createServer(async (req, res) => {
         const response = await handleReportModal(
           customId as string,
           interaction.data.components,
-          modalContext,
+          modalContext
         );
         return send(res, 200, response);
       } catch (error) {
-        console.error("[bot] report modal failed:", error);
+        console.error('[bot] report modal failed:', error);
         return send(res, 200, {
           type: 4,
           data: {
@@ -933,30 +855,17 @@ const server = createServer(async (req, res) => {
       const fields = interaction.data.components;
       try {
         const response = isSessionListModal(customId)
-          ? await handleSessionListModal(
-              customId as string,
-              fields,
-              modalContext,
-            )
+          ? await handleSessionListModal(customId as string, fields, modalContext)
           : isSessionBoardModal(customId)
-            ? await handleSessionBoardModal(
-                customId as string,
-                fields,
-                modalContext,
-              )
-            : await handleTournamentListModal(
-                customId as string,
-                fields,
-                modalContext,
-              );
+            ? await handleSessionBoardModal(customId as string, fields, modalContext)
+            : await handleTournamentListModal(customId as string, fields, modalContext);
         return send(res, 200, response);
       } catch (error) {
-        console.error("[bot] list modal failed:", error);
+        console.error('[bot] list modal failed:', error);
         return send(res, 200, {
           type: 4,
           data: {
-            content:
-              "Couldn't reach the club app just now. Try again in a moment.",
+            content: "Couldn't reach the club app just now. Try again in a moment.",
             flags: 64,
           },
         });
@@ -968,10 +877,7 @@ const server = createServer(async (req, res) => {
     // acknowledgement would look like the submit vanished.
     return send(res, 200, {
       type: 4,
-      data: {
-        content: "That form is from an older version — run the command again.",
-        flags: 64,
-      },
+      data: { content: 'That form is from an older version — run the command again.', flags: 64 },
     });
   }
 
@@ -992,36 +898,31 @@ const server = createServer(async (req, res) => {
       return answerSignup(
         res,
         handleSignupInteraction(customId as string, undefined, {
-          discordUserId:
-            interaction.member?.user?.id ?? interaction.user?.id ?? null,
+          discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
           guildId: interaction.guild_id ?? null,
         }),
         interaction.application_id,
-        interaction.token,
+        interaction.token
       );
     }
 
     if (isSelfRoleButton(customId)) {
       const context = {
-        discordUserId:
-          interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
         guildId: interaction.guild_id ?? null,
       };
       try {
         const response = await handleSelfRoleButton(
           customId as string,
           context,
-          interaction.member?.roles ?? [],
+          interaction.member?.roles ?? []
         );
         return send(res, 200, response);
       } catch (error) {
-        console.error("[bot] self-role button failed:", error);
+        console.error('[bot] self-role button failed:', error);
         return send(res, 200, {
           type: 4,
-          data: {
-            content: "Something went wrong. Please try again.",
-            flags: 64,
-          },
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
         });
       }
     }
@@ -1031,21 +932,17 @@ const server = createServer(async (req, res) => {
     // block is a readability choice only: the two prefixes are disjoint.
     if (isGuideButton(customId)) {
       const context = {
-        discordUserId:
-          interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
         guildId: interaction.guild_id ?? null,
       };
       try {
         const response = await handleGuideButton(customId as string, context);
         return send(res, 200, response);
       } catch (error) {
-        console.error("[bot] guide button failed:", error);
+        console.error('[bot] guide button failed:', error);
         return send(res, 200, {
           type: 4,
-          data: {
-            content: "Something went wrong. Please try again.",
-            flags: 64,
-          },
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
         });
       }
     }
@@ -1068,29 +965,21 @@ const server = createServer(async (req, res) => {
       isTournamentPageButton(customId)
     ) {
       const context = {
-        discordUserId:
-          interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
         guildId: interaction.guild_id ?? null,
       };
       try {
         const response = isSessionPageButton(customId)
           ? await handleSessionPageButton(customId as string, context)
           : isSessionBoardButton(customId)
-            ? await handleSessionBoardButton(
-                customId as string,
-                context,
-                interaction.data.values,
-              )
+            ? await handleSessionBoardButton(customId as string, context, interaction.data.values)
             : await handleTournamentPageButton(customId as string, context);
         return send(res, 200, response);
       } catch (error) {
-        console.error("[bot] list button failed:", error);
+        console.error('[bot] list button failed:', error);
         return send(res, 200, {
           type: 4,
-          data: {
-            content: "Something went wrong. Please try again.",
-            flags: 64,
-          },
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
         });
       }
     }
@@ -1131,8 +1020,7 @@ const server = createServer(async (req, res) => {
     // capability check the commands behind it do, so it has to be told who is
     // asking. Read from the same two places a command reads its caller from.
     const context = {
-      discordUserId:
-        interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
     };
     try {
@@ -1145,21 +1033,18 @@ const server = createServer(async (req, res) => {
           : OWN_FEE_PICKERS.has(interaction.data.name)
             ? handleReceiptAutocomplete(options, context)
             : SESSION_PICKERS.has(interaction.data.name)
-              ? handleSessionAutocomplete(options, context)
-              : EVENT_PICKERS.has(interaction.data.name)
-                ? handleEventAutocomplete(options, context)
-                : MEMBER_TOURNAMENT_PICKERS.has(interaction.data.name)
-                  ? handleTournamentAutocomplete(options)
-                  : TOURNEY_PICKERS.has(interaction.data.name)
-                    ? handleTourneyAutocomplete(options, context)
-                    : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
-                      ? handleLinkedAccountAutocomplete(options, context)
-                      : handleProfileAutocomplete(options),
+            ? handleSessionAutocomplete(options, context)
+            : EVENT_PICKERS.has(interaction.data.name)
+            ? handleEventAutocomplete(options, context)
+            : MEMBER_TOURNAMENT_PICKERS.has(interaction.data.name)
+            ? handleTournamentAutocomplete(options)
+            : TOURNEY_PICKERS.has(interaction.data.name)
+            ? handleTourneyAutocomplete(options, context)
+            : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
+            ? handleLinkedAccountAutocomplete(options, context)
+            : handleProfileAutocomplete(options),
         new Promise<{ type: number; data: { choices: [] } }>((resolve) =>
-          setTimeout(
-            () => resolve({ type: 8, data: { choices: [] } }),
-            AUTOCOMPLETE_BUDGET_MS,
-          ),
+          setTimeout(() => resolve({ type: 8, data: { choices: [] } }), AUTOCOMPLETE_BUDGET_MS)
         ),
       ]);
       return send(res, 200, answered);
@@ -1167,7 +1052,7 @@ const server = createServer(async (req, res) => {
       // The whole branch, because createServer's handler has no outer catch: a
       // throw escaping here writes no response at all and raises an unhandled
       // rejection in the process.
-      console.error("[bot] autocomplete failed:", error);
+      console.error('[bot] autocomplete failed:', error);
       return send(res, 200, { type: 8, data: { choices: [] } });
     }
   }
@@ -1183,16 +1068,12 @@ const server = createServer(async (req, res) => {
  * scope. See server-log.ts.
  */
 function serverLogOptions(token: string) {
-  const { scopes, unknown } = parseServerLogScopes(
-    process.env.DISCORD_SERVER_LOG,
-  );
+  const { scopes, unknown } = parseServerLogScopes(process.env.DISCORD_SERVER_LOG);
   if (unknown.length) {
-    console.error(
-      `[server-log] ignoring unknown DISCORD_SERVER_LOG scope(s): ${unknown.join(", ")}`,
-    );
+    console.error(`[server-log] ignoring unknown DISCORD_SERVER_LOG scope(s): ${unknown.join(', ')}`);
   }
   if (scopes.size === 0) return {};
-  console.log(`[server-log] on: ${[...scopes].join(", ")}`);
+  console.log(`[server-log] on: ${[...scopes].join(', ')}`);
 
   // The channel is a /config setting, read through the app and held for a
   // minute so a busy server does not ask the app on every event.
@@ -1200,10 +1081,7 @@ function serverLogOptions(token: string) {
   async function resolveChannel(): Promise<string | null> {
     if (cached && Date.now() - cached.at < 60_000) return cached.channelId;
     const { settings } = await fetchDiscordSettings();
-    cached = {
-      channelId: settings.server_log_channel_id ?? null,
-      at: Date.now(),
-    };
+    cached = { channelId: settings.server_log_channel_id ?? null, at: Date.now() };
     return cached.channelId;
   }
 
@@ -1211,14 +1089,8 @@ function serverLogOptions(token: string) {
   const clubServers = async () => new Set((await loadConfig()).registry.keys());
 
   const api = new DiscordApi({ token });
-  const serverLog = createServerLog({
-    api,
-    scopes,
-    resolveChannel,
-    clubServers,
-  });
-  if (!scopes.has("scam"))
-    return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
+  const serverLog = createServerLog({ api, scopes, resolveChannel, clubServers });
+  if (!scopes.has('scam')) return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
 
   // The scam guard reads the same messages. See scam-guard.ts.
   const guard = createScamGuard({ api, clubServers, report: serverLog.post });
@@ -1226,12 +1098,12 @@ function serverLogOptions(token: string) {
     intents: intentsFor(scopes),
     onDispatch: (type: string, data: unknown) => {
       serverLog.onDispatch(type, data);
-      if (type === "MESSAGE_CREATE") guard.onMessage(data);
+      if (type === 'MESSAGE_CREATE') guard.onMessage(data);
     },
   };
 }
 
-server.listen(PORT, "0.0.0.0", () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`[bot] listening on ${PORT}`);
 
   // Presence. Interactions arrive over HTTP and do not need this, so a missing
@@ -1244,9 +1116,7 @@ server.listen(PORT, "0.0.0.0", () => {
       console.error(`[bot] gateway failed to start: ${String(error)}`);
     }
   } else {
-    console.log(
-      "[bot] no DISCORD_BOT_TOKEN — gateway disabled, bot will show offline",
-    );
+    console.log('[bot] no DISCORD_BOT_TOKEN — gateway disabled, bot will show offline');
   }
 
   // Filled now rather than on the first keystroke: an autocomplete cannot be
@@ -1263,10 +1133,8 @@ server.listen(PORT, "0.0.0.0", () => {
     .then(({ registry, auditChannelId }) => {
       console.log(
         `[bot] config: ${registry.size} guild(s), audit log ${
-          auditChannelId
-            ? `-> channel ${auditChannelId}`
-            : "DISABLED (no audit_channel_id)"
-        }`,
+          auditChannelId ? `-> channel ${auditChannelId}` : 'DISABLED (no audit_channel_id)'
+        }`
       );
     })
     .catch((error) => {
@@ -1294,7 +1162,7 @@ server.listen(PORT, "0.0.0.0", () => {
 
 // The proxy and Docker both stop containers with SIGTERM. Closing the server
 // lets in-flight interactions finish instead of being cut off mid-reply.
-for (const signal of ["SIGTERM", "SIGINT"] as const) {
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     console.log(`[bot] ${signal} — shutting down`);
     gateway?.stop();
