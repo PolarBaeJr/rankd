@@ -21,17 +21,17 @@
 //
 // No DM to the person: the bot sends no DMs.
 
-import type { DiscordApi } from './discord-api.js';
-import type { DiscordRole } from './setup.js';
+import type { DiscordApi } from "./discord-api.js";
+import type { DiscordRole } from "./setup.js";
 
 const BAN_MEMBERS = 1n << 2n;
 const ADMINISTRATOR = 1n << 3n;
 
 /** The delete window choices, in seconds. Discord's maximum is seven days. */
 export const SOFTBAN_WINDOWS = [
-  { name: 'Last hour', value: '3600' },
-  { name: 'Last day', value: '86400' },
-  { name: 'Last 7 days', value: '604800' },
+  { name: "Last hour", value: "3600" },
+  { name: "Last day", value: "86400" },
+  { name: "Last 7 days", value: "604800" },
 ] as const;
 
 const DEFAULT_WINDOW_SECONDS = 86400;
@@ -48,9 +48,14 @@ export function canBan(permissions: string | null | undefined): boolean {
 }
 
 /** The highest position among `roleIds`; 0 (@everyone) when they hold none. */
-export function topPosition(roleIds: readonly string[], roles: readonly DiscordRole[]): number {
+export function topPosition(
+  roleIds: readonly string[],
+  roles: readonly DiscordRole[],
+): number {
   const held = new Set(roleIds);
-  return roles.filter((r) => held.has(r.id)).reduce((top, r) => Math.max(top, r.position), 0);
+  return roles
+    .filter((r) => held.has(r.id))
+    .reduce((top, r) => Math.max(top, r.position), 0);
 }
 
 export function windowSeconds(value: string | undefined): number {
@@ -60,7 +65,11 @@ export function windowSeconds(value: string | undefined): number {
 }
 
 export function describeWindow(seconds: number): string {
-  return SOFTBAN_WINDOWS.find((w) => Number(w.value) === seconds)?.name.toLowerCase() ?? `${seconds}s`;
+  return (
+    SOFTBAN_WINDOWS.find(
+      (w) => Number(w.value) === seconds,
+    )?.name.toLowerCase() ?? `${seconds}s`
+  );
 }
 
 export interface SoftbanInput {
@@ -83,25 +92,34 @@ export type SoftbanOutcome =
 export async function softban(
   api: Pick<
     DiscordApi,
-    | 'getBotUserId'
-    | 'getGuildOwnerId'
-    | 'getMemberRoles'
-    | 'listGuildRoles'
-    | 'getOwnRolePosition'
-    | 'banMember'
-    | 'unbanMember'
+    | "getBotUserId"
+    | "getGuildOwnerId"
+    | "getMemberRoles"
+    | "listGuildRoles"
+    | "getOwnRolePosition"
+    | "banMember"
+    | "unbanMember"
   >,
   input: SoftbanInput,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((r) => setTimeout(r, ms)),
 ): Promise<SoftbanOutcome> {
   if (!canBan(input.callerPermissions)) {
-    return { ok: false, message: 'You need the Ban Members permission in this server to soft-ban.' };
+    return {
+      ok: false,
+      message:
+        "You need the Ban Members permission in this server to soft-ban.",
+    };
   }
   if (input.targetId === input.callerId) {
     return { ok: false, message: "You can't soft-ban yourself." };
   }
-  const [botId, ownerId] = await Promise.all([api.getBotUserId(), api.getGuildOwnerId(input.guildId)]);
-  if (input.targetId === botId) return { ok: false, message: "I can't soft-ban myself." };
+  const [botId, ownerId] = await Promise.all([
+    api.getBotUserId(),
+    api.getGuildOwnerId(input.guildId),
+  ]);
+  if (input.targetId === botId)
+    return { ok: false, message: "I can't soft-ban myself." };
   if (input.targetId === ownerId) {
     return { ok: false, message: "The server owner can't be soft-banned." };
   }
@@ -112,37 +130,79 @@ export async function softban(
   if (targetRoles) {
     const roles = await api.listGuildRoles(input.guildId);
     const targetTop = topPosition(targetRoles, roles);
-    if (input.callerId !== ownerId && topPosition(input.callerRoles, roles) <= targetTop) {
+    if (
+      input.callerId !== ownerId &&
+      topPosition(input.callerRoles, roles) <= targetTop
+    ) {
       return {
         ok: false,
-        message: 'Their highest role is the same as or above yours, so you cannot soft-ban them.',
+        message:
+          "Their highest role is the same as or above yours, so you cannot soft-ban them.",
       };
     }
     if ((await api.getOwnRolePosition(input.guildId)) <= targetTop) {
       return {
         ok: false,
-        message: "Their highest role is at or above mine, so Discord won't let me ban them.",
+        message:
+          "Their highest role is at or above mine, so Discord won't let me ban them.",
       };
     }
   }
 
-  const reason = `Soft ban by ${input.callerId}: ${input.reason}`;
-  const banned = await api.banMember(input.guildId, input.targetId, input.deleteSeconds, reason);
-  if (banned !== 'ok') {
-    return {
-      ok: false,
-      message:
-        banned === 'forbidden'
-          ? "Discord refused the ban. I need the Ban Members permission, and my role above theirs."
-          : 'The ban did not go through, so nothing changed. Try again in a moment.',
-    };
-  }
+  const result = await banThenUnban(api, {
+    guildId: input.guildId,
+    targetId: input.targetId,
+    deleteSeconds: input.deleteSeconds,
+    reason: `Soft ban by ${input.callerId}: ${input.reason}`,
+    liftReason: `Soft ban: lifting it (${input.callerId})`,
+    sleep,
+  });
+  if (result === "ok" || result === "not_lifted")
+    return { ok: true, unbanned: result === "ok" };
+  return {
+    ok: false,
+    message:
+      result === "forbidden"
+        ? "Discord refused the ban. I need the Ban Members permission, and my role above theirs."
+        : "The ban did not go through, so nothing changed. Try again in a moment.",
+  };
+}
 
+/**
+ * The soft ban itself, with no checks on who asked: a ban that deletes the
+ * last `deleteSeconds` of messages, then the unban, retried. /softban runs its
+ * caller checks first; scam-guard.ts runs its own.
+ *
+ * 'not_lifted' means the ban went through and every unban failed, so they are
+ * still banned and somebody has to lift it by hand.
+ */
+export async function banThenUnban(
+  api: Pick<DiscordApi, "banMember" | "unbanMember">,
+  input: {
+    guildId: string;
+    targetId: string;
+    deleteSeconds: number;
+    reason: string;
+    liftReason: string;
+    sleep: (ms: number) => Promise<void>;
+  },
+): Promise<"ok" | "not_lifted" | "forbidden" | "failed"> {
+  const banned = await api.banMember(
+    input.guildId,
+    input.targetId,
+    input.deleteSeconds,
+    input.reason,
+  );
+  if (banned !== "ok") return banned === "forbidden" ? "forbidden" : "failed";
   for (let attempt = 1; attempt <= UNBAN_ATTEMPTS; attempt += 1) {
-    const result = await api.unbanMember(input.guildId, input.targetId, `Soft ban: lifting it (${input.callerId})`);
+    const result = await api.unbanMember(
+      input.guildId,
+      input.targetId,
+      input.liftReason,
+    );
     // not_found means there is no ban to lift, which is the state we wanted.
-    if (result === 'ok' || result === 'not_found') return { ok: true, unbanned: true };
-    if (attempt < UNBAN_ATTEMPTS) await sleep(1000 * attempt);
+    if (result === "ok" || result === "not_found") return "ok";
+    if (attempt < UNBAN_ATTEMPTS) await input.sleep(1000 * attempt);
   }
-  return { ok: true, unbanned: false };
+  return "not_lifted";
 }
