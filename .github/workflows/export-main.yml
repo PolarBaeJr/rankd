@@ -14,6 +14,13 @@ name: Export public main
 #                                not after the prod push
 #   workflow_dispatch            a dry run, unless dispatched on the prod branch
 #
+# ONE PUBLIC COMMIT PER VERSION. Fixes added to a release after it went out
+# keep its version number (the owner's rule), so a prod push whose version is
+# already on the public branch REPLACES that version's export commit instead of
+# stacking a second one: the public history reads one commit per version, and
+# each carries that version's latest code. A release-branch dry run is skipped
+# for a version already exported. A manual run always runs.
+#
 # Actions logs on a public repo are public. Nothing here prints file contents
 # or the personal patterns; the export reports `path:line: [category] rule id`.
 on:
@@ -33,7 +40,58 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/deploy/docker-prod' }}
 
 jobs:
+  # Is this version already exported? Two small files and one ref read, so a
+  # skipped push costs seconds rather than a full export.
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            package.json
+            .github/export/targets.json
+          sparse-checkout-cone-mode: false
+
+      # Export commits are titled "Export of <version> (<sha>)" (publish below).
+      # The repo is public, so reading the branch needs no credentials.
+      - name: Check the public branch for this version
+        id: check
+        env:
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          branch=$(node -p "require('./.github/export/targets.json').find((t) => t.name === 'self').branch")
+          subject=none
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            git fetch -q --depth=1 origin "refs/heads/$branch"
+            subject=$(git log -1 --format=%s FETCH_HEAD)
+          fi
+          case "$subject" in
+            "Export of $version "*)
+              if [ "$GITHUB_REF" = refs/heads/deploy/docker-prod ]; then
+                echo "$version is already exported to $branch; exporting again to replace it"
+                echo needed=true >> "$GITHUB_OUTPUT"
+              elif [ "$MANUAL" = true ]; then
+                echo "$version is already exported; running anyway because this run was started by hand"
+                echo needed=true >> "$GITHUB_OUTPUT"
+              else
+                echo "$version is already exported to $branch; skipping"
+                echo needed=false >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              echo "$branch does not hold $version yet; exporting"
+              echo needed=true >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
   export:
+    needs: version
+    if: needs.version.outputs.needed == 'true'
     runs-on: ubuntu-24.04
     # About one CI checks run: type-check builds both Next apps.
     timeout-minutes: 30
@@ -160,10 +218,15 @@ jobs:
           fetch-depth: 1
           path: public-main
 
-      # Creates main as an orphan the first time, and fast-forwards it after
-      # that. If main's tip is anything but an export commit, someone else has
-      # written to it and the job refuses rather than overwrite them. There is
-      # no force push here: the push below can only ever be a fast-forward.
+      # Creates main as an orphan the first time, and adds one commit per
+      # version after that. If main's tip is anything but an export commit,
+      # someone else has written to it and the job refuses rather than
+      # overwrite them.
+      #
+      # When the tip is already this version's export, the new commit goes on
+      # the tip's PARENT instead, replacing it. That is the only force push
+      # here, and it is leased to the exact tip just read, so it can only ever
+      # replace that one export commit and nothing anyone else wrote.
       - name: Commit and push
         if: steps.current.outputs.superseded == 'false'
         working-directory: public-main
@@ -175,9 +238,12 @@ jobs:
           bot='github-actions[bot]'
           git config user.name "$bot"
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          version=$(node -p "require('$RUNNER_TEMP/export/package.json').version")
+          tip=
           if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
-            git fetch -q --depth=1 origin "refs/heads/$branch"
+            git fetch -q --depth=2 origin "refs/heads/$branch"
             git checkout -q -B "$branch" FETCH_HEAD
+            tip=$(git rev-parse HEAD)
             subject=$(git log -1 --format=%s)
             author=$(git log -1 --format=%an)
             case "$subject" in
@@ -188,6 +254,16 @@ jobs:
               echo "::error::$branch tip was not written by the export; refusing to touch it"
               exit 1
             fi
+            case "$subject" in
+              "Export of $version "*)
+                echo "replacing the existing export of $version"
+                if git rev-parse -q --verify 'HEAD^' > /dev/null; then
+                  git reset -q --soft 'HEAD^'
+                else
+                  git checkout -q --orphan "$branch-next"
+                fi
+                ;;
+            esac
           else
             git checkout -q --orphan "$branch"
           fi
@@ -199,10 +275,13 @@ jobs:
             echo "nothing to publish"
             exit 0
           fi
-          version=$(node -p "require('./package.json').version")
           git commit -q -m "Export of $version (${GITHUB_SHA::8})"
           if [ "$(git rev-parse 'HEAD^{tree}')" != "$TREE" ]; then
             echo "::error::the commit's tree is not the verified export"
             exit 1
           fi
-          git push origin "HEAD:refs/heads/$branch"
+          if [ -n "$tip" ]; then
+            git push --force-with-lease="refs/heads/$branch:$tip" origin "HEAD:refs/heads/$branch"
+          else
+            git push origin "HEAD:refs/heads/$branch"
+          fi

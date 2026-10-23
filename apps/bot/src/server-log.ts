@@ -22,10 +22,20 @@
 //   content     MESSAGE_CONTENT, PRIVILEGED. Adds the TEXT of a deleted or
 //               edited message to its entry. Without it the entry names who
 //               and where, never what.
+//   scam        No intent of its own; switches on messages and content. The
+//               scam guard (scam-guard.ts): soft-bans an account that sprays
+//               the same post across channels, and flags a lone giveaway post.
 //
 // A privileged scope that is not ticked in the developer portal gets close code
 // 4014; gateway.ts then reconnects with no intents, so the bot stays online and
 // the log goes quiet with a line in the container log saying why.
+//
+// ---- WHERE IT POSTS ----
+//
+// Each server picks its own log channel with /server log, kept in
+// discord_server_settings (00302). The scopes above are the bot's, the same for
+// every server; the channel is the server's. An event is only ever posted in
+// the server it happened in, and a server with no channel gets nothing.
 //
 // ---- DUPLICATES ----
 //
@@ -46,13 +56,14 @@ import { createHash } from 'node:crypto';
 import type { DiscordApi } from './discord-api.js';
 import type { Embed } from './audit.js';
 
-export type ServerLogScope = 'moderation' | 'members' | 'messages' | 'content';
+export type ServerLogScope = 'moderation' | 'members' | 'messages' | 'content' | 'scam';
 
 const SCOPE_INTENTS: Record<ServerLogScope, number> = {
   moderation: 1 << 2, // GUILD_MODERATION
   members: 1 << 1, // GUILD_MEMBERS
   messages: 1 << 9, // GUILD_MESSAGES
   content: 1 << 15, // MESSAGE_CONTENT
+  scam: 0, // its intents come from the messages and content it implies
 };
 
 const SCOPES = Object.keys(SCOPE_INTENTS) as ServerLogScope[];
@@ -69,6 +80,8 @@ export function parseServerLogScopes(raw: string | undefined): {
     if ((SCOPES as string[]).includes(name)) scopes.add(name as ServerLogScope);
     else unknown.push(name);
   }
+  // The guard reads what people post, so it needs their text.
+  if (scopes.has('scam')) scopes.add('content');
   // Content is the text of messages; on its own it has no messages to read.
   if (scopes.has('content')) scopes.add('messages');
   return { scopes, unknown };
@@ -473,14 +486,12 @@ function decodeReason(reason: string): string {
 export interface ServerLogOptions {
   api: Pick<DiscordApi, 'createMessage'>;
   scopes: ReadonlySet<ServerLogScope>;
-  /** The channel to post in, or null while it is not configured. */
-  resolveChannel: () => Promise<string | null>;
   /**
-   * The servers the club connected (/setup). The bot runs in any server, and
-   * the log channel is the club's, so events from anybody else's server are
-   * dropped rather than posted there. Omitted means every server (tests).
+   * Where this server's log posts, or null while that server has none (/server
+   * log). Each server has its own (00302), so an event is only ever posted in
+   * the server it happened in.
    */
-  clubServers?: () => Promise<ReadonlySet<string>>;
+  resolveChannel: (guildId: string) => Promise<string | null>;
   log?: (line: string) => void;
   now?: () => Date;
   /** Past this many waiting entries, new ones are counted and dropped. */
@@ -489,6 +500,8 @@ export interface ServerLogOptions {
 
 export interface ServerLog {
   onDispatch(type: string, data: unknown): void;
+  /** Post an entry built elsewhere (the scam guard), on the same queue and rules. */
+  post(guildId: string, entry: ServerLogEntry): void;
   /** For tests: resolves once everything queued so far is posted. */
   drain(): Promise<void>;
 }
@@ -508,7 +521,6 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     api,
     scopes,
     resolveChannel,
-    clubServers,
     log = (line: string) => console.error(line),
     now = () => new Date(),
     maxQueue = 200,
@@ -520,17 +532,14 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
   let chain: Promise<void> = Promise.resolve();
   let waiting = 0;
   let dropped = 0;
-  let lastChannel: string | null = null;
-  let warnedUnset = false;
-  // The last answer clubServers gave, so a new message from another server
-  // skips the cache without waiting on a lookup. Null until the first answer.
-  let knownServers: ReadonlySet<string> | null = null;
+  // Each server's channel as last resolved, for when a lookup fails.
+  const lastChannel = new Map<string, string | null>();
   const guildOf = (data: unknown): string | null => {
     const guildId = (data as { guild_id?: unknown } | null)?.guild_id;
     return typeof guildId === 'string' ? guildId : null;
   };
 
-  function enqueue(type: string, data: unknown) {
+  function enqueue(type: string, data: unknown, built?: ServerLogEntry) {
     if (waiting >= maxQueue) {
       dropped += 1;
       return;
@@ -540,25 +549,18 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     const at = now();
     chain = chain.then(async () => {
       try {
-        if (clubServers) {
-          knownServers = await clubServers().catch(() => knownServers);
-          const guildId = guildOf(data);
-          // Unknown (the lookup never answered) posts nothing: the safe side.
-          if (!knownServers || (guildId && !knownServers.has(guildId))) return;
-        }
-        const channelId = await resolveChannel().catch(() => lastChannel);
-        lastChannel = channelId;
+        // DMs carry no server and are nobody's log.
+        const guildId = guildOf(data);
+        if (!guildId) return;
+        const channelId = await resolveChannel(guildId).catch(() => lastChannel.get(guildId) ?? null);
+        lastChannel.set(guildId, channelId);
         if (!channelId) {
-          if (!warnedUnset) {
-            log('[server-log] no server_log_channel_id set (/config server_log): nothing is posted');
-            warnedUnset = true;
-          }
-          // The cache still has to follow along, or a later delete has no author.
-          describeDispatch(type, data, { cache, scopes, logChannelId: '', now: at });
+          // A server with no log. The cache still has to follow along, or a
+          // later delete has no author once it sets one.
+          if (!built) describeDispatch(type, data, { cache, scopes, logChannelId: '', now: at });
           return;
         }
-        warnedUnset = false;
-        const entry = describeDispatch(type, data, { cache, scopes, logChannelId: channelId, now: at });
+        const entry = built ?? describeDispatch(type, data, { cache, scopes, logChannelId: channelId, now: at });
         if (!entry) return;
         if (dropped > 0) {
           await api.createMessage(channelId, {
@@ -590,11 +592,14 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
       // a busy channel cannot fill the queue with work that posts nothing.
       if (type === 'MESSAGE_CREATE') {
         const guildId = guildOf(data);
-        if (clubServers && knownServers && guildId && !knownServers.has(guildId)) return;
-        describeDispatch(type, data, { cache, scopes, logChannelId: lastChannel ?? '', now: now() });
+        const logChannelId = (guildId && lastChannel.get(guildId)) || '';
+        describeDispatch(type, data, { cache, scopes, logChannelId, now: now() });
         return;
       }
       enqueue(type, data);
+    },
+    post(guildId, entry) {
+      enqueue('scam guard', { guild_id: guildId }, entry);
     },
     drain: () => chain,
   };

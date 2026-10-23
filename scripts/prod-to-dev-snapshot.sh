@@ -454,6 +454,19 @@ BEGIN
     $q$;
   END IF;
 
+  -- One row per Discord server (00302): staging's own log channel and scam
+  -- guard switch for the test server. No FK, so any rank works.
+  IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT 2, format(
+        'INSERT INTO public.discord_server_settings (guild_id, server_log_channel_id, scam_guard) VALUES (%L, %L, %L) '
+        'ON CONFLICT (guild_id) DO UPDATE SET server_log_channel_id = EXCLUDED.server_log_channel_id, '
+        'scam_guard = EXCLUDED.scam_guard;', guild_id, server_log_channel_id, scam_guard)
+      FROM public.discord_server_settings
+    $q$;
+  END IF;
+
   IF to_regclass('public.cron_config') IS NOT NULL THEN
     -- Named explicitly, not LIKE 'discord%': `_` is a LIKE wildcard, and this
     -- table holds unrelated secrets that are none of this script's business.
@@ -719,6 +732,17 @@ BEGIN
   IF to_regclass('public.discord_settings') IS NOT NULL THEN
     DELETE FROM public.discord_settings;
   END IF;
+  -- Prod's servers' own settings (00302): prod's log channel ids.
+  IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
+    DELETE FROM public.discord_server_settings;
+  END IF;
+  -- Prod's role pickers. These used to go with the discord_guilds delete above
+  -- by cascade; 00302 dropped that FK so any server can have a picker, so they
+  -- are cleared by name now. Staging loses its own pickers nightly, as it
+  -- always has: they were never captured.
+  IF to_regclass('public.discord_self_roles') IS NOT NULL THEN
+    DELETE FROM public.discord_self_roles;
+  END IF;
   IF to_regclass('public.cron_config') IS NOT NULL THEN
     DELETE FROM public.cron_config
      WHERE key IN ('discord_bot_url', 'discord_service_secret');
@@ -798,6 +822,9 @@ DECLARE
 BEGIN
   IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
     EXECUTE 'DELETE FROM public.discord_guild_roles WHERE md5(guild_id) = ANY ($1)' USING guilds;
+  END IF;
+  IF to_regclass('public.discord_server_settings') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.discord_server_settings WHERE md5(guild_id) = ANY ($1)' USING guilds;
   END IF;
   IF to_regclass('public.discord_guilds') IS NOT NULL THEN
     EXECUTE 'DELETE FROM public.discord_guilds WHERE md5(guild_id) = ANY ($1)' USING guilds;
@@ -1229,15 +1256,6 @@ BEGIN
     UPDATE public.guest_waiver_invites
        SET email = 'invite.' || substr(md5(id::text), 1, 10) || '@staging.invalid', last_error = NULL;
   END IF;
-  -- THE FORMS THE CONSOLE MADE (00296). A copied row names a real Form on the
-  -- club account, and staging holds a form maker of its own, so its sync job
-  -- would rewrite, close or reopen the real Form. Each row loses its Form id
-  -- and links and is marked failed, so staging never acts on one.
-  IF to_regclass('public.managed_registration_forms') IS NOT NULL THEN
-    UPDATE public.managed_registration_forms
-       SET form_id = NULL, responder_url = NULL, edit_url = NULL,
-           state = 'failed', last_error = 'staging_copy', claimed_at = NULL;
-  END IF;
   -- The preferred partner a Form answer named (00299): another person, by the
   -- name typed, on the sign-ups of members and guests. Guarded on the column,
   -- since a source without 00299 lacks it.
@@ -1263,13 +1281,14 @@ BEGIN
     UPDATE public.fee_submissions SET ocr_state = 'done' WHERE ocr_state = 'pending';
   END IF;
 
-  -- RECEIPTS STILL QUEUED for the server's own read (00297). Staging has prod's
-  -- rows but not its fee-proofs objects, so a staging check could only fail
-  -- them; closed here so nothing on staging reaches for them. Guarded on the
-  -- column, which exists only once production has 00297.
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-              WHERE table_schema = 'public' AND table_name = 'fee_submissions' AND column_name = 'ocr_state') THEN
-    UPDATE public.fee_submissions SET ocr_state = 'done' WHERE ocr_state = 'pending';
+  -- THE FORMS THE CONSOLE MADE (00296). A copied row names a real Form on the
+  -- club account, and staging holds a form maker of its own, so its sync job
+  -- would rewrite, close or reopen the real Form. Each row loses its Form id
+  -- and links and is marked failed, so staging never acts on one.
+  IF to_regclass('public.managed_registration_forms') IS NOT NULL THEN
+    UPDATE public.managed_registration_forms
+       SET form_id = NULL, responder_url = NULL, edit_url = NULL,
+           state = 'failed', last_error = 'staging_copy', claimed_at = NULL;
   END IF;
 
   -- Device records. Passkeys are scoped to the hostname they were enrolled on,

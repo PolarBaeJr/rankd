@@ -18,6 +18,9 @@
  *   TITLE_PREFIX                        put before every title ('' on the club's
  *                                       own deployment, 'STAGING ' on staging)
  *   READER_EMAIL                        the reader service account's email
+ *   SHARE_EVERY_FORM                    'yes' on the club's own deployment only:
+ *                                       shareEveryForm shares every Form the
+ *                                       account owns, not just the ones made here
  *   TEMPLATE_CLUB_EVENT_ID              the club event template Form
  *   TEMPLATE_CLUB_EVENT_WAIVER_VERSION  the waiver version its text shows
  *   TEMPLATE_TOURNAMENT_ID              the tournament template Form
@@ -244,6 +247,39 @@ function shareWithReader(fileId) {
   } catch (err) {
     DriveApp.getFileById(fileId).addEditor(reader);
   }
+}
+
+/**
+ * A Form made by hand needs the reader too, and sharing each one is a chore.
+ * Run installShareEveryForm once from the editor: every ten minutes after that,
+ * every Form this account owns that the reader cannot see yet is shared with
+ * it. Staging's project leaves SHARE_EVERY_FORM unset, so its reader never
+ * gains the club's Forms.
+ */
+function shareEveryForm() {
+  if (property('SHARE_EVERY_FORM') !== 'yes') return;
+  var reader = property('READER_EMAIL').toLowerCase();
+  if (!reader) return;
+  var me = Session.getEffectiveUser().getEmail().toLowerCase();
+  var forms = DriveApp.getFilesByType(MimeType.GOOGLE_FORMS);
+  while (forms.hasNext()) {
+    var file = forms.next();
+    if (file.isTrashed()) continue;
+    var owner = file.getOwner();
+    if (!owner || owner.getEmail().toLowerCase() !== me) continue;
+    var shared = file.getEditors().some(function (user) {
+      return user.getEmail().toLowerCase() === reader;
+    });
+    if (!shared) shareWithReader(file.getId());
+  }
+}
+
+function installShareEveryForm() {
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === 'shareEveryForm') ScriptApp.deleteTrigger(trigger);
+  });
+  ScriptApp.newTrigger('shareEveryForm').timeBased().everyMinutes(10).create();
+  shareEveryForm();
 }
 
 function writeContent(form, title, description, payment, choices) {

@@ -1,5 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { clearRevocations, fetchDiscordSettings, fetchLinkedMembers } from './api.js';
+import {
+  clearRevocations,
+  fetchLinkedMembers,
+  fetchServerSettings,
+  type ServerSettings,
+} from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
@@ -68,6 +73,7 @@ import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
 import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
+import { createScamGuard } from './scam-guard.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -1074,21 +1080,45 @@ function serverLogOptions(token: string) {
   if (scopes.size === 0) return {};
   console.log(`[server-log] on: ${[...scopes].join(', ')}`);
 
-  // The channel is a /config setting, read through the app and held for a
-  // minute so a busy server does not ask the app on every event.
-  let cached: { channelId: string | null; at: number } | null = null;
-  async function resolveChannel(): Promise<string | null> {
-    if (cached && Date.now() - cached.at < 60_000) return cached.channelId;
-    const { settings } = await fetchDiscordSettings();
-    cached = { channelId: settings.server_log_channel_id ?? null, at: Date.now() };
-    return cached.channelId;
+  // Each server's log channel and guard switch (/server, 00302), read through
+  // the app and held for a minute so a busy server does not ask on every event.
+  // A failed read keeps the last answer; before any answer, nothing posts.
+  let servers: { byGuild: Map<string, ServerSettings>; at: number } | null = null;
+  let reading: Promise<Map<string, ServerSettings>> | null = null;
+  async function serverSettings(guildId: string): Promise<ServerSettings | undefined> {
+    if (!servers || Date.now() - servers.at >= 60_000) {
+      reading ??= fetchServerSettings()
+        .then(({ servers: rows }) => {
+          servers = { byGuild: new Map(rows.map((row) => [row.guildId, row])), at: Date.now() };
+          return servers.byGuild;
+        })
+        .catch((error) => {
+          if (!servers) throw error;
+          return servers.byGuild;
+        })
+        .finally(() => {
+          reading = null;
+        });
+      await reading;
+    }
+    return servers?.byGuild.get(guildId);
   }
+  const resolveChannel = async (guildId: string) => (await serverSettings(guildId))?.serverLogChannelId ?? null;
+  const enabledIn = async (guildId: string) => (await serverSettings(guildId))?.scamGuard === true;
 
-  // Only the club's own servers are logged. loadConfig caches for a minute.
-  const clubServers = async () => new Set((await loadConfig()).registry.keys());
+  const api = new DiscordApi({ token });
+  const serverLog = createServerLog({ api, scopes, resolveChannel });
+  if (!scopes.has('scam')) return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
 
-  const serverLog = createServerLog({ api: new DiscordApi({ token }), scopes, resolveChannel, clubServers });
-  return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
+  // The scam guard reads the same messages. See scam-guard.ts.
+  const guard = createScamGuard({ api, enabledIn, report: serverLog.post });
+  return {
+    intents: intentsFor(scopes),
+    onDispatch: (type: string, data: unknown) => {
+      serverLog.onDispatch(type, data);
+      if (type === 'MESSAGE_CREATE') guard.onMessage(data);
+    },
+  };
 }
 
 server.listen(PORT, '0.0.0.0', () => {

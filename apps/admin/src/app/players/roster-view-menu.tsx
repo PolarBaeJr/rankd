@@ -12,6 +12,12 @@ import { Check, ChevronDown } from 'lucide-react';
 
 export type RosterView = { id: string; label: string; count: number };
 
+// The roster table remounts per set of ticks (page.tsx keys it, so a typed
+// search cannot carry over), and this menu lives inside it, so every tick would
+// close the menu. A tick sets this just before navigating, and the fresh mount
+// opens itself, so several views can be ticked in one go.
+let reopenOnNextMount = false;
+
 export function RosterViewMenu({
   views,
   selected,
@@ -27,7 +33,11 @@ export function RosterViewMenu({
   shown: number;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => reopenOnNextMount);
+  // Cleared after mount, not in the initialiser, which React may run twice.
+  useEffect(() => {
+    reopenOnNextMount = false;
+  }, []);
   const [ticked, setTicked] = useState<string[]>(selected);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -51,6 +61,7 @@ export function RosterViewMenu({
 
   function apply(next: string[]) {
     setTicked(next);
+    reopenOnNextMount = true;
     const same = (a: string[], b: string[]) => a.length === b.length && a.every((id) => b.includes(id));
     // The default ticks get the bare URL, so a bookmark of /players follows any
     // later change to what the default is.

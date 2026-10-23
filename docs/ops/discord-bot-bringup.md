@@ -316,7 +316,11 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `match_results_channel_id` | the match result relay (00171) | SQL |
 | `feedback_channel_id` | `/bug` and `/feedback` (00173) | SQL |
 | `event_feedback_channel_id` | tournament survey comments (00173) | SQL |
-| `server_log_channel_id` | the server log: bans, kicks, timeouts, role changes, joins, leaves, deleted and edited messages | `/config channels server_log:` |
+
+The server log is not in this table: since 00302 each server sets its own, with
+`/server log channel:` (and `/server scam_guard` for the scam guard). It lives in
+`discord_server_settings`, one row per server. In a club server the caller also
+needs the club check `/config` uses.
 
 **The server log also needs `DISCORD_SERVER_LOG`** on the bot, a comma list of
 scopes, each costing a gateway intent:

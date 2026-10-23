@@ -20,7 +20,12 @@ environment.
 
 ## 1. The two templates
 
-Make two Forms in the forms folder. One is copied for club events, the other
+Make two Forms in the forms folder. The quick way: paste `form-templates.gs`
+beside `form-maker.gs` (step 2), set `FOLDER_NAME`, `WAIVER_TEXT` (line breaks
+written as `\n`) and `WAIVER_VERSION`, and run `makeTemplates`. It builds both
+templates, fills in the folder and template properties, and leaves one thing
+by hand: Apps Script cannot add a file upload question, so add
+`E-transfer screenshot` to each template's `Payment` section yourself. One is copied for club events, the other
 for tournaments. The console finds every question by its **title**, so type
 these exactly.
 
@@ -76,6 +81,7 @@ In each project:
    | `FOLDER_ID` | the forms folder's id, from its Drive address |
    | `TITLE_PREFIX` | empty on the club's project, `STAGING ` (with the space) on staging |
    | `READER_EMAIL` | the reader service account's email |
+   | `SHARE_EVERY_FORM` | `yes` on the club's project only; leave it unset on staging |
    | `TEMPLATE_CLUB_EVENT_ID` | the club event template's id, from its edit address |
    | `TEMPLATE_CLUB_EVENT_WAIVER_VERSION` | the waiver version its text shows |
    | `TEMPLATE_TOURNAMENT_ID` | the tournament template's id |
@@ -88,6 +94,11 @@ In each project:
 "Anyone" is needed because the console calls it without a Google sign-in.
 The secret is what keeps everybody else out: every request without it is
 refused before anything is read.
+
+5. On the club's project only: pick `installShareEveryForm` in the editor's
+   function list and Run it once. From then on every Form the club account
+   owns, including one made by hand, is shared with the reader within ten
+   minutes, so nobody has to share a Form again.
 
 When you change the script, deploy a **new version** of the same deployment
 (Manage deployments, edit, Version: New version), so the address stays the
