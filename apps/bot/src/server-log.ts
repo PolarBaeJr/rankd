@@ -588,7 +588,7 @@ function decodeReason(reason: string): string {
 export interface ServerLogOptions {
   /** getUserName is optional: without it, people show as a bare mention. */
   api: Pick<DiscordApi, 'createMessage'> &
-    Partial<Pick<DiscordApi, 'getUserName' | 'getUserProfile' | 'listMessageDeleteAudits'>>;
+    Partial<Pick<DiscordApi, 'getUserName' | 'getUserProfile' | 'listMessageDeleteAudits' | 'postMessage' | 'editMessage'>>;
   scopes: ReadonlySet<ServerLogScope>;
   /**
    * Where this server's log posts, or null while that server has none
@@ -603,8 +603,8 @@ export interface ServerLogOptions {
   /** How long a delete waits for Discord to write its audit entry. */
   auditDelayMs?: number;
   /**
-   * Role changes by one person are held this long after their last one and
-   * posted as a single entry, so a mass add or removal is one post, not fifty.
+   * Role changes by one person go in one entry: posted at the first change,
+   * then edited to the full list once this long passes with no more.
    */
   stackMs?: number;
 }
@@ -636,7 +636,7 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     now = () => new Date(),
     maxQueue = 200,
     auditDelayMs = 1500,
-    stackMs = 4000,
+    stackMs = 5000,
   } = options;
   const cache = new MessageCache();
   // Posts go one at a time. Discord allows about five a channel every five
@@ -703,6 +703,19 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
         log(`[server-log] ${type} failed: ${String(error)}`);
       } finally {
         waiting -= 1;
+      }
+    });
+  }
+
+  /** Run some posting work on the same queue, once the server's log channel is known. */
+  function enqueueTask(label: string, guildId: string, work: (channelId: string) => Promise<void>) {
+    chain = chain.then(async () => {
+      try {
+        const channelId = await resolveChannel(guildId).catch(() => lastChannel.get(guildId) ?? null);
+        lastChannel.set(guildId, channelId);
+        if (channelId) await work(channelId);
+      } catch (error) {
+        log(`[server-log] ${label} failed: ${String(error)}`);
       }
     });
   }
@@ -805,6 +818,9 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     members: Map<string, { added: string[]; removed: string[] }>;
     reason: string | null;
     timer: ReturnType<typeof setTimeout> | null;
+    /** Bumped by every change; the entry is edited when it is ahead of what was posted. */
+    version: number;
+    posted: { channelId: string; messageId: string | null; version: number } | null;
   }
   const roleStacks = new Map<string, RoleStack>();
 
@@ -839,9 +855,13 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
         members: new Map(),
         reason: null,
         timer: null,
+        version: 0,
+        posted: null,
       };
       roleStacks.set(key, stack);
+      postRoleStack(stack);
     }
+    stack.version += 1;
     stack.entries += 1;
     stack.reason = change.reason ?? stack.reason;
     const member = stack.members.get(change.targetId) ?? { added: [], removed: [] };
@@ -861,13 +881,44 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     stack.timer = setTimeout(() => flushRoleStack(key), wait);
   }
 
+  /** The first change posts at once, so the log is never behind by the wait. */
+  function postRoleStack(stack: RoleStack) {
+    enqueueTask('role changes', stack.guildId, async (channelId) => {
+      const built = describeRoleStack(stack);
+      if (!built) return;
+      const entry = await withNames(built);
+      const payload = { embeds: [entry.embed], allowed_mentions: { parse: [] }, nonce: nonceFor(entry.key), enforce_nonce: true };
+      const messageId = api.postMessage
+        ? await api.postMessage(channelId, payload)
+        : (await api.createMessage(channelId, payload), null);
+      stack.posted = { channelId, messageId, version: stack.version };
+    });
+  }
+
+  /** Once the burst is quiet, the posted entry is edited to hold all of it. */
   function flushRoleStack(key: string) {
     const stack = roleStacks.get(key);
     if (!stack) return;
     roleStacks.delete(key);
     if (stack.timer) clearTimeout(stack.timer);
-    const built = describeRoleStack(stack);
-    if (built) enqueue('role changes', { guild_id: stack.guildId }, built);
+    enqueueTask('role changes', stack.guildId, async (channelId) => {
+      const posted = stack.posted;
+      if (posted && posted.version >= stack.version) return;
+      const built = describeRoleStack(stack);
+      if (!built) return;
+      const entry = await withNames(built);
+      if (posted?.messageId && api.editMessage) {
+        await api.editMessage(posted.channelId, posted.messageId, { embeds: [entry.embed], allowed_mentions: { parse: [] } });
+        return;
+      }
+      // The first post failed or cannot be edited: post the whole burst instead.
+      await api.createMessage(channelId, {
+        embeds: [entry.embed],
+        allowed_mentions: { parse: [] },
+        nonce: nonceFor(`${entry.key}:final`),
+        enforce_nonce: true,
+      });
+    });
   }
 
   const roleNames = (roles: string[]) => roles.map((role) => `\`${role}\``).join(', ');
@@ -886,18 +937,24 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
       description = `<@${memberId}> **roles changed**\n${lists(change)}`;
       footer = `ID: ${memberId}`;
     } else {
-      // Grouped by role, so a burst that adds some and removes others still
-      // reads as a few lines: each role, and who gained or lost it.
-      const byRole = new Map<string, string[]>();
-      for (const [id, m] of members) {
-        for (const role of m.added) byRole.set(`Added \`${role}\``, [...(byRole.get(`Added \`${role}\``) ?? []), id]);
-        for (const role of m.removed) byRole.set(`Removed \`${role}\``, [...(byRole.get(`Removed \`${role}\``) ?? []), id]);
-      }
-      const lines = [...byRole.entries()].map(([change, ids]) => {
-        const shown = ids.slice(0, 40).map((id) => `<@${id}>`).join(', ');
-        return `**${change}:** ${shown}${ids.length > 40 ? ` and ${ids.length - 40} more` : ''}`;
-      });
-      description = `**${members.length} members' roles changed**\n\n${lines.join('\n')}`;
+      const same = (a: string[], b: string[]) => a.length === b.length && a.every((role) => b.includes(role));
+      const [, first] = members[0] as [string, { added: string[]; removed: string[] }];
+      const alike = members.every(([, m]) => same(m.added, first.added) && same(m.removed, first.removed));
+      const shown = members.slice(0, 60);
+      const more = members.length > shown.length ? `\n...and ${members.length - shown.length} more` : '';
+      description = alike
+        ? `**${members.length} members' roles changed**\n${lists(first)}\n\n**Members:** ${shown.map(([id]) => `<@${id}>`).join(', ')}${more}`
+        : `**${members.length} members' roles changed**\n\n` +
+          shown
+            .map(
+              ([id, m]) =>
+                `<@${id}>: ` +
+                [m.added.length ? `added ${roleNames(m.added)}` : '', m.removed.length ? `removed ${roleNames(m.removed)}` : '']
+                  .filter(Boolean)
+                  .join('; ')
+            )
+            .join('\n') +
+          more;
       footer = `${members.length} members`;
     }
     return {
