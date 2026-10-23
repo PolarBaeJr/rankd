@@ -475,6 +475,12 @@ export interface ServerLogOptions {
   scopes: ReadonlySet<ServerLogScope>;
   /** The channel to post in, or null while it is not configured. */
   resolveChannel: () => Promise<string | null>;
+  /**
+   * The servers the club connected (/setup). The bot runs in any server, and
+   * the log channel is the club's, so events from anybody else's server are
+   * dropped rather than posted there. Omitted means every server (tests).
+   */
+  clubServers?: () => Promise<ReadonlySet<string>>;
   log?: (line: string) => void;
   now?: () => Date;
   /** Past this many waiting entries, new ones are counted and dropped. */
@@ -502,6 +508,7 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     api,
     scopes,
     resolveChannel,
+    clubServers,
     log = (line: string) => console.error(line),
     now = () => new Date(),
     maxQueue = 200,
@@ -515,6 +522,13 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
   let dropped = 0;
   let lastChannel: string | null = null;
   let warnedUnset = false;
+  // The last answer clubServers gave, so a new message from another server
+  // skips the cache without waiting on a lookup. Null until the first answer.
+  let knownServers: ReadonlySet<string> | null = null;
+  const guildOf = (data: unknown): string | null => {
+    const guildId = (data as { guild_id?: unknown } | null)?.guild_id;
+    return typeof guildId === 'string' ? guildId : null;
+  };
 
   function enqueue(type: string, data: unknown) {
     if (waiting >= maxQueue) {
@@ -526,6 +540,12 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     const at = now();
     chain = chain.then(async () => {
       try {
+        if (clubServers) {
+          knownServers = await clubServers().catch(() => knownServers);
+          const guildId = guildOf(data);
+          // Unknown (the lookup never answered) posts nothing: the safe side.
+          if (!knownServers || (guildId && !knownServers.has(guildId))) return;
+        }
         const channelId = await resolveChannel().catch(() => lastChannel);
         lastChannel = channelId;
         if (!channelId) {
@@ -569,6 +589,8 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
       // A new message only feeds the cache. Done at once rather than queued, so
       // a busy channel cannot fill the queue with work that posts nothing.
       if (type === 'MESSAGE_CREATE') {
+        const guildId = guildOf(data);
+        if (clubServers && knownServers && guildId && !knownServers.has(guildId)) return;
         describeDispatch(type, data, { cache, scopes, logChannelId: lastChannel ?? '', now: now() });
         return;
       }

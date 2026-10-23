@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { checkDiscordManager, managerInput } from '@/lib/discord-manager';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -132,6 +133,17 @@ export async function POST(request: Request) {
   }
   if (typeof roles !== 'object' || roles === null || Array.isArray(roles)) {
     return NextResponse.json({ error: 'invalid_roles' }, { status: 400 });
+  }
+
+  // Only a club officer who may change settings, and (except for /setup)
+  // only from a server the club has connected. See discord-manager.ts.
+  const manager = managerInput(body);
+  if (!manager) return NextResponse.json({ error: 'invalid_caller' }, { status: 400 });
+  const managerCheck = await checkDiscordManager(createServiceRoleClient(), { ...manager, setup: true });
+  if (!managerCheck.ok) {
+    return managerCheck.refusal === 'unavailable'
+      ? NextResponse.json({ error: 'caller_unavailable' }, { status: 503 })
+      : NextResponse.json({ error: managerCheck.refusal }, { status: 403 });
   }
 
   const entries = Object.entries(roles as Record<string, unknown>);

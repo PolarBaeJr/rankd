@@ -31,6 +31,8 @@ import {
   fetchDiscordSettings,
   fetchClubSocials,
   writeDiscordSettings,
+  checkDiscordManager,
+  type ManagerRefusal,
   submitAnnouncement,
   setMembership,
   createChallenge,
@@ -3953,6 +3955,20 @@ export async function handleLinkedAccountAutocomplete(
  * Runs AFTER a deferred acknowledgement — see DEFERRED_COMMANDS — so it is free
  * to take as long as nine role creations need.
  */
+/**
+ * Why /setup or /config was turned away, in words. The bot runs in any server;
+ * these two change the club's own setup, so they answer to the club's records.
+ */
+function managerRefusalText(refusal: ManagerRefusal): string {
+  if (refusal === 'not_linked') {
+    return 'This changes the club\'s bot setup, so it needs a club exec account. Connect yours with /link first.';
+  }
+  if (refusal === 'not_permitted') {
+    return 'This changes the club\'s bot setup. Only club execs who can change the club\'s settings can run it.';
+  }
+  return 'This server is not connected to the club, so its settings cannot be changed from here. A club exec connects a server with /setup.';
+}
+
 export async function handleSetup(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -3962,6 +3978,13 @@ export async function handleSetup(
   // guild. Checked anyway: the alternative is a confusing crash if that ever
   // changes, and the whole command is meaningless without one.
   if (!guildId) return ephemeral('Run this in the server you want to set up.');
+
+  // BEFORE ANY ROLE IS MADE. Discord admin rights in this server say nothing
+  // about the club; the club's records decide (managerRefusalText).
+  if (!context.discordUserId) return ephemeral(managerRefusalText('not_linked'));
+  const manager = { discordUserId: context.discordUserId, guildId };
+  const setupRefusal = await checkDiscordManager(manager, { setup: true });
+  if (setupRefusal) return ephemeral(managerRefusalText(setupRefusal));
 
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return ephemeral('The bot is not configured with a token.');
@@ -4025,7 +4048,12 @@ export async function handleSetup(
   const auditChannelId = typeof auditChannel === 'string' ? auditChannel : undefined;
 
   try {
-    await writeGuildConfig({ guildId, roles, ...(auditChannelId ? { auditChannelId } : {}) });
+    await writeGuildConfig({
+      guildId,
+      discordUserId: manager.discordUserId,
+      roles,
+      ...(auditChannelId ? { auditChannelId } : {}),
+    });
   } catch (error) {
     console.error('[bot] setup could not save config:', error);
     // The roles now exist in Discord but the app does not know their ids. Say
@@ -4427,6 +4455,13 @@ async function handleConfig(
   context: InteractionContext
 ) {
   if (!context.guildId) return ephemeral('Run this in a server, not a DM.');
+  // Every subcommand, /config show included: these are the club's settings,
+  // so the club's records decide who sees and changes them, not Discord admin
+  // rights in whichever server the command was typed in.
+  if (!context.discordUserId) return ephemeral(managerRefusalText('not_linked'));
+  const manager = { discordUserId: context.discordUserId, guildId: context.guildId };
+  const configRefusal = await checkDiscordManager(manager);
+  if (configRefusal) return ephemeral(managerRefusalText(configRefusal));
   const { name: sub, options: args } = subcommand(options);
 
   if (sub === 'show') {
@@ -4497,7 +4532,7 @@ async function handleConfig(
     // NOTHING IS SAVED UNTIL THE POST SUCCEEDS, and a channel that refused is
     // left exactly as it was rather than half-set. A club that changes three
     // channels and gets one wrong keeps the other two.
-    if (Object.keys(write).length > 0) await writeDiscordSettings(write);
+    if (Object.keys(write).length > 0) await writeDiscordSettings(write, manager);
 
     const saved = Object.keys(write).length;
     const ok = saved > 0 ? `Saved ${saved} channel${saved === 1 ? '' : 's'}.` : 'Nothing saved.';
@@ -4522,7 +4557,7 @@ async function handleConfig(
     if (Object.keys(write).length === 0) {
       return ephemeral('Pick at least one role. Run **/config show** to see what is set.');
     }
-    await writeDiscordSettings(write);
+    await writeDiscordSettings(write, manager);
     const lines = ROLE_SETTINGS.filter((spec) => write[spec.key]).map(
       (spec) => `**${spec.label}**: <@&${write[spec.key]}>`
     );
@@ -4566,7 +4601,7 @@ async function handleConfig(
       );
     }
 
-    await writeDiscordSettings(write);
+    await writeDiscordSettings(write, manager);
     return ephemeral(
       `Saved. Tournament events run **${start}–${end}**` +
         `${settings.tournament_event_location || write.tournament_event_location ? '' : ' with no location set'}.`
@@ -4577,7 +4612,7 @@ async function handleConfig(
     const spec = specByOption(String(option(args, 'setting') ?? ''));
     if (!spec) return ephemeral('I do not know that setting.');
 
-    await writeDiscordSettings({ [spec.key]: null });
+    await writeDiscordSettings({ [spec.key]: null }, manager);
     // Says what stops rather than "cleared", because that is the part the club
     // needs to have understood before running it.
     return ephemeral(`Unset **${spec.label}** — from now on ${spec.whenUnset}.`);
@@ -4594,6 +4629,11 @@ async function handleRolePicker(
 ) {
   if (!context.guildId) {
     return ephemeral('Run this in a server, not a DM.');
+  }
+  // Role pickers are kept in the club's records, which only hold the club's
+  // own servers. Anywhere else this says so rather than failing on the write.
+  if (!(await isClubServer(context.guildId))) {
+    return ephemeral('Role pickers only work in the club\'s own Discord server.');
   }
   const { name: sub, options: args } = subcommand(options);
 
@@ -4868,6 +4908,21 @@ export async function handleSelfRoleButton(
  * direction. A fee tier written from a half-read config would be worse than one
  * that did not move.
  */
+/**
+ * Is this one of the club's own servers (connected by /setup)? The bot runs in
+ * any server; the club's records, audit channel and role pickers belong to
+ * these. False when the config cannot be read, which only ever skips extras.
+ */
+async function isClubServer(guildId: string | null): Promise<boolean> {
+  if (!guildId) return false;
+  try {
+    return (await loadConfig()).registry.has(guildId);
+  } catch (error) {
+    console.error('[bot] could not read the club servers:', error);
+    return false;
+  }
+}
+
 async function guildRolesFor(guildId: string): Promise<GuildRoleMap> {
   try {
     const { registry } = await loadConfig();
@@ -5508,8 +5563,10 @@ export async function handleSayModal(
   }
 
   try {
-    const { auditChannelId } = await loadConfig();
-    await postAuditEntry(api, auditChannelId, {
+    const { auditChannelId, registry } = await loadConfig();
+    // The audit channel is the club's: /say in somebody else's server is theirs.
+    const auditTo = context.guildId && registry.has(context.guildId) ? auditChannelId : undefined;
+    await postAuditEntry(api, auditTo, {
       kind: 'say',
       discordUserId: context.discordUserId,
       guildId: context.guildId,
@@ -7370,8 +7427,10 @@ export async function handleSoftban(
   if (!outcome.ok) return ephemeral(outcome.message);
 
   const windowLabel = describeWindow(deleteSeconds);
-  const { auditChannelId } = await loadConfig();
-  await postAuditEntry(api, auditChannelId, {
+  // The audit channel is the club's: a soft-ban in somebody else's server is
+  // theirs, and a config read that fails must not turn a done ban into an error.
+  const auditTo = (await isClubServer(context.guildId)) ? (await loadConfig()).auditChannelId : undefined;
+  await postAuditEntry(api, auditTo, {
     kind: 'softban',
     moderatorId: context.discordUserId,
     targetId,
