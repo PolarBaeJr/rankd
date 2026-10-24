@@ -13,6 +13,7 @@ import {
 } from '@badminton/shared';
 import type { createAdminClient } from './supabase-server';
 import type { Capability } from './permissions';
+import { DELETED_PLAYER_EMAIL_PATTERN } from './dues-roster';
 
 // PAYMENT RECEIPTS AND UNPAID LINES, READ FOR THE CONSOLE (00248, 00253).
 //
@@ -357,7 +358,9 @@ export async function loadOutstandingMembers(admin: AdminClient, season: Season,
       .eq('is_exec', false)
       .eq('fee_exempt', false)
       // Guests (00292) owe no dues: they are entered in one event, not members.
-      .eq('is_guest', false),
+      .eq('is_guest', false)
+      // A deleted member owes nothing.
+      .not('email', 'like', DELETED_PLAYER_EMAIL_PATTERN),
     admin
       .from('club_fees')
       .select('id, player_id, amount_cents, paid_at, payment_reminded_at')

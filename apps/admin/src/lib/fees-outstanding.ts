@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { unwrap } from '@badminton/shared';
 import { isWaivedFee, type FeeStatusRow } from './fee-status';
+import { DELETED_PLAYER_EMAIL_PATTERN } from './dues-roster';
 
 /**
  * HOW MUCH SEASON MONEY IS STILL OWED, IN CENTS.
@@ -101,7 +102,9 @@ export async function getOutstandingClubFees(
       .eq('is_exec', false)
       .eq('fee_exempt', false)
       // Guests (00292) owe no dues: they are entered in one event, not members.
-      .eq('is_guest', false),
+      .eq('is_guest', false)
+      // A deleted member owes nothing.
+      .not('email', 'like', DELETED_PLAYER_EMAIL_PATTERN),
     supabase
       .from('club_fees')
       .select('player_id, paid_at, method')

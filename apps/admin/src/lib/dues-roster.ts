@@ -11,6 +11,12 @@ import type { createAdminClient } from './supabase-server';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
+// The email a completed deletion leaves on the row (supabase/functions/_shared/
+// anonymize.ts). The erasure switches the account off but leaves its status, so
+// every list of who owes dues has to skip these by name or a deleted member
+// shows up as Unpaid forever.
+export const DELETED_PLAYER_EMAIL_PATTERN = 'deleted+%@deleted.invalid';
+
 export async function loadDuesRoster(supabase: AdminClient, season: { id: string }) {
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
@@ -23,6 +29,8 @@ export async function loadDuesRoster(supabase: AdminClient, season: { id: string
       .eq('fee_exempt', false)
       // Guests (00292) owe no dues: they are entered in one event, not members.
       .eq('is_guest', false)
+      // A deleted member owes nothing.
+      .not('email', 'like', DELETED_PLAYER_EMAIL_PATTERN)
       .order('full_name'),
     'FEE-101',
   );
