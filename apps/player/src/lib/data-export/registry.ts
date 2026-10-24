@@ -981,11 +981,15 @@ export const DROPPED_TABLES: Record<string, string> = {
  *   _00128_acl_before  00128:144, `CREATE TEMP TABLE ... ON COMMIT DROP`
  *   _00134_acl_before  00134:382, created TEMP and dropped at 376 and 629
  *   _mp_guard_probe    00207:790, the merge-guard test harness
+ *   role_additions     00305, TEMP ... ON COMMIT DROP: which write follows which
+ *   role_changes       00305, TEMP ... ON COMMIT DROP: what each role gained
  */
 export const MIGRATION_SCRATCH_TABLES = [
   '_00128_acl_before',
   '_00134_acl_before',
   '_mp_guard_probe',
+  'role_additions',
+  'role_changes',
 ] as const;
 
 /**
