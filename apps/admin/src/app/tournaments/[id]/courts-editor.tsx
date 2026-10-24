@@ -44,6 +44,10 @@ export function CourtsEditor({ tournamentId, courts, usedLabels, canEdit, migrat
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState('');
+  // The list reads as text until Edit, and the add box opens from its own
+  // button, like every other saved record in the console.
+  const [editing, setEditing] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   function run(action: () => Promise<ActionResult<void>>, after?: () => void) {
     setError(null);
@@ -74,11 +78,13 @@ export function CourtsEditor({ tournamentId, courts, usedLabels, canEdit, migrat
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
           {courts.map((court, i) => (
             <CourtRow
-              key={court.id}
+              // Remounted on Edit, so each opening seeds the name boxes from the
+              // saved names rather than from a rename the server refused.
+              key={editing ? `${court.id}:edit` : court.id}
               court={court}
               first={i === 0}
               last={i === courts.length - 1}
-              canEdit={canEdit}
+              canEdit={canEdit && editing}
               pending={pending}
               run={run}
             />
@@ -86,12 +92,39 @@ export function CourtsEditor({ tournamentId, courts, usedLabels, canEdit, migrat
         </ul>
       )}
 
-      {canEdit && (
+      {canEdit && !addOpen && (
+        <div className="flex flex-wrap items-center gap-2">
+          {/* DONE, NOT CANCEL. A rename saves on blur, and pressing any button
+              blurs the box first, so there is no unsaved edit here to discard. */}
+          {courts.length > 0 && (
+            editing ? (
+              <Button type="button" size="sm" variant="secondary" onClick={() => setEditing(false)}>
+                Done
+              </Button>
+            ) : (
+              <Button type="button" size="sm" variant="secondary" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            )
+          )}
+          <Button type="button" size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
+            Add courts
+          </Button>
+          {pending && <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)]" aria-hidden />}
+        </div>
+      )}
+
+      {canEdit && addOpen && (
         <form
           className="flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (labels.length > 0) run(() => addTournamentCourts(tournamentId, labels), () => setAdding(''));
+            if (labels.length > 0) {
+              run(() => addTournamentCourts(tournamentId, labels), () => {
+                setAdding('');
+                setAddOpen(false);
+              });
+            }
           }}
         >
           <label className="flex-1 min-w-[12rem]">
@@ -108,13 +141,25 @@ export function CourtsEditor({ tournamentId, courts, usedLabels, canEdit, migrat
           <Button type="submit" size="sm" disabled={pending || labels.length === 0}>
             Add {labels.length > 1 ? `${labels.length} courts` : 'court'}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={pending}
+            onClick={() => {
+              setAdding('');
+              setAddOpen(false);
+            }}
+          >
+            Cancel
+          </Button>
           {courts.length === 0 && usedLabels.length > 0 && (
             <Button
               type="button"
               size="sm"
               variant="secondary"
               disabled={pending}
-              onClick={() => run(() => importCourtsFromMatches(tournamentId))}
+              onClick={() => run(() => importCourtsFromMatches(tournamentId), () => setAddOpen(false))}
             >
               Add the courts already used ({usedLabels.map((l) => courtLabel(l) ?? l).join(', ')})
             </Button>
@@ -177,7 +222,11 @@ function CourtRow({
       ) : (
         <span className="flex-1 min-w-[8rem] text-sm text-[var(--text-primary)]">{name}</span>
       )}
-      {!court.active && <span className="text-xs text-[var(--text-muted)]">Off</span>}
+      {!canEdit && (
+        <span className={`text-xs ${court.active ? 'text-[var(--text-secondary)]' : 'text-[var(--text-muted)]'}`}>
+          {court.active ? 'Active' : 'Switched off'}
+        </span>
+      )}
       {canEdit && (
         <>
           <button

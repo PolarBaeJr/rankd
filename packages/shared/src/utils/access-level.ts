@@ -199,7 +199,8 @@ export const CAPABILITIES = [
   // THE NARROWED BASELINE MADE THAT GRADUATION EASIER RATHER THAN HARDER, and
   // it is worth saying so where somebody will read it. Promoting to executive
   // used to require an actor holding all 73; it now requires one holding the
-  // twelve READS the baseline is, because that is all the promotion confers.
+  // floor's READS (every read outside the admin areas, plus the one expense
+  // write), because that is all the promotion confers.
   // The writes arrive afterwards, from a role or a grant, and each of those is
   // closure-checked on its own — so the check moved from one big test to the
   // several small ones that match what is actually being handed over.
@@ -644,6 +645,19 @@ export const TRAINER_BASELINE: readonly Capability[] = [
   'players.editor.varsitynotes.write',
 ];
 
+// THE AREAS AN OFFICER CANNOT READ, AND NOBODY CAN BE GIVEN. Who holds what, the audit trail
+// with its sign-ins, the data API's keys, the platform switches and the rating
+// tools: admin work, and reading them is most of what the work is. Everything
+// else is EXEC_READS below.
+const ADMIN_ONLY_AREAS: readonly Area[] = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
+
+/** Every `.read` and `.page` an officer holds by being an officer. */
+export const EXEC_READS: readonly Capability[] = CAPABILITIES.filter(
+  (cap) =>
+    (cap.endsWith('.read') || cap.endsWith('.page')) &&
+    !ADMIN_ONLY_AREAS.includes(cap.split('.')[0] as Area),
+);
+
 export const EXEC_BASELINE: readonly Capability[] = [
   // READ EVERYTHING, WRITE ONE THING — the club owner's instruction, and a
   // deliberate reversal of what this list used to be.
@@ -673,9 +687,6 @@ export const EXEC_BASELINE: readonly Capability[] = [
   // not been assigned a role loses every write they had. That is the point
   // rather than a side-effect, and it wants somebody on /permissions the same
   // day.
-  'announcements.page',
-  'fees.page',
-  'fees.expenses.read',
   // THE ONE WRITE, AND THE READ-EVERYTHING-WRITE-NOTHING PROPERTY IS NOW GONE.
   // Owner's instruction, 2026-09-19: "also give everyone permission to write
   // expense into the fee table". It is a deliberate reversal of the line above
@@ -695,15 +706,13 @@ export const EXEC_BASELINE: readonly Capability[] = [
   // here), so the floor can add to the ledger and still cannot rewrite it.
   // The read above it is what makes this reachable at all: page, ledger, form.
   'fees.expenses.add.write',
-  'legal.page',
-  'matches.page',
-  'players.page',
-  'players.read',
-  'seasons.page',
-  'sessions.page',
-  'tournaments.page',
-  'tournaments.draw.entrycounts.read',
-  'tournaments.draw.waivers.read',
+  // EVERY READ AND EVERY PAGE OUTSIDE THE ADMIN AREAS, derived rather than
+  // listed. Owner's instruction, 2026-10-23: "give them read to everything,
+  // but write follow the roles and i can add additional stuff". Derived so a
+  // read added later reaches every officer on the deploy that adds it, with
+  // nobody ticking it onto each role. Writes are never derived: they still
+  // arrive only by a role or a grant.
+  ...EXEC_READS,
 ];
 
 const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
@@ -979,10 +988,11 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
 // alias of EXEC_BASELINE, the seeded Finance row could be shipped but never
 // edited into the thing the feature exists to allow.
 //
-// THE WIDENING IS ENUMERATED, ONE LINE AT A TIME, so opening anything further is
-// a diff somebody reads. It is NOT `CAPABILITIES minus a deny-list`: a deny-list
-// admits every capability added next year by default, which is the one direction
-// a ceiling must never move on its own.
+// THE WIDENING WAS ENUMERATED, ONE LINE AT A TIME, and this list still is. Since
+// 2026-10-23 EDITOR_OFFERABLE also spreads everything outside ADMIN_ONLY_AREAS,
+// derived, at the owner's request that a capability added later be grantable
+// on the deploy that adds it. So the ceiling now does move on its own, outward,
+// everywhere except those five areas.
 const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   // THE OWNER'S CASE, and the whole reason this list exists. "Allow me to edit
   // the permissions of each preassigned role" came out of wanting Finance to see
@@ -1048,7 +1058,11 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   ...FEATURE_ACCESS_CAPABILITIES,
 ];
 
-// DELIBERATELY STILL OUT OF REACH, and each for its own reason:
+// DELIBERATELY STILL OUT OF REACH, and each for its own reason. SUPERSEDED IN
+// PART on 2026-10-23: EDITOR_OFFERABLE now spreads every capability outside
+// ADMIN_ONLY_AREAS, so only the permissions, audit, ratings, accounts and
+// platform entries below are still withheld. The rest is kept as the record of
+// why each was once withheld:
 //
 //   * `permissions.write` / `permissions.page` — a role that could be edited to
 //     contain these would make "pick Finance from a dropdown" hand over the
@@ -1208,6 +1222,17 @@ export const EXEC_ASSIGNABLE: readonly Capability[] = [
 export const EDITOR_OFFERABLE: readonly Capability[] = [
   ...EXEC_ASSIGNABLE,
   ...OFFERABLE_BEYOND_EXEC,
+  // EVERYTHING ELSE OUTSIDE THE ADMIN AREAS, derived. Owner, 2026-10-23: the
+  // club events writes shipped and could not be ticked for anyone, because
+  // this ceiling only grew by hand and nobody grew it. Derived, a capability
+  // added later is grantable on the deploy that adds it. Nobody HOLDS any of
+  // these by being here: a write still arrives only by a role or a grant.
+  ...CAPABILITIES.filter(
+    (cap) =>
+      !ADMIN_ONLY_AREAS.includes(cap.split('.')[0] as Area) &&
+      !EXEC_ASSIGNABLE.includes(cap) &&
+      !OFFERABLE_BEYOND_EXEC.includes(cap),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1503,7 +1528,7 @@ export function resolvePermissions(
 
   // THE FLOOR. `BASELINES[level]`, never EXEC_BASELINE unconditionally: a
   // varsity trainer composed onto the tournaments job must not inherit an exec's
-  // eight section pages, and hard-coding the exec floor is how that would
+  // section pages, and hard-coding the exec floor is how that would
   // happen without anybody noticing, since the exec case is the one everybody
   // tests.
   //
@@ -1536,9 +1561,10 @@ export function resolvePermissions(
   // close it.
   //
   // WHAT IT IS FOR CHANGED WHEN THE FLOOR ARRIVED, and pretending otherwise
-  // would leave a comment that reads true and is not. The exec floor carries all
-  // eight section pages, so for an exec NO GRANT IS PRUNED ANY MORE: there is no
-  // area they hold a capability in and cannot open. That is the owner's ruling
+  // would leave a comment that reads true and is not. The exec floor carries
+  // every section page outside the five admin areas, so for an exec NO GRANT
+  // OUTSIDE THOSE AREAS IS PRUNED ANY MORE: there is no such area they hold a
+  // capability in and cannot open. That is the owner's ruling
   // working as intended rather than the invariant being defeated — "everyone can
   // read things" is precisely the statement that every section page is held.
   //

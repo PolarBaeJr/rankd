@@ -116,14 +116,9 @@ describe('the command definition', () => {
     options: unknown[];
   };
 
-  it('is hidden from the picker until a server admin grants it', () => {
+  it('is open to every member, like /socials', () => {
     expect(def).toBeDefined();
-    // '0' is Discord's "no default access", which fails closed.
-    expect(def.default_member_permissions).toBe('0');
-    // Load-bearing rather than boilerplate: default_member_permissions is a
-    // guild-only filter, so without this a member could DM the bot and the gate
-    // above would be decorative.
-    expect(def.dm_permission).toBe(false);
+    expect(def.default_member_permissions).toBeUndefined();
   });
 
   it('takes no options, because the club has one invite', () => {

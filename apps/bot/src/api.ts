@@ -248,6 +248,8 @@ export function recordTournamentEvent(input: {
   name: string;
   syncedStartsAt: string;
   syncedEndsAt: string;
+  /** The app's value (00304), null when unset, never the fallback the bot sent. */
+  location: string | null;
 }): Promise<{ ok: true }> {
   return send<{ ok: true }>('POST', '/api/discord/tournament-events', input);
 }
@@ -1008,6 +1010,8 @@ export async function fetchLinkedAccounts(input: {
  */
 export async function writeGuildConfig(payload: {
   guildId: string;
+  /** Who ran /setup. The app refuses anyone without the settings capability. */
+  discordUserId: string;
   label?: string;
   roles: Record<string, string>;
   auditChannelId?: string;
@@ -1107,13 +1111,86 @@ export function fetchDiscordSettings(): Promise<{ settings: Record<string, strin
  * routes use and would leave a relay pointed at a channel id of ''.
  */
 export function writeDiscordSettings(
-  settings: Record<string, string | null>
+  settings: Record<string, string | null>,
+  caller: ManagerCaller
 ): Promise<{ ok: true; written: number; cleared: number }> {
   return send<{ ok: true; written: number; cleared: number }>(
     'POST',
     '/api/discord/settings',
-    { settings }
+    { settings, ...caller }
   );
+}
+
+/** Who typed /setup or /config, and in which server. The app checks both. */
+export interface ManagerCaller {
+  discordUserId: string;
+  guildId: string;
+}
+
+export type ManagerRefusal = 'not_linked' | 'not_permitted' | 'server_not_connected';
+
+/**
+ * May this person change the club's bot setup from this server?
+ *
+ * The bot runs in any server, but /setup and /config change settings shared by
+ * the whole club, so the app answers from the club's records: the caller's
+ * linked account must hold the settings capability, and the server must be one
+ * the club connected (except for /setup, which is how a server gets connected).
+ * Null means yes.
+ */
+export async function checkDiscordManager(
+  caller: ManagerCaller,
+  options: { setup?: boolean } = {}
+): Promise<ManagerRefusal | null> {
+  const reply = await send<{ ok: true } | { ok: false; refusal: ManagerRefusal }>(
+    'POST',
+    '/api/discord/manage-check',
+    { ...caller, setup: options.setup === true }
+  );
+  return reply.ok ? null : reply.refusal;
+}
+
+// ---- ONE SERVER'S OWN SETTINGS ---------------------------------------------
+//
+// Not the club's (that is discord_settings above): the settings that belong to
+// whichever server the bot is in, one row each (00302). The app checks the
+// caller again in a club server; see its route.
+
+export type AutomodAction = 'timeout_then_softban' | 'timeout' | 'softban' | 'flag';
+export type AutomodWordsAction = 'delete' | 'punish' | 'flag';
+
+export interface ServerSettings {
+  guildId: string;
+  serverLogChannelId: string | null;
+  /** Auto mod's master switch (00302's name for it). */
+  scamGuard: boolean;
+  /** Auto mod's rules and what they do (00303). */
+  automodAction: AutomodAction;
+  automodTimeoutMinutes: number;
+  automodSpray: boolean;
+  automodSprayChannels: number;
+  automodSprayWindowMinutes: number;
+  automodFlagSuspects: boolean;
+  automodWords: string[];
+  automodWordsAction: AutomodWordsAction;
+  /** What a post in a trap channel gets (00303); a soft ban unless changed. */
+  automodTrapAction: AutomodAction;
+  automodTrapChannelIds: string[];
+}
+
+export type ServerSettingsChange = Partial<Omit<ServerSettings, 'guildId'>>;
+
+/** Every server that has settings. Read by the server log and the scam guard. */
+export function fetchServerSettings(): Promise<{ servers: ServerSettings[] }> {
+  return get<{ servers: ServerSettings[] }>('/api/discord/server-settings');
+}
+
+/** Change the caller's own server. A key left out is left alone; a null log channel switches it off. */
+export function writeServerSettings(
+  caller: ManagerCaller,
+  change: ServerSettingsChange
+): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/server-settings', { ...caller, ...change });
 }
 
 // ---- SESSION BOARD ---------------------------------------------------------

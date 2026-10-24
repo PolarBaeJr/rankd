@@ -20,6 +20,7 @@ import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
+import { LiveEvent } from '../live-event';
 import type { CheckInRow } from '@/components/checkin-list';
 
 type EventRow = {
@@ -151,6 +152,25 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           : Promise.resolve({ data: [] }),
       ])
     : [{ data: [] }, { data: [] }];
+  // A member's fee for the event, so their row says paid or unpaid as a
+  // guest's does. Members sign the club waiver when they join, so there is no
+  // per-event waiver to show.
+  const { data: memberFeeData } =
+    canSeeSignups && signups.length > 0
+      ? await adminClient
+          .from('club_fees')
+          .select('player_id, amount_cents, paid_at')
+          .eq('club_event_id', id)
+          .in(
+            'player_id',
+            signups.map((row) => row.player_id),
+          )
+      : { data: [] };
+  const memberFee = new Map(
+    ((memberFeeData ?? []) as { player_id: string; amount_cents: number | null; paid_at: string | null }[]).map(
+      (row) => [row.player_id, { amountCents: row.amount_cents, paid: row.paid_at !== null }],
+    ),
+  );
   const memberPartner = new Map(
     ((memberNotes ?? []) as { player_id: string; preferred_partner: string }[]).map((row) => [
       row.player_id,
@@ -193,10 +213,12 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         key: `member:${row.player_id}`,
         ...row,
         partner: memberPartner.get(row.player_id) ?? null,
+        fee: memberFee.get(row.player_id) ?? null,
       }),
     ),
     ...guests,
-  ].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    // Newest first, so the latest sign-ups are at the top (owner, 2026-10-24).
+  ].sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   // The door list: members, then the Form's non-members (00284), who carry no
   // player id and are keyed by their own row.
@@ -262,10 +284,18 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
 
   return (
     <div>
+      <LiveEvent eventId={id} channel="event-page" />
       <PageHeader
         eyebrow="EVENTS"
         title={event.title}
         sub={<Link href="/events" className="hover:underline">Back to club events</Link>}
+        actions={
+          <ClubEventControls
+            eventId={event.id}
+            canCancel={canCancel && !cancelled}
+            canDelete={canDelete && taken === 0}
+          />
+        }
       />
       <div className="flex flex-col gap-5">
         <EditableSection
@@ -321,12 +351,6 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             </DetailList>
           }
           form={<ClubEventForm key={event.id} eventId={event.id} initial={initial} />}
-        />
-
-        <ClubEventControls
-          eventId={event.id}
-          canCancel={canCancel && !cancelled}
-          canDelete={canDelete && taken === 0}
         />
 
         {(linked || !cancelled) && (

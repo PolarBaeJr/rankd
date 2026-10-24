@@ -22,10 +22,20 @@
 //   content     MESSAGE_CONTENT, PRIVILEGED. Adds the TEXT of a deleted or
 //               edited message to its entry. Without it the entry names who
 //               and where, never what.
+//   scam        No intent of its own; switches on messages and content. The
+//               scam guard (scam-guard.ts): soft-bans an account that sprays
+//               the same post across channels, and flags a lone giveaway post.
 //
 // A privileged scope that is not ticked in the developer portal gets close code
 // 4014; gateway.ts then reconnects with no intents, so the bot stays online and
 // the log goes quiet with a line in the container log saying why.
+//
+// ---- WHERE IT POSTS ----
+//
+// Each server picks its own log channel with /server log, kept in
+// discord_server_settings (00302). The scopes above are the bot's, the same for
+// every server; the channel is the server's. An event is only ever posted in
+// the server it happened in, and a server with no channel gets nothing.
 //
 // ---- DUPLICATES ----
 //
@@ -46,13 +56,14 @@ import { createHash } from 'node:crypto';
 import type { DiscordApi } from './discord-api.js';
 import type { Embed } from './audit.js';
 
-export type ServerLogScope = 'moderation' | 'members' | 'messages' | 'content';
+export type ServerLogScope = 'moderation' | 'members' | 'messages' | 'content' | 'scam';
 
 const SCOPE_INTENTS: Record<ServerLogScope, number> = {
   moderation: 1 << 2, // GUILD_MODERATION
   members: 1 << 1, // GUILD_MEMBERS
   messages: 1 << 9, // GUILD_MESSAGES
   content: 1 << 15, // MESSAGE_CONTENT
+  scam: 0, // its intents come from the messages and content it implies
 };
 
 const SCOPES = Object.keys(SCOPE_INTENTS) as ServerLogScope[];
@@ -69,6 +80,8 @@ export function parseServerLogScopes(raw: string | undefined): {
     if ((SCOPES as string[]).includes(name)) scopes.add(name as ServerLogScope);
     else unknown.push(name);
   }
+  // The guard reads what people post, so it needs their text.
+  if (scopes.has('scam')) scopes.add('content');
   // Content is the text of messages; on its own it has no messages to read.
   if (scopes.has('content')) scopes.add('messages');
   return { scopes, unknown };
@@ -93,6 +106,8 @@ export interface CachedMessage {
   /** Only held while the content scope is on. */
   content: string | null;
   attachments: number;
+  /** A bot's or webhook's message: never logged, only remembered so its delete is not. */
+  bot?: boolean;
 }
 
 export class MessageCache {
@@ -242,6 +257,20 @@ function changeLine(change: AuditChange): string {
   return `${change.key}: ${renderValue(change.old_value)} -> ${renderValue(change.new_value)}`;
 }
 
+/** Role names from an audit $add/$remove ([{ id, name }]), as plain text. */
+function roleList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((role) => {
+    const { id, name } = (role ?? {}) as { id?: unknown; name?: unknown };
+    const text = typeof name === 'string' && name ? name : String(id ?? 'a role');
+    return clip(text.replace(/`/g, "'"), 100);
+  });
+}
+
+function nickText(value: unknown): string {
+  return typeof value === 'string' && value ? clip(value, 100) : 'None';
+}
+
 /** When a Discord account was made, read off its snowflake. */
 function accountCreated(userId: string): number | null {
   try {
@@ -251,10 +280,31 @@ function accountCreated(userId: string): number | null {
   }
 }
 
+/** When a snowflake id was made, in ms. */
+function snowflakeTime(id: string): number {
+  try {
+    return Number((BigInt(id) >> 22n) + 1420070400000n);
+  } catch {
+    return 0;
+  }
+}
+
+/** A user mention, not a role one (<@&id>). */
+const USER_MENTION = /<@!?(\d{17,20})>/g;
+
+/** A name as plain text, so a name like *x* or a backtick cannot restyle the entry. */
+export function escapeMarkdown(text: string): string {
+  return text.replace(/[\\*_`~|>#\[\]()-]/g, (c) => `\\${c}`);
+}
+
 export interface ServerLogEntry {
   /** Unique per event; becomes the nonce. */
   key: string;
   embed: Embed;
+  /** Who did it: their name and picture head the entry. */
+  actorId?: string;
+  /** A deleted message's author and channel, for finding out who deleted it. */
+  deleted?: { authorId: string | null; channelId: string };
 }
 
 export interface DescribeContext {
@@ -286,10 +336,14 @@ export function describeDispatch(
   switch (type) {
     case 'MESSAGE_CREATE': {
       const author = d.author as { id?: string; bot?: boolean } | undefined;
-      // Bots and webhooks are not cached: their deletes are the bot tidying up
-      // (the session board replaces its own messages) and would be noise.
-      if (!author?.id || author.bot || d.webhook_id) return null;
-      if (typeof d.id !== 'string' || typeof d.channel_id !== 'string') return null;
+      if (!author?.id || typeof d.id !== 'string' || typeof d.channel_id !== 'string') return null;
+      // Bots and webhooks are held as a marker only: their deletes are the bot
+      // tidying up (the session board replaces its own messages), and without
+      // the marker they would look like an unknown message deleted.
+      if (author.bot || d.webhook_id) {
+        context.cache.set(d.id, { authorId: author.id, channelId: d.channel_id, content: null, attachments: 0, bot: true });
+        return null;
+      }
       context.cache.set(d.id, {
         authorId: author.id,
         channelId: d.channel_id,
@@ -320,14 +374,16 @@ export function describeDispatch(
       const link = `https://discord.com/channels/${guildId}/${d.channel_id}/${d.id}`;
       return {
         key: `edit:${d.id}:${String(d.edited_timestamp ?? d.content.length)}`,
+        actorId: authorId,
         embed: {
           title: 'Message edited',
-          description:
-            `<@${authorId}> in <#${d.channel_id}>\n\n**Before**\n` +
-            (cached?.content ? quoted(cached.content) : '_not cached_') +
-            `\n\n**After**\n${d.content ? quoted(d.content) : '_empty_'}`,
+          description: `**From:** <@${authorId}>   **In:** <#${d.channel_id}>   [Jump to message](${link})`,
           color: COLOR_EDIT,
-          fields: [{ name: 'Message', value: link, inline: false }],
+          fields: [
+            { name: 'Before', value: cached?.content ? clip(cached.content, 1000) : '_not cached_', inline: false },
+            { name: 'After', value: d.content ? clip(d.content, 1000) : '_empty_', inline: false },
+          ],
+          footer: { text: `Author: ${authorId} | Message ID: ${d.id}` },
           timestamp,
         },
       };
@@ -337,24 +393,37 @@ export function describeDispatch(
       if (typeof d.id !== 'string' || typeof d.channel_id !== 'string') return null;
       if (d.channel_id === context.logChannelId) return null;
       const cached = context.cache.take(d.id);
-      // Uncached means older than the process, or a bot's own message. Either
-      // way there is nothing to say about it but its id, which helps nobody.
-      if (!cached) return null;
-      const body = keepContent
-        ? cached.content
-          ? `\n\n${quoted(cached.content)}`
-          : '\n\n_no text_'
-        : '';
+      if (cached?.bot) return null;
+      // Uncached means posted before the bot last started (the cache lives in
+      // memory, and every update restarts it). Still worth an entry: what it
+      // said is gone, but who removed it can still be found.
+      if (!cached) {
+        return {
+          key: `delete:${d.id}`,
+          deleted: { authorId: null, channelId: d.channel_id },
+          embed: {
+            title: 'Message deleted',
+            description:
+              `**In:** <#${d.channel_id}>\n\nIt was posted before I last restarted, so I do not know what it said.`,
+            color: COLOR_REMOVAL,
+            footer: { text: `Message ID: ${d.id}` },
+            timestamp,
+          },
+        };
+      }
+      const body = keepContent ? (cached.content ? `\n\n${clip(cached.content, 3500)}` : '\n\n_no text_') : '';
       const files = cached.attachments
-        ? `\n${cached.attachments} attachment${cached.attachments === 1 ? '' : 's'}`
+        ? `\n\n_${cached.attachments} attachment${cached.attachments === 1 ? '' : 's'}_`
         : '';
       return {
         key: `delete:${d.id}`,
+        actorId: cached.authorId,
+        deleted: { authorId: cached.authorId, channelId: d.channel_id },
         embed: {
           title: 'Message deleted',
-          description: `<@${cached.authorId}> in <#${d.channel_id}>${body}${files}`,
+          description: `**From:** <@${cached.authorId}>   **In:** <#${d.channel_id}>${body}${files}`,
           color: COLOR_REMOVAL,
-          footer: { text: `Message ${d.id}` },
+          footer: { text: `Author: ${cached.authorId} | Message ID: ${d.id}` },
           timestamp,
         },
       };
@@ -367,7 +436,7 @@ export function describeDispatch(
       const authors = new Map<string, number>();
       for (const id of ids) {
         const cached = context.cache.take(id);
-        if (cached) authors.set(cached.authorId, (authors.get(cached.authorId) ?? 0) + 1);
+        if (cached && !cached.bot) authors.set(cached.authorId, (authors.get(cached.authorId) ?? 0) + 1);
       }
       const byAuthor = [...authors.entries()]
         .slice(0, 20)
@@ -427,28 +496,74 @@ export function describeDispatch(
     case 'GUILD_AUDIT_LOG_ENTRY_CREATE': {
       if (typeof d.id !== 'string') return null;
       const actionType = typeof d.action_type === 'number' ? d.action_type : -1;
-      const actor = typeof d.user_id === 'string' ? `<@${d.user_id}>` : 'Someone';
-      const target = auditTarget(actionType, d.target_id as string | null | undefined);
+      // A moderator deleting a message: the delete entry itself names them
+      // (see the poster), so a second entry would only repeat it.
+      if (actionType === 72 && context.scopes.has('messages')) return null;
+      const actorId = typeof d.user_id === 'string' ? d.user_id : undefined;
+      const targetId = typeof d.target_id === 'string' ? d.target_id : null;
+      const target = auditTarget(actionType, targetId);
       const changes = Array.isArray(d.changes) ? (d.changes as AuditChange[]) : [];
+      const fields: { name: string; value: string; inline: boolean }[] = [];
+      const reasonField = typeof d.reason === 'string' && d.reason
+        ? [{ name: 'Reason', value: clip(decodeReason(d.reason), 1000), inline: false }]
+        : [];
+      const footer = targetId ? { text: `ID: ${targetId}` } : undefined;
+      const color = REMOVAL_ACTIONS.has(actionType) ? COLOR_REMOVAL : COLOR_MODERATION;
+
+      // A member's roles or nickname read as a sentence about them, headed by
+      // whoever made the change.
+      if ((actionType === 25 || actionType === 24) && target) {
+        const roleChanges = changes.filter((change) => change.key === '$add' || change.key === '$remove');
+        const nick = changes.find((change) => change.key === 'nick');
+        const others = changes.filter((change) => change !== nick && !roleChanges.includes(change));
+        const sentences = roleChanges.flatMap((change) =>
+          roleList(change.new_value).map((role) =>
+            change.key === '$add'
+              ? `${target} **was given the** \`${role}\` **role**`
+              : `${target} **was removed from the** \`${role}\` **role**`
+          )
+        );
+        if (nick) {
+          sentences.push(`${target} **nickname changed**`);
+          fields.push(
+            { name: 'Before', value: nickText(nick.old_value), inline: false },
+            { name: 'After', value: nickText(nick.new_value), inline: false }
+          );
+        }
+        sentences.push(...others.slice(0, 6).map((change) => `${target} ${changeLine(change)}`));
+        if (sentences.length > 0) {
+          return {
+            key: `audit:${d.id}`,
+            actorId,
+            embed: {
+              description: sentences.slice(0, 20).join('\n'),
+              color,
+              fields: [...fields, ...reasonField],
+              footer,
+              timestamp,
+            },
+          };
+        }
+      }
+
       const lines = changes.slice(0, 8).map(changeLine);
       if (changes.length > 8) lines.push(`...and ${changes.length - 8} more`);
       const options = d.options as { channel_id?: string; count?: string } | undefined;
-      const where = options?.channel_id ? ` in <#${options.channel_id}>` : '';
+      const where = options?.channel_id ? `\n**In:** <#${options.channel_id}>` : '';
       const count = options?.count ? ` (${options.count})` : '';
-      const fields = typeof d.reason === 'string' && d.reason
-        ? [{ name: 'Reason', value: clip(decodeReason(d.reason), 1000), inline: false }]
-        : undefined;
       return {
         key: `audit:${d.id}`,
+        actorId,
         embed: {
           title: (AUDIT_ACTIONS[actionType] ?? `Server change (action ${actionType})`) + count,
           description:
-            `By ${actor}` +
-            (target ? `\nOn ${target}` : '') +
+            `**By:** ${actorId ? `<@${actorId}>` : 'someone'}` +
+            (target ? `\n**On:** ${target}` : '') +
             where +
             (lines.length ? `\n\n${lines.join('\n')}` : ''),
-          color: REMOVAL_ACTIONS.has(actionType) ? COLOR_REMOVAL : COLOR_MODERATION,
-          fields,
+          color,
+          fields: reasonField.length ? reasonField : undefined,
+          footer,
           timestamp,
         },
       };
@@ -471,18 +586,33 @@ function decodeReason(reason: string): string {
 // ---- the poster ----
 
 export interface ServerLogOptions {
-  api: Pick<DiscordApi, 'createMessage'>;
+  /** getUserName is optional: without it, people show as a bare mention. */
+  api: Pick<DiscordApi, 'createMessage'> &
+    Partial<Pick<DiscordApi, 'getUserName' | 'getUserProfile' | 'listMessageDeleteAudits' | 'postMessage' | 'editMessage'>>;
   scopes: ReadonlySet<ServerLogScope>;
-  /** The channel to post in, or null while it is not configured. */
-  resolveChannel: () => Promise<string | null>;
+  /**
+   * Where this server's log posts, or null while that server has none
+   * (/config server_log). Each server has its own (00302), so an event is only ever posted in
+   * the server it happened in.
+   */
+  resolveChannel: (guildId: string) => Promise<string | null>;
   log?: (line: string) => void;
   now?: () => Date;
   /** Past this many waiting entries, new ones are counted and dropped. */
   maxQueue?: number;
+  /** How long a delete waits for Discord to write its audit entry. */
+  auditDelayMs?: number;
+  /**
+   * Role changes by one person go in one entry: posted at the first change,
+   * then edited to the full list once this long passes with no more.
+   */
+  stackMs?: number;
 }
 
 export interface ServerLog {
   onDispatch(type: string, data: unknown): void;
+  /** Post an entry built elsewhere (the scam guard), on the same queue and rules. */
+  post(guildId: string, entry: ServerLogEntry): void;
   /** For tests: resolves once everything queued so far is posted. */
   drain(): Promise<void>;
 }
@@ -505,6 +635,8 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     log = (line: string) => console.error(line),
     now = () => new Date(),
     maxQueue = 200,
+    auditDelayMs = 1500,
+    stackMs = 5000,
   } = options;
   const cache = new MessageCache();
   // Posts go one at a time. Discord allows about five a channel every five
@@ -513,10 +645,14 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
   let chain: Promise<void> = Promise.resolve();
   let waiting = 0;
   let dropped = 0;
-  let lastChannel: string | null = null;
-  let warnedUnset = false;
+  // Each server's channel as last resolved, for when a lookup fails.
+  const lastChannel = new Map<string, string | null>();
+  const guildOf = (data: unknown): string | null => {
+    const guildId = (data as { guild_id?: unknown } | null)?.guild_id;
+    return typeof guildId === 'string' ? guildId : null;
+  };
 
-  function enqueue(type: string, data: unknown) {
+  function enqueue(type: string, data: unknown, built?: ServerLogEntry) {
     if (waiting >= maxQueue) {
       dropped += 1;
       return;
@@ -524,22 +660,30 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     waiting += 1;
     // The event is described when its turn comes, but the clock is read now.
     const at = now();
+    // Discord writes the audit entry for a delete just after the delete
+    // itself, so the look-up waits a moment. Started now, so a run of deletes
+    // waits once together rather than once each in the queue.
+    const settled = type === 'MESSAGE_DELETE' ? new Promise((resolve) => setTimeout(resolve, auditDelayMs)) : null;
     chain = chain.then(async () => {
       try {
-        const channelId = await resolveChannel().catch(() => lastChannel);
-        lastChannel = channelId;
+        // DMs carry no server and are nobody's log.
+        const guildId = guildOf(data);
+        if (!guildId) return;
+        const channelId = await resolveChannel(guildId).catch(() => lastChannel.get(guildId) ?? null);
+        lastChannel.set(guildId, channelId);
         if (!channelId) {
-          if (!warnedUnset) {
-            log('[server-log] no server_log_channel_id set (/config server_log): nothing is posted');
-            warnedUnset = true;
-          }
-          // The cache still has to follow along, or a later delete has no author.
-          describeDispatch(type, data, { cache, scopes, logChannelId: '', now: at });
+          // A server with no log. The cache still has to follow along, or a
+          // later delete has no author once it sets one.
+          if (!built) describeDispatch(type, data, { cache, scopes, logChannelId: '', now: at });
           return;
         }
-        warnedUnset = false;
-        const entry = describeDispatch(type, data, { cache, scopes, logChannelId: channelId, now: at });
-        if (!entry) return;
+        const described = built ?? describeDispatch(type, data, { cache, scopes, logChannelId: channelId, now: at });
+        if (!described) return;
+        if (settled && described.deleted) {
+          await settled;
+          await nameDeleter(guildId, described);
+        }
+        const entry = await withNames(described);
         if (dropped > 0) {
           await api.createMessage(channelId, {
             content: `${dropped} server log entr${dropped === 1 ? 'y was' : 'ies were'} dropped: too many at once.`,
@@ -563,17 +707,294 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     });
   }
 
+  /** Run some posting work on the same queue, once the server's log channel is known. */
+  function enqueueTask(label: string, guildId: string, work: (channelId: string) => Promise<void>) {
+    chain = chain.then(async () => {
+      try {
+        const channelId = await resolveChannel(guildId).catch(() => lastChannel.get(guildId) ?? null);
+        lastChannel.set(guildId, channelId);
+        if (channelId) await work(channelId);
+      } catch (error) {
+        log(`[server-log] ${label} failed: ${String(error)}`);
+      }
+    });
+  }
+
+  // A mention in an embed only shows a name when the reader's Discord already
+  // knows that user; otherwise it shows the raw <@id>. So each person's name is
+  // written beside the mention, looked up once and held for an hour.
+  type Profile = { name: string; avatarUrl: string | null };
+  const names = new Map<string, { profile: Profile | null; at: number }>();
+  async function profileOf(userId: string): Promise<Profile | null> {
+    const held = names.get(userId);
+    if (held && Date.now() - held.at < 3_600_000) return held.profile;
+    let profile: Profile | null = null;
+    try {
+      if (api.getUserProfile) profile = await api.getUserProfile(userId);
+      else if (api.getUserName) {
+        const name = await api.getUserName(userId);
+        profile = name ? { name, avatarUrl: null } : null;
+      }
+    } catch {
+      profile = held?.profile ?? null;
+    }
+    if (names.size >= 2000) names.clear();
+    names.set(userId, { profile, at: Date.now() });
+    return profile;
+  }
+  async function nameOf(userId: string): Promise<string | null> {
+    return (await profileOf(userId))?.name ?? null;
+  }
+  // Each delete audit entry's count as last seen, so a moderator's second
+  // delete (which bumps the count rather than writing a new entry) is noticed.
+  const auditCounts = new Map<string, number>();
+  async function nameDeleter(guildId: string, entry: ServerLogEntry): Promise<void> {
+    const deleted = entry.deleted;
+    if (!deleted || !api.listMessageDeleteAudits) return;
+    const audits = await api.listMessageDeleteAudits(guildId).catch(() => null);
+    if (!audits) return;
+    const fresh = audits.find((audit) => {
+      if (audit.channelId !== deleted.channelId) return false;
+      if (deleted.authorId && audit.targetId !== deleted.authorId) return false;
+      const seen = auditCounts.get(audit.id);
+      if (seen !== undefined) return audit.count > seen;
+      // Never seen: it counts only if it was written just now.
+      return Date.now() - snowflakeTime(audit.id) < 15_000;
+    });
+    if (auditCounts.size > 500) auditCounts.clear();
+    for (const audit of audits) auditCounts.set(audit.id, audit.count);
+    // No fresh entry: Discord writes none when people delete their own.
+    if (!fresh?.userId) return;
+    entry.actorId = fresh.userId;
+    const by = `   **Deleted by:** <@${fresh.userId}>`;
+    let description = entry.embed.description ?? '';
+    if (!deleted.authorId && fresh.targetId) {
+      description = description.replace('**In:**', `**From:** <@${fresh.targetId}>   **In:**`);
+    }
+    const firstBreak = description.indexOf('\n');
+    entry.embed.description =
+      firstBreak === -1 ? description + by : description.slice(0, firstBreak) + by + description.slice(firstBreak);
+  }
+
+  async function withNames(entry: ServerLogEntry): Promise<ServerLogEntry> {
+    const embed: Embed = { ...entry.embed, timestamp: entry.embed.timestamp ?? now().toISOString() };
+    if (entry.actorId) {
+      const actor = await profileOf(entry.actorId);
+      if (actor) embed.author = { name: actor.name, icon_url: actor.avatarUrl ?? undefined };
+    }
+    entry = { ...entry, embed };
+    const texts = [entry.embed.description ?? '', ...(entry.embed.fields ?? []).map((f) => f.value)];
+    const ids = new Set<string>();
+    for (const text of texts) for (const match of text.matchAll(USER_MENTION)) ids.add(match[1] as string);
+    if (ids.size === 0) return entry;
+    // The person in the header is named there already; their mention stays bare.
+    if (entry.embed.author && entry.actorId) ids.delete(entry.actorId);
+    const found = new Map<string, string>();
+    for (const id of [...ids].slice(0, 10)) {
+      const name = await nameOf(id);
+      if (name) found.set(id, name);
+    }
+    const named = (text: string) =>
+      text.replace(USER_MENTION, (mention, id: string) =>
+        found.has(id) ? `**${escapeMarkdown(found.get(id) as string)}** (${mention})` : mention
+      );
+    return {
+      ...entry,
+      embed: {
+        ...entry.embed,
+        description: entry.embed.description === undefined ? undefined : named(entry.embed.description),
+        fields: entry.embed.fields?.map((f) => ({ ...f, value: named(f.value) })),
+      },
+    };
+  }
+
+  // ---- role changes, stacked ----
+  interface RoleStack {
+    guildId: string;
+    actorId: string | null;
+    firstAuditId: string;
+    entries: number;
+    startedAt: number;
+    members: Map<string, { added: string[]; removed: string[] }>;
+    reason: string | null;
+    timer: ReturnType<typeof setTimeout> | null;
+    /** Bumped by every change; the entry is edited when it is ahead of what was posted. */
+    version: number;
+    posted: { channelId: string; messageId: string | null; version: number } | null;
+  }
+  const roleStacks = new Map<string, RoleStack>();
+
+  /** A plain role change (nothing but roles added or removed), or null. */
+  function roleChangeOf(data: unknown): { guildId: string; actorId: string | null; auditId: string; targetId: string; added: string[]; removed: string[]; reason: string | null } | null {
+    const d = data as Record<string, unknown> | null;
+    if (!d || d.action_type !== 25 || typeof d.id !== 'string' || typeof d.target_id !== 'string') return null;
+    const guildId = guildOf(d);
+    const changes = Array.isArray(d.changes) ? (d.changes as AuditChange[]) : [];
+    if (!guildId || changes.length === 0 || changes.some((c) => c.key !== '$add' && c.key !== '$remove')) return null;
+    return {
+      guildId,
+      actorId: typeof d.user_id === 'string' ? d.user_id : null,
+      auditId: d.id,
+      targetId: d.target_id,
+      added: changes.filter((c) => c.key === '$add').flatMap((c) => roleList(c.new_value)),
+      removed: changes.filter((c) => c.key === '$remove').flatMap((c) => roleList(c.new_value)),
+      reason: typeof d.reason === 'string' && d.reason ? decodeReason(d.reason) : null,
+    };
+  }
+
+  function stackRoleChange(change: NonNullable<ReturnType<typeof roleChangeOf>>) {
+    const key = `${change.guildId}:${change.actorId ?? ''}`;
+    let stack = roleStacks.get(key);
+    if (!stack) {
+      stack = {
+        guildId: change.guildId,
+        actorId: change.actorId,
+        firstAuditId: change.auditId,
+        entries: 0,
+        startedAt: Date.now(),
+        members: new Map(),
+        reason: null,
+        timer: null,
+        version: 0,
+        posted: null,
+      };
+      roleStacks.set(key, stack);
+      postRoleStack(stack);
+    }
+    stack.version += 1;
+    stack.entries += 1;
+    stack.reason = change.reason ?? stack.reason;
+    const member = stack.members.get(change.targetId) ?? { added: [], removed: [] };
+    for (const role of change.added) {
+      // Added back after being removed in the same burst: no net change.
+      if (member.removed.includes(role)) member.removed = member.removed.filter((r) => r !== role);
+      else if (!member.added.includes(role)) member.added.push(role);
+    }
+    for (const role of change.removed) {
+      if (member.added.includes(role)) member.added = member.added.filter((r) => r !== role);
+      else if (!member.removed.includes(role)) member.removed.push(role);
+    }
+    stack.members.set(change.targetId, member);
+    if (stack.timer) clearTimeout(stack.timer);
+    // Held until the burst goes quiet, but never more than a minute.
+    const wait = Date.now() - stack.startedAt > 60_000 ? 0 : stackMs;
+    stack.timer = setTimeout(() => flushRoleStack(key), wait);
+  }
+
+  /** The first change posts at once, so the log is never behind by the wait. */
+  function postRoleStack(stack: RoleStack) {
+    enqueueTask('role changes', stack.guildId, async (channelId) => {
+      const built = describeRoleStack(stack);
+      if (!built) return;
+      const entry = await withNames(built);
+      const payload = { embeds: [entry.embed], allowed_mentions: { parse: [] }, nonce: nonceFor(entry.key), enforce_nonce: true };
+      const messageId = api.postMessage
+        ? await api.postMessage(channelId, payload)
+        : (await api.createMessage(channelId, payload), null);
+      stack.posted = { channelId, messageId, version: stack.version };
+    });
+  }
+
+  /** Once the burst is quiet, the posted entry is edited to hold all of it. */
+  function flushRoleStack(key: string) {
+    const stack = roleStacks.get(key);
+    if (!stack) return;
+    roleStacks.delete(key);
+    if (stack.timer) clearTimeout(stack.timer);
+    enqueueTask('role changes', stack.guildId, async (channelId) => {
+      const posted = stack.posted;
+      if (posted && posted.version >= stack.version) return;
+      const built = describeRoleStack(stack);
+      if (!built) return;
+      const entry = await withNames(built);
+      if (posted?.messageId && api.editMessage) {
+        await api.editMessage(posted.channelId, posted.messageId, { embeds: [entry.embed], allowed_mentions: { parse: [] } });
+        return;
+      }
+      // The first post failed or cannot be edited: post the whole burst instead.
+      await api.createMessage(channelId, {
+        embeds: [entry.embed],
+        allowed_mentions: { parse: [] },
+        nonce: nonceFor(`${entry.key}:final`),
+        enforce_nonce: true,
+      });
+    });
+  }
+
+  const roleNames = (roles: string[]) => roles.map((role) => `\`${role}\``).join(', ');
+
+  function describeRoleStack(stack: RoleStack): ServerLogEntry | null {
+    const members = [...stack.members.entries()].filter(([, m]) => m.added.length || m.removed.length);
+    if (members.length === 0) return null;
+    const lists = (m: { added: string[]; removed: string[] }) =>
+      [m.added.length ? `**Added:** ${roleNames(m.added)}` : '', m.removed.length ? `**Removed:** ${roleNames(m.removed)}` : '']
+        .filter(Boolean)
+        .join('\n');
+    let description: string;
+    let footer: string;
+    if (members.length === 1) {
+      const [memberId, change] = members[0] as [string, { added: string[]; removed: string[] }];
+      description = `<@${memberId}> **roles changed**\n${lists(change)}`;
+      footer = `ID: ${memberId}`;
+    } else {
+      const same = (a: string[], b: string[]) => a.length === b.length && a.every((role) => b.includes(role));
+      const [, first] = members[0] as [string, { added: string[]; removed: string[] }];
+      const alike = members.every(([, m]) => same(m.added, first.added) && same(m.removed, first.removed));
+      const shown = members.slice(0, 60);
+      const more = members.length > shown.length ? `\n...and ${members.length - shown.length} more` : '';
+      description = alike
+        ? `**${members.length} members' roles changed**\n${lists(first)}\n\n**Members:** ${shown.map(([id]) => `<@${id}>`).join(', ')}${more}`
+        : `**${members.length} members' roles changed**\n\n` +
+          shown
+            .map(
+              ([id, m]) =>
+                `<@${id}>: ` +
+                [m.added.length ? `added ${roleNames(m.added)}` : '', m.removed.length ? `removed ${roleNames(m.removed)}` : '']
+                  .filter(Boolean)
+                  .join('; ')
+            )
+            .join('\n') +
+          more;
+      footer = `${members.length} members`;
+    }
+    return {
+      key: `roles:${stack.firstAuditId}:${stack.entries}`,
+      actorId: stack.actorId ?? undefined,
+      embed: {
+        description: clip(description, 4000),
+        color: COLOR_MODERATION,
+        fields: stack.reason ? [{ name: 'Reason', value: clip(stack.reason, 1000), inline: false }] : undefined,
+        footer: { text: footer },
+      },
+    };
+  }
+
   return {
     onDispatch(type, data) {
       if (!LOGGED_TYPES.has(type)) return;
+      if (type === 'GUILD_AUDIT_LOG_ENTRY_CREATE' && scopes.has('moderation')) {
+        const roleChange = roleChangeOf(data);
+        if (roleChange) {
+          stackRoleChange(roleChange);
+          return;
+        }
+      }
       // A new message only feeds the cache. Done at once rather than queued, so
       // a busy channel cannot fill the queue with work that posts nothing.
       if (type === 'MESSAGE_CREATE') {
-        describeDispatch(type, data, { cache, scopes, logChannelId: lastChannel ?? '', now: now() });
+        const guildId = guildOf(data);
+        const logChannelId = (guildId && lastChannel.get(guildId)) || '';
+        describeDispatch(type, data, { cache, scopes, logChannelId, now: now() });
         return;
       }
       enqueue(type, data);
     },
-    drain: () => chain,
+    post(guildId, entry) {
+      enqueue('scam guard', { guild_id: guildId }, entry);
+    },
+    drain: () => {
+      for (const key of [...roleStacks.keys()]) flushRoleStack(key);
+      return chain;
+    },
   };
 }

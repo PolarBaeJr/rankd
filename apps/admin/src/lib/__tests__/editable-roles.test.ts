@@ -142,6 +142,15 @@ const MONEY_IN: Capability[] = [
   'fees.netposition.read',
 ];
 
+/**
+ * MONEY_IN plus a money WRITE, for the grant-closure cases. Since 2026-10-23
+ * every officer reads the books by level, so MONEY_IN's reads are inside any
+ * officer's own set and closure has nothing to refuse. Marking a fee paid is
+ * offerable and is held by nobody by being an officer, which is what those
+ * cases need.
+ */
+const MONEY_MOVED: Capability[] = [...MONEY_IN, 'fees.clubfees.markpaid.write'];
+
 const REASON = 'The treasurer needs to see money in as well as out';
 
 const exec = (id: string, extra: Row = {}): Row => ({
@@ -221,7 +230,8 @@ describe('editing a built-in role', () => {
     const result = await updatePermissionBaseline(
       FINANCE,
       'Finance',
-      [...MONEY_IN, 'fees.playerflags.write'],
+      // An admin area: since 2026-10-23 those are all the ceiling refuses.
+      [...MONEY_IN, 'audit.page'],
       REASON,
     );
     expect(result.ok).toBe(false);
@@ -246,7 +256,7 @@ describe('editing a built-in role', () => {
     });
     store.actor = rowFor(TREASURER);
 
-    const result = await updatePermissionBaseline(FINANCE, 'Finance', MONEY_IN, REASON);
+    const result = await updatePermissionBaseline(FINANCE, 'Finance', MONEY_MOVED, REASON);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatch(/you do not hold/i);
@@ -343,7 +353,7 @@ describe('an edit reaches everybody holding the role', () => {
   it('refuses the whole edit when one holder is out of reach, writing nothing', async () => {
     Object.assign(rowFor(TREASURER), {
       permission_role: 'custom',
-      permission_grants: [...MONEY_IN].sort(),
+      permission_grants: [...MONEY_MOVED].sort(),
       permission_revokes: [],
       permission_baseline_id: null,
     });
@@ -372,7 +382,7 @@ describe('an edit reaches everybody holding the role', () => {
     if (result.ok) return;
     expect(result.error).toMatch(/which you do not/i);
     // The holder untouched, and the baseline too.
-    expect(rowFor(TREASURER).permission_grants).toEqual([...MONEY_IN].sort());
+    expect(rowFor(TREASURER).permission_grants).toEqual([...MONEY_MOVED].sort());
     expect(baselineFor(FINANCE).capabilities).toEqual([...ROLE_DEFAULTS.finance].sort());
   });
 
@@ -425,10 +435,10 @@ describe('resetting a built-in role', () => {
   // shipped set being NARROWER does not make putting it back safe for anybody to
   // do: an unbounded revoke is a denial-of-access weapon.
   it('is refused for an officer who cannot reach what the holders currently have', async () => {
-    await updatePermissionBaseline(FINANCE, 'Finance', MONEY_IN, REASON);
+    await updatePermissionBaseline(FINANCE, 'Finance', MONEY_MOVED, REASON);
     Object.assign(rowFor(EXEC_A), {
       permission_role: 'custom',
-      permission_grants: [...MONEY_IN].sort(),
+      permission_grants: [...MONEY_MOVED].sort(),
       permission_revokes: [],
       permission_baseline_id: FINANCE,
     });
@@ -449,8 +459,8 @@ describe('resetting a built-in role', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatch(/which you do not/i);
-    expect(baselineFor(FINANCE).capabilities).toEqual([...MONEY_IN].sort());
-    expect(rowFor(EXEC_A).permission_grants).toEqual([...MONEY_IN].sort());
+    expect(baselineFor(FINANCE).capabilities).toEqual([...MONEY_MOVED].sort());
+    expect(rowFor(EXEC_A).permission_grants).toEqual([...MONEY_MOVED].sort());
   });
 
   it('takes a reason, like every other audited change to what people may do', async () => {

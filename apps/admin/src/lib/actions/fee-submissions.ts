@@ -110,6 +110,7 @@ async function authorise(id: string) {
 
 function revalidate(fee: FeeRow) {
   revalidatePath('/fees');
+  revalidatePath('/finances');
   if (fee.tournament_id) revalidatePath(`/tournaments/${fee.tournament_id}/fees`);
 }
 
@@ -441,5 +442,6 @@ async function remindImpl(playerIds: string[]): Promise<{ sent: number; skipped:
   );
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
   return { sent: delivered.length, skipped: ids.length - delivered.length };
 }

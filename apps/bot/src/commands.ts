@@ -31,6 +31,13 @@ import {
   fetchDiscordSettings,
   fetchClubSocials,
   writeDiscordSettings,
+  checkDiscordManager,
+  fetchServerSettings,
+  writeServerSettings,
+  type AutomodAction,
+  type AutomodWordsAction,
+  type ServerSettingsChange,
+  type ManagerRefusal,
   submitAnnouncement,
   setMembership,
   createChallenge,
@@ -61,14 +68,17 @@ import {
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { SOFTBAN_WINDOWS, describeWindow, softban, windowSeconds } from './moderation.js';
+import { parseServerLogScopes } from './server-log.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
-import { DiscordApi } from './discord-api.js';
+import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
 import { syncMembersNow } from './member-sync.js';
 import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
 import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
+import { CRYPTO_WORDS, GIVEAWAY_WORDS } from './scam-guard.js';
+import { putUpTrapNotice, takeDownTrapNotice } from './trap-notice.js';
 import { socialsReply, type SocialsPayload } from './socials.js';
 import {
   ALL_SETTINGS,
@@ -161,6 +171,7 @@ const EXEC_ONLY = '0';
 
 /** BAN_MEMBERS (1 << 2). Only /softban uses it; see the note on its definition. */
 const BAN_MEMBERS = '4';
+const MANAGE_MESSAGES = String(1n << 13n);
 
 /**
  * The club event kinds, as /event create offers them. A copy of
@@ -660,7 +671,7 @@ export const COMMAND_DEFINITIONS = [
   },
   {
     name: 'setup',
-    description: 'Create and wire up the club roles in this server',
+    description: 'Set the bot up in this server, and the club roles in a club server',
     options: [
       {
         type: 7, // CHANNEL
@@ -671,6 +682,28 @@ export const COMMAND_DEFINITIONS = [
         // category channel would be accepted by Discord's picker and then fail
         // on the first message the bot tried to post.
         channel_types: [0, 5],
+      },
+      // THIS SERVER'S OWN (00302), in any server: the same as /config
+      // server_log and /config automod, offered here so a first run sets
+      // everything at once.
+      {
+        type: 7,
+        name: 'server_log',
+        description: "Where this server's log posts: bans, joins, deleted messages (optional)",
+        required: false,
+        channel_types: [0, 5],
+      },
+      {
+        type: 5,
+        name: 'automod',
+        description: 'Stop accounts that spray the same post across channels (optional)',
+        required: false,
+      },
+      {
+        type: 5,
+        name: 'club',
+        description: "Connect this server to the club. Club execs only; the club's servers need not set it",
+        required: false,
       },
     ],
     // MANAGE_GUILD (1 << 5). Discord enforces this server-side, so the command
@@ -695,7 +728,7 @@ export const COMMAND_DEFINITIONS = [
   },
   {
     name: 'config',
-    description: 'See and change where the club relays post',
+    description: "See and change where the club relays post, and this server's own settings",
     options: [
       {
         type: 1, // SUB_COMMAND
@@ -720,6 +753,114 @@ export const COMMAND_DEFINITIONS = [
           channel_types: [0, 5],
         })),
       },
+      // THIS SERVER'S OWN (00302), not the club's: they work in any server.
+      {
+        type: 1,
+        name: 'server_log',
+        description: "Where this server's log posts (bans, joins, deleted messages)",
+        options: [
+          { type: 7, name: 'channel', description: 'Where the log posts', required: false, channel_types: [0, 5] },
+          { type: 5, name: 'off', description: "Stop posting this server's log", required: false },
+        ],
+      },
+      {
+        type: 1,
+        name: 'automod',
+        description: "This server's auto mod: what it catches and what a catch gets",
+        // All optional: only the ones filled in change, and none shows the
+        // current setup.
+        options: [
+          { type: 5, name: 'enabled', description: 'Auto mod on or off', required: false },
+          {
+            type: 3,
+            name: 'action',
+            description: 'What a caught account gets',
+            required: false,
+            choices: [
+              { name: 'Timeout, then soft-ban if caught again (default)', value: 'timeout_then_softban' },
+              { name: 'Timeout only', value: 'timeout' },
+              { name: 'Soft-ban at once', value: 'softban' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
+          {
+            type: 4,
+            name: 'timeout_minutes',
+            description: 'How long the timeout lasts, in minutes (default 60, up to a week)',
+            required: false,
+            min_value: 1,
+            max_value: 10080,
+          },
+          { type: 5, name: 'spray', description: 'Catch the same post in several channels (default on)', required: false },
+          {
+            type: 4,
+            name: 'spray_channels',
+            description: 'How many channels the same post must reach (default 3)',
+            required: false,
+            min_value: 2,
+            max_value: 10,
+          },
+          {
+            type: 4,
+            name: 'spray_minutes',
+            description: 'Within how many minutes (default 2)',
+            required: false,
+            min_value: 1,
+            max_value: 10,
+          },
+          {
+            type: 5,
+            name: 'flag_giveaways',
+            description: 'Log a lone post that reads like a giveaway scam (default on)',
+            required: false,
+          },
+          {
+            type: 3,
+            name: 'add_words',
+            description: 'Words to catch, separated by commas',
+            required: false,
+            max_length: 500,
+          },
+          {
+            type: 3,
+            name: 'remove_words',
+            description: 'Words to stop catching, separated by commas ("all" clears the list)',
+            required: false,
+            max_length: 500,
+          },
+          {
+            type: 3,
+            name: 'words_action',
+            description: 'What a post with one of the words gets',
+            required: false,
+            choices: [
+              { name: 'Delete it (default)', value: 'delete' },
+              { name: 'Delete it, and the action above for the author', value: 'punish' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
+          {
+            type: 7,
+            name: 'add_trap',
+            description: 'A channel nobody should post in: any post there is caught',
+            required: false,
+            channel_types: [0, 5],
+          },
+          { type: 7, name: 'remove_trap', description: 'Stop treating a channel as a trap', required: false, channel_types: [0, 5] },
+          {
+            type: 3,
+            name: 'trap_action',
+            description: 'What a post in a trap channel gets (default: soft-ban)',
+            required: false,
+            choices: [
+              { name: 'Soft-ban at once (default)', value: 'softban' },
+              { name: 'Timeout, then soft-ban if caught again', value: 'timeout_then_softban' },
+              { name: 'Timeout only', value: 'timeout' },
+              { name: 'Only flag it in the server log', value: 'flag' },
+            ],
+          },
+        ],
+      },
       {
         type: 1,
         name: 'ping_roles',
@@ -739,19 +880,19 @@ export const COMMAND_DEFINITIONS = [
           })),
         ],
       },
+      // A tournament's times and location are not here: each tournament keeps
+      // its own (00304), set in the console or with /tourney details. The ping
+      // lead time was the one other option on that subcommand, so it moved.
       {
         type: 1,
-        name: 'tournament',
-        description: 'Times and location for the Discord events I create for tournaments',
+        name: 'ping_lead',
+        description: 'How long before a session the ping goes out',
         options: [
-          { type: 3, name: 'start_time', description: 'Start time, 24-hour HH:MM (default 09:00)', required: false },
-          { type: 3, name: 'end_time', description: 'End time, 24-hour HH:MM (default 18:00)', required: false },
-          { type: 3, name: 'location', description: 'Where tournaments are held', required: false },
           {
             type: 4, // INTEGER
             name: 'ping_lead_minutes',
-            description: 'How long before a session to ping (default 60)',
-            required: false,
+            description: 'Minutes before a session (default 60)',
+            required: true,
             min_value: 5,
             max_value: 1440,
           },
@@ -885,25 +1026,14 @@ export const COMMAND_DEFINITIONS = [
     // there is nothing to parameterise, and an option or a subcommand here
     // would only invite a second invite to exist.
     options: [],
-    // EXEC_ONLY, on /guidepost's argument: this is the link an exec pastes into
-    // a slide or a poster, and handing every member a one-keystroke way to
-    // spray it is how an invite ends up somewhere the club did not put it. No
-    // app-side capability check to pair it with, like /say and /guidepost,
-    // because nothing here reads or writes club data.
-    default_member_permissions: EXEC_ONLY,
-    // LOAD-BEARING, not copied boilerplate. default_member_permissions is a
-    // GUILD-ONLY filter and has no meaning in a DM, so without this line any
-    // member could DM the bot and the exec gate above would be decorative.
-    dm_permission: false,
+    // Open to every member, like /socials: the invite is public anyway, and
+    // the owner wants members able to share it.
   },
   {
     name: 'socials',
     description: "The club's links: Discord, Instagram and the website",
     options: [],
-    // UNGATED, like /sessions: a read anybody may do, answered only to them.
-    // This does print the invite /discord keeps exec-only, but as a link a
-    // member can already copy from the website's footer, not as a QR code for
-    // a poster.
+    // UNGATED, like /sessions and /discord: a read anybody may do.
   },
   {
     name: 'challenge',
@@ -1201,6 +1331,25 @@ export const COMMAND_DEFINITIONS = [
         ],
       },
       {
+        // Modelled on /session edit: only the options filled in change, and a
+        // reason is required because it goes in the club audit log. A published
+        // event's Discord copy follows the row on the next sync.
+        type: 1,
+        name: 'edit',
+        description: 'Change an event. Only the options you fill in change.',
+        options: [
+          { type: 3, name: 'event', description: 'The event', required: true, autocomplete: true },
+          { type: 3, name: 'reason', description: 'Why (goes in the club audit log)', required: true, min_length: 5, max_length: 500 },
+          { type: 3, name: 'title', description: 'New title', required: false, max_length: 120 },
+          { type: 3, name: 'starts', description: 'New start, YYYY-MM-DD HH:MM (24-hour, club time)', required: false, min_length: 16, max_length: 16 },
+          { type: 3, name: 'ends', description: 'New end, YYYY-MM-DD HH:MM', required: false, min_length: 16, max_length: 16 },
+          { type: 3, name: 'location', description: 'New location', required: false, max_length: 200 },
+          { type: 4, name: 'capacity', description: 'New number of places', required: false, min_value: 1 },
+          { type: 10, name: 'cost', description: 'New cost in dollars, for display only', required: false, min_value: 0, max_value: 1000 },
+          { type: 3, name: 'description', description: 'New description members see', required: false, max_length: 1000 },
+        ],
+      },
+      {
         type: 1,
         name: 'publish',
         description: 'Publish a draft event',
@@ -1222,7 +1371,7 @@ export const COMMAND_DEFINITIONS = [
       {
         type: 1,
         name: 'signups',
-        description: 'Who has signed up',
+        description: 'Who has signed up, with check-in and the waitlist',
         options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
       },
     ],
@@ -1340,6 +1489,19 @@ export const COMMAND_DEFINITIONS = [
         ],
       },
       {
+        // The tournament's own times and venue (00304), which its page and its
+        // Discord event both show. Only the options filled in change.
+        type: 1,
+        name: 'details',
+        description: "Set a tournament's daily times and location. Only the options you fill in change.",
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          { type: 3, name: 'start', description: 'Start time each day, 24-hour HH:MM', required: false, max_length: 5 },
+          { type: 3, name: 'end', description: 'End time each day, 24-hour HH:MM', required: false, max_length: 5 },
+          { type: 3, name: 'location', description: 'Where it is held', required: false, max_length: 200 },
+        ],
+      },
+      {
         type: 1,
         name: 'suspend',
         description: 'Suspend play (asks for a reason members see)',
@@ -1396,6 +1558,22 @@ export const COMMAND_DEFINITIONS = [
             ],
           },
         ],
+      },
+    ],
+  },
+  {
+    name: 'purge',
+    description: 'Delete the latest messages in this channel',
+    default_member_permissions: MANAGE_MESSAGES,
+    dm_permission: false,
+    options: [
+      { type: 4, name: 'count', description: 'How many messages (1 to 100)', required: true, min_value: 1, max_value: 100 },
+      { type: 6, name: 'member', description: "Only this person's messages", required: false },
+      {
+        type: 5,
+        name: 'include_old',
+        description: 'Also delete ones over 14 days old, one at a time (slow: about one a second)',
+        required: false,
       },
     ],
   },
@@ -1462,6 +1640,9 @@ export const COMMAND_DEFINITIONS = [
  */
 export const DEFERRED_COMMANDS = new Set([
   'setup',
+  // A bulk delete, and with include_old a background run that edits the reply
+  // when it is done, which needs the interaction token only a deferral carries.
+  'purge',
   // Five or six Discord calls, plus up to three unban retries.
   'softban',
   'config',
@@ -3953,6 +4134,20 @@ export async function handleLinkedAccountAutocomplete(
  * Runs AFTER a deferred acknowledgement — see DEFERRED_COMMANDS — so it is free
  * to take as long as nine role creations need.
  */
+/**
+ * Why /setup or /config was turned away, in words. The bot runs in any server;
+ * these two change the club's own setup, so they answer to the club's records.
+ */
+function managerRefusalText(refusal: ManagerRefusal): string {
+  if (refusal === 'not_linked') {
+    return 'This changes the club\'s bot setup, so it needs a club exec account. Connect yours with /link first.';
+  }
+  if (refusal === 'not_permitted') {
+    return 'This changes the club\'s bot setup. Only club execs who can change the club\'s settings can run it.';
+  }
+  return 'This server is not connected to the club, so its settings cannot be changed from here. A club exec connects a server with /setup club:True.';
+}
+
 export async function handleSetup(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -3962,6 +4157,21 @@ export async function handleSetup(
   // guild. Checked anyway: the alternative is a confusing crash if that ever
   // changes, and the whole command is meaningless without one.
   if (!guildId) return ephemeral('Run this in the server you want to set up.');
+
+  // TWO SETUPS. A server the club has connected (or one an exec is connecting
+  // with club:True) gets the club's: its roles, the audit log, the relays. Any
+  // other server gets its own settings and a checklist, and never touches the
+  // club's records, so it needs no club account.
+  if (!(await isClubServer(guildId)) && option(options, 'club') !== true) {
+    return handleServerSetup(options, context);
+  }
+
+  // BEFORE ANY ROLE IS MADE. Discord admin rights in this server say nothing
+  // about the club; the club's records decide (managerRefusalText).
+  if (!context.discordUserId) return ephemeral(managerRefusalText('not_linked'));
+  const manager = { discordUserId: context.discordUserId, guildId };
+  const setupRefusal = await checkDiscordManager(manager, { setup: true });
+  if (setupRefusal) return ephemeral(managerRefusalText(setupRefusal));
 
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return ephemeral('The bot is not configured with a token.');
@@ -4025,7 +4235,12 @@ export async function handleSetup(
   const auditChannelId = typeof auditChannel === 'string' ? auditChannel : undefined;
 
   try {
-    await writeGuildConfig({ guildId, roles, ...(auditChannelId ? { auditChannelId } : {}) });
+    await writeGuildConfig({
+      guildId,
+      discordUserId: manager.discordUserId,
+      roles,
+      ...(auditChannelId ? { auditChannelId } : {}),
+    });
   } catch (error) {
     console.error('[bot] setup could not save config:', error);
     // The roles now exist in Discord but the app does not know their ids. Say
@@ -4115,11 +4330,145 @@ export async function handleSetup(
       'Discord will not let me assign a role positioned above my own.'
   );
 
+  // MORE FOR A CLUB SERVER: this server's own settings, and a checklist of
+  // the club's relays, so one run shows everything still to do.
+  // After the roles, and never fatal to them: they are already made and saved.
+  const serverLines = await applyServerOptions(api, options, manager).catch((error) => {
+    console.error('[bot] setup could not apply the server settings:', error);
+    return ["I could not save or read this server's settings. Use **/config server_log** and **/config automod**."];
+  });
+  lines.push('', '__This server__', ...serverLines);
+  lines.push(...(await permissionLines(api, guildId, true)));
+  lines.push('', '__Club relays__', ...(await clubChecklist()));
+
   return reply({
     title: 'Club roles configured',
-    description: lines.join('\n'),
+    description: clip4096(lines.join('\n')),
     color: failed.length || plan.ambiguous.length || plan.unusable.length ? 0xf1c40f : 0x2ecc71,
   });
+}
+
+/** An embed description caps at 4096 characters. */
+function clip4096(text: string): string {
+  return text.length > 4096 ? `${text.slice(0, 4093)}...` : text;
+}
+
+/**
+ * /setup's server_log and automod options, applied for this server, then
+ * where each stands. The caller has already passed whatever check this server
+ * needs; the app checks again.
+ */
+async function applyServerOptions(
+  api: DiscordApi,
+  options: CommandOption[] | undefined,
+  caller: { discordUserId: string; guildId: string }
+): Promise<string[]> {
+  const lines: string[] = [];
+  const change: { serverLogChannelId?: string; scamGuard?: boolean } = {};
+  const logChannel = option(options, 'server_log');
+  if (typeof logChannel === 'string' && logChannel) {
+    // Saved only once a post there works, as /config server_log does.
+    if (await proveCanPost(api, logChannel, "This server's log")) change.serverLogChannelId = logChannel;
+    else lines.push(`I could not post in <#${logChannel}>, so the server log was left as it was. Let me see and post there.`);
+  }
+  const guard = option(options, 'automod');
+  if (typeof guard === 'boolean') change.scamGuard = guard;
+  if (Object.keys(change).length > 0) await writeServerSettings(caller, change);
+  lines.push(await serverSettingsText(caller.guildId));
+  return lines;
+}
+
+const PERMISSION_NEEDS: { bit: bigint; name: string; why: string; clubOnly?: boolean }[] = [
+  { bit: 1n << 10n, name: 'View Channels', why: 'I cannot see anything without it' },
+  { bit: 1n << 11n, name: 'Send Messages', why: 'replies and logs' },
+  { bit: 1n << 14n, name: 'Embed Links', why: 'every log entry is an embed' },
+  { bit: 1n << 7n, name: 'View Audit Log', why: 'the server log names who banned, kicked or changed roles' },
+  { bit: 1n << 2n, name: 'Ban Members', why: 'auto mod and /softban' },
+  { bit: 1n << 40n, name: 'Timeout Members', why: 'auto mod times out a spraying account' },
+  { bit: 1n << 13n, name: 'Manage Messages', why: 'auto mod deletes the copies of a spray' },
+  { bit: 1n << 28n, name: 'Manage Roles', why: 'role pickers, and the club roles' },
+  { bit: 1n << 33n, name: 'Manage Events', why: 'tournaments become Discord events', clubOnly: true },
+];
+
+/** What the bot is missing here, and what each missing one stops. */
+async function permissionLines(api: DiscordApi, guildId: string, club: boolean): Promise<string[]> {
+  let permissions: bigint;
+  try {
+    permissions = await api.getOwnPermissions(guildId);
+  } catch (error) {
+    console.error('[bot] setup could not read its own permissions:', error);
+    return ['I could not read my own permissions here, so check them by hand.'];
+  }
+  if (permissions & (1n << 3n)) return ['**My permissions**: Administrator, so nothing is missing.'];
+  const missing = PERMISSION_NEEDS.filter((need) => (club || !need.clubOnly) && !(permissions & need.bit));
+  if (missing.length === 0) return ['**My permissions**: nothing missing.'];
+  return [
+    '**I am missing**:',
+    ...missing.map((need) => `- **${need.name}**: ${need.why}`),
+    'Give my role these in Server Settings, Roles.',
+  ];
+}
+
+/** The club's relays, ping roles and values: set, or which command sets it. */
+async function clubChecklist(): Promise<string[]> {
+  let settings: Record<string, string | null | undefined>;
+  try {
+    ({ settings } = await fetchDiscordSettings());
+  } catch (error) {
+    console.error('[bot] setup could not read the club settings:', error);
+    return ['I could not read the club settings. Run /config show in a moment.'];
+  }
+  const missing = (specs: readonly (typeof ALL_SETTINGS)[number][]) => specs.filter((spec) => !settings[spec.key]);
+  const unsetChannels = missing(CHANNEL_SETTINGS);
+  const unsetRoles = missing(ROLE_SETTINGS);
+  const lines: string[] = [];
+  lines.push(
+    unsetChannels.length === 0
+      ? '**Channels**: all set.'
+      : `**Channels not set**: ${unsetChannels.map((spec) => spec.label).join(', ')}. ` +
+          `Set them with **/config channels** (${unsetChannels.map((spec) => spec.option).join(', ')}).`
+  );
+  lines.push(
+    unsetRoles.length === 0
+      ? '**Session ping roles**: all set.'
+      : `**Session ping roles not set**: ${unsetRoles.map((spec) => spec.label).join(', ')}. Set them with **/config ping_roles**.`
+  );
+  lines.push('Everything, with what each relay does while unset: **/config show**.');
+  return lines;
+}
+
+/**
+ * /setup in a server that is not the club's: its own settings and a checklist.
+ * Manage Server is the gate, re-checked from the caller's own mask because a
+ * server admin can open any command to anyone. Nothing here reaches the
+ * club's records: no roles are made, and the server is not connected.
+ */
+async function handleServerSetup(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { guildId, discordUserId } = context;
+  if (!guildId || !discordUserId) return ephemeral('Run this in the server you want to set up.');
+  if (!canManageServer(context.permissions)) return ephemeral(NEEDS_MANAGE_SERVER);
+  if (option(options, 'audit_channel') !== undefined) {
+    return ephemeral(
+      "The audit log is the club's, for the roles it hands out. Here, use **server_log** for this server's own log."
+    );
+  }
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return ephemeral('The bot is not configured with a token.');
+  const api = new DiscordApi({ token });
+
+  const lines = [
+    ...(await applyServerOptions(api, options, { discordUserId, guildId })),
+    '',
+    ...(await permissionLines(api, guildId, false)),
+    '',
+    '**Also here**: **/rolepicker** for roles people pick themselves, **/softban** to clear out a spammer, ' +
+      'and **/config** to change any of the above later.',
+    "If this is one of the club's own servers, a club exec connects it with **/setup club:True**.",
+  ];
+  return ephemeralEmbed({ title: 'Server set up', color: CLUB_RED, description: clip4096(lines.join('\n')) });
 }
 
 
@@ -4429,6 +4778,33 @@ async function handleConfig(
   if (!context.guildId) return ephemeral('Run this in a server, not a DM.');
   const { name: sub, options: args } = subcommand(options);
 
+  // THIS SERVER'S OWN SETTINGS work in any server; see handleServerSetting.
+  if (sub === 'server_log' || sub === 'automod') return handleServerSetting(sub, args, context);
+  const clubServer = await isClubServer(context.guildId);
+  if (sub === 'show' && !clubServer) {
+    if (!canManageServer(context.permissions)) return ephemeral(NEEDS_MANAGE_SERVER);
+    return ephemeralEmbed({
+      title: "This server's bot settings",
+      color: CLUB_RED,
+      description: await serverSettingsText(context.guildId),
+      footer: { text: 'Change these with /config server_log or /config automod.' },
+    });
+  }
+  if (!clubServer) {
+    return ephemeral(
+      "That one is the club's setup, which lives in the club's own servers. Here you can use " +
+        '**/config show**, **/config server_log** and **/config automod**.'
+    );
+  }
+
+  // Every club subcommand, /config show included: these are the club's
+  // settings, so the club's records decide who sees and changes them, not
+  // Discord admin rights in whichever server the command was typed in.
+  if (!context.discordUserId) return ephemeral(managerRefusalText('not_linked'));
+  const manager = { discordUserId: context.discordUserId, guildId: context.guildId };
+  const configRefusal = await checkDiscordManager(manager);
+  if (configRefusal) return ephemeral(managerRefusalText(configRefusal));
+
   if (sub === 'show') {
     const { settings } = await fetchDiscordSettings();
 
@@ -4454,15 +4830,22 @@ async function handleConfig(
         ROLE_SETTINGS.map((spec) => roleLine(spec)).join('\n'),
         '',
         VALUE_SETTINGS.map((spec) => line(spec, false)).join('\n'),
+        '',
+        '__This server__',
+        await serverSettingsText(context.guildId),
       ].join('\n'),
       // SAID EVERY TIME, because it is the one thing about this feature that
       // surprises people: tournaments are the exception. That relay makes
       // Discord scheduled events rather than posting messages, so it has no
       // channel to set and runs whether or not anything above is filled in.
+      // Their times and place are each tournament's own (00304), so they are
+      // pointed at rather than listed.
       footer: {
         text:
-          'Tournaments become Discord events, not messages — that relay runs with no channel. ' +
-          'Change any of these with /config channels, /config ping_roles or /config tournament.',
+          'Tournaments and club events become Discord events, not messages, so that relay runs with no channel. ' +
+          "A tournament's times and location are its own: set them on the website or with /tourney details. " +
+          'Change these with /config channels, /config ping_roles, /config ping_lead, ' +
+          '/config server_log or /config automod.',
       },
     });
   }
@@ -4497,7 +4880,7 @@ async function handleConfig(
     // NOTHING IS SAVED UNTIL THE POST SUCCEEDS, and a channel that refused is
     // left exactly as it was rather than half-set. A club that changes three
     // channels and gets one wrong keeps the other two.
-    if (Object.keys(write).length > 0) await writeDiscordSettings(write);
+    if (Object.keys(write).length > 0) await writeDiscordSettings(write, manager);
 
     const saved = Object.keys(write).length;
     const ok = saved > 0 ? `Saved ${saved} channel${saved === 1 ? '' : 's'}.` : 'Nothing saved.';
@@ -4522,7 +4905,7 @@ async function handleConfig(
     if (Object.keys(write).length === 0) {
       return ephemeral('Pick at least one role. Run **/config show** to see what is set.');
     }
-    await writeDiscordSettings(write);
+    await writeDiscordSettings(write, manager);
     const lines = ROLE_SETTINGS.filter((spec) => write[spec.key]).map(
       (spec) => `**${spec.label}**: <@&${write[spec.key]}>`
     );
@@ -4533,7 +4916,7 @@ async function handleConfig(
     );
   }
 
-  if (sub === 'tournament') {
+  if (sub === 'ping_lead') {
     const write: Record<string, string> = {};
     for (const spec of VALUE_SETTINGS) {
       const raw = option(args, spec.option);
@@ -4543,48 +4926,25 @@ async function handleConfig(
       if (problem) return ephemeral(problem);
       write[spec.key] = value;
     }
-
     if (Object.keys(write).length === 0) {
       return ephemeral('Nothing to change. Run **/config show** to see what is set.');
     }
-
-    // A tournament event Discord will accept needs the end after the start, and
-    // checking it here rather than at send time is the difference between one
-    // wrong answer now and a relay that skips every tournament with
-    // `end_before_start` where nobody is reading.
-    const { settings } = await fetchDiscordSettings();
-    const start = write.tournament_event_start_time ?? settings.tournament_event_start_time ?? '09:00';
-    const end = write.tournament_event_end_time ?? settings.tournament_event_end_time ?? '18:00';
-    // COMPARED AS STRINGS, which is only correct because both went through a
-    // zero-padded HH:MM check -- CLOCK in settings.ts for what arrived here,
-    // and the app's identical one for what came back from it. '9:00' would
-    // sort after '18:00' and this would pass a backwards pair.
-    if (end <= start) {
-      return ephemeral(
-        `A tournament cannot end at **${end}** having started at **${start}** — ` +
-          'Discord rejects an event that ends before it begins, so nothing would be created.'
-      );
-    }
-
-    await writeDiscordSettings(write);
-    return ephemeral(
-      `Saved. Tournament events run **${start}–${end}**` +
-        `${settings.tournament_event_location || write.tournament_event_location ? '' : ' with no location set'}.`
-    );
+    await writeDiscordSettings(write, manager);
+    return ephemeral(`Saved. Session pings go out **${write.session_ping_lead_minutes}** minutes ahead.`);
   }
 
   if (sub === 'clear') {
     const spec = specByOption(String(option(args, 'setting') ?? ''));
     if (!spec) return ephemeral('I do not know that setting.');
 
-    await writeDiscordSettings({ [spec.key]: null });
+    await writeDiscordSettings({ [spec.key]: null }, manager);
     // Says what stops rather than "cleared", because that is the part the club
     // needs to have understood before running it.
     return ephemeral(`Unset **${spec.label}** — from now on ${spec.whenUnset}.`);
   }
 
   return ephemeral(
-    'Use **/config show**, **/config channels**, **/config ping_roles**, **/config tournament** or **/config clear**.'
+    'Use **/config show**, **/config channels**, **/config ping_roles**, **/config ping_lead** or **/config clear**.'
   );
 }
 
@@ -4595,6 +4955,9 @@ async function handleRolePicker(
   if (!context.guildId) {
     return ephemeral('Run this in a server, not a DM.');
   }
+  // Any server: a picker is that server's own (00302 opened the table to every
+  // server). EXEC_ONLY keeps it to that server's admins until they grant it,
+  // and the role option can only name roles from the server it was typed in.
   const { name: sub, options: args } = subcommand(options);
 
   if (sub === 'add') {
@@ -4868,6 +5231,21 @@ export async function handleSelfRoleButton(
  * direction. A fee tier written from a half-read config would be worse than one
  * that did not move.
  */
+/**
+ * Is this one of the club's own servers (connected by /setup)? The bot runs in
+ * any server; the club's records, audit channel and role pickers belong to
+ * these. False when the config cannot be read, which only ever skips extras.
+ */
+async function isClubServer(guildId: string | null): Promise<boolean> {
+  if (!guildId) return false;
+  try {
+    return (await loadConfig()).registry.has(guildId);
+  } catch (error) {
+    console.error('[bot] could not read the club servers:', error);
+    return false;
+  }
+}
+
 async function guildRolesFor(guildId: string): Promise<GuildRoleMap> {
   try {
     const { registry } = await loadConfig();
@@ -5508,8 +5886,10 @@ export async function handleSayModal(
   }
 
   try {
-    const { auditChannelId } = await loadConfig();
-    await postAuditEntry(api, auditChannelId, {
+    const { auditChannelId, registry } = await loadConfig();
+    // The audit channel is the club's: /say in somebody else's server is theirs.
+    const auditTo = context.guildId && registry.has(context.guildId) ? auditChannelId : undefined;
+    await postAuditEntry(api, auditTo, {
       kind: 'say',
       discordUserId: context.discordUserId,
       guildId: context.guildId,
@@ -6539,14 +6919,36 @@ export function consoleRefusalText(reply: Exclude<ConsoleReply<unknown>, { ok: t
   return `Something went wrong running that in the console${ref}.`;
 }
 
+/** What a picker shows when the console refuses the caller: one choice that says why. */
+const PICKER_REFUSAL_TEXT: Record<'not_linked' | 'passkey_required', string> = {
+  not_linked: 'Run /link on your own account first',
+  passkey_required: "Add a console passkey in the console's Settings first",
+};
+
+/**
+ * An empty picker reads as "there is nothing", which is wrong when the console
+ * refused: the list is there, the caller just cannot see it yet. The reason is
+ * shown as the only choice; picking it gets "Pick ... from the list", since
+ * its value is no id. Other failures stay an empty list.
+ */
+export function pickerRefusal(reply: Exclude<ConsoleReply<unknown>, { ok: true }>): BotResponse {
+  const text = reply.refusal ? PICKER_REFUSAL_TEXT[reply.refusal] : null;
+  return { type: 8, data: { choices: text ? [{ name: text, value: 'refused' }] : [] } };
+}
+
 /** finish() for a console subcommand: never throws, always answers. */
 function consoleFinish(work: () => Promise<string>): BotResponse {
+  return consoleFinishResponse(async () => consoleLine(await work()));
+}
+
+/** consoleFinish for an answer that is more than a line, such as an embed. */
+function consoleFinishResponse(work: () => Promise<BotResponse>): BotResponse {
   return {
     type: 5,
     data: { flags: 64 },
     finish: async () => {
       try {
-        return consoleLine(await work());
+        return await work();
       } catch (error) {
         if (error instanceof ConsoleNotConfiguredError) return consoleLine(CONSOLE_NOT_CONFIGURED);
         if (error instanceof ConsoleNotAvailableError) return consoleLine(CONSOLE_NOT_AVAILABLE);
@@ -6828,6 +7230,8 @@ export function handleEventAdmin(
       });
     case 'create':
       return eventCreate(chosen.options, callerId);
+    case 'edit':
+      return eventEdit(chosen.options, callerId, eventId as string);
     case 'publish':
       return consoleFinish(async () => {
         const current = await adminGet<{ events: ConsoleEvent[] }>(
@@ -6854,24 +7258,130 @@ export function handleEventAdmin(
         return `**Upcoming club events**\n${reply.data.events.map((e) => `- ${e.label}`).join('\n')}`;
       });
     case 'signups':
-      return consoleFinish(async () => {
-        const reply = await adminGet<{
-          event: { id: string; label: string; capacity: number | null } | null;
-          signups?: string[];
-        }>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
-        if (!reply.ok) return consoleRefusalText(reply);
-        if (!reply.data.event) return 'That event no longer exists.';
-        const names = reply.data.signups ?? [];
-        const cap = reply.data.event.capacity;
-        return (
-          `**${reply.data.event.label}**\n` +
-          `Signed up: ${names.length}${cap ? ` of ${cap}` : ''}` +
-          (names.length > 0 ? `\n${names.map((n) => `- ${n}`).join('\n')}` : '')
-        ).slice(0, 1900);
+      return consoleFinishResponse(async () => {
+        const reply = await adminGet<EventSignupsRead>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
+        if (!reply.ok) return consoleLine(consoleRefusalText(reply));
+        const event = reply.data.event;
+        if (!event) return consoleLine('That event no longer exists.');
+        return {
+          type: 4,
+          data: {
+            embeds: [eventSignupsEmbed({ ...reply.data, event })],
+            flags: 64,
+            allowed_mentions: { parse: [] },
+          },
+        };
       });
     default:
       return consoleLine('Unknown subcommand.');
   }
+}
+
+type EventSignupsEvent = {
+  id: string;
+  label: string;
+  title?: string;
+  when?: string;
+  status?: string;
+  capacity: number | null;
+  url?: string | null;
+};
+
+export type EventSignupsPerson = {
+  name: string;
+  kind: 'member' | 'guest' | 'external';
+  checkedIn: boolean;
+  noShow: boolean;
+  walkIn: boolean;
+};
+
+/**
+ * The console's event-signups read. An older console sends only `signups`
+ * (plain names), so the embed falls back to it when `people` is absent: the
+ * bot and the console deploy separately.
+ */
+export type EventSignupsRead = {
+  event: EventSignupsEvent | null;
+  taken?: number;
+  signups?: string[];
+  people?: EventSignupsPerson[];
+  waitlist?: string[];
+};
+
+// Discord's limit for an embed description.
+const SIGNUPS_DESCRIPTION_MAX = 4096;
+
+/** A member typed their name, so markdown in it is shown, not applied. */
+function plainName(name: string): string {
+  return name.slice(0, 120).replace(/[\\*_~`|[\]]/g, '\\$&');
+}
+
+function signupMarkers(person: EventSignupsPerson): string[] {
+  const markers: string[] = [];
+  if (person.kind === 'guest') markers.push('guest');
+  if (person.kind === 'external') markers.push('external');
+  if (person.walkIn) markers.push('walk-in');
+  if (person.checkedIn) markers.push('checked in');
+  if (person.noShow) markers.push('no-show');
+  return markers;
+}
+
+/**
+ * /event signups as one embed: the event, how many places are taken, then a
+ * numbered list in sign-up order with the waitlist after it. Whole lines are
+ * packed under the description limit; whatever does not fit is counted and
+ * left to the console's page.
+ */
+export function eventSignupsEmbed(read: EventSignupsRead & { event: EventSignupsEvent }): Record<string, unknown> {
+  const { event } = read;
+  const people: EventSignupsPerson[] =
+    read.people ??
+    (read.signups ?? []).map((name) => ({ name, kind: 'member', checkedIn: false, noShow: false, walkIn: false }));
+  const waitlist = read.waitlist ?? [];
+  const taken = read.taken ?? people.filter((p) => !p.noShow).length;
+  const status = event.status === 'draft' ? 'Draft' : event.status === 'cancelled' ? 'Cancelled' : null;
+  const header = [
+    event.when ?? null,
+    `${taken} signed up${event.capacity ? ` / ${event.capacity}` : ''}`,
+    waitlist.length > 0 ? `${waitlist.length} waitlisted` : null,
+    status,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const lines = [
+    ...people.map((person, index) => {
+      const markers = signupMarkers(person);
+      return `${index + 1}. ${plainName(person.name)}${markers.length ? ` (${markers.join(', ')})` : ''}`;
+    }),
+    ...waitlist.map((name, index) => `${people.length + index + 1}. ${plainName(name)} (waitlisted)`),
+  ];
+
+  let description: string;
+  if (lines.length === 0) {
+    description = `${header}\n\nNobody has signed up yet.`;
+  } else if (`${header}\n\n${lines.join('\n')}`.length <= SIGNUPS_DESCRIPTION_MAX) {
+    description = `${header}\n\n${lines.join('\n')}`;
+  } else {
+    const more = (count: number) => `...and ${count} more, see the website${event.url ? `: ${event.url}` : '.'}`;
+    // Room for the cut line at its longest, so it always fits once it is needed.
+    const room = SIGNUPS_DESCRIPTION_MAX - more(lines.length).length - 1;
+    description = `${header}\n`;
+    let shown = 0;
+    for (const line of lines) {
+      if (description.length + 1 + line.length > room) break;
+      description += `\n${line}`;
+      shown += 1;
+    }
+    description += `\n${more(lines.length - shown)}`;
+  }
+
+  return {
+    title: (event.title ?? event.label).slice(0, 256),
+    ...(event.url ? { url: event.url } : {}),
+    color: CLUB_RED,
+    description,
+  };
 }
 
 function eventCreate(options: CommandOption[] | undefined, callerId: string): BotResponse {
@@ -6910,6 +7420,58 @@ function eventCreate(options: CommandOption[] | undefined, callerId: string): Bo
     return publish
       ? `Published: ${title}. Members can sign up now.`
       : `Saved as a draft: ${title}. Publish it with /event publish when it is ready.`;
+  });
+}
+
+function eventEdit(options: CommandOption[] | undefined, callerId: string, eventId: string): BotResponse {
+  const reason = stringOption(options, 'reason') ?? '';
+  if (reason.length < REASON_MIN) return consoleLine(`The reason needs at least ${REASON_MIN} characters.`);
+  const startsText = stringOption(options, 'starts');
+  const endsText = stringOption(options, 'ends');
+  const starts = startsText ? WALL_CLOCK_PATTERN.exec(startsText) : null;
+  const ends = endsText ? WALL_CLOCK_PATTERN.exec(endsText) : null;
+  if (startsText && !starts) return consoleLine('starts has to be YYYY-MM-DD HH:MM, in club time.');
+  if (endsText && !ends) return consoleLine('ends has to be YYYY-MM-DD HH:MM, in club time.');
+
+  const overlay: Record<string, unknown> = {};
+  for (const name of ['title', 'location', 'description']) {
+    const value = stringOption(options, name);
+    if (value) overlay[name] = value;
+  }
+  if (starts) overlay.starts_at = `${starts[1]}T${starts[2]}`;
+  if (ends) overlay.ends_at = `${ends[1]}T${ends[2]}`;
+  const capacity = option(options, 'capacity');
+  const cost = option(options, 'cost');
+  if (typeof capacity === 'number') overlay.capacity = capacity;
+  if (typeof cost === 'number') overlay.cost_dollars = cost;
+  if (Object.keys(overlay).length === 0) return consoleLine('Fill in at least one thing to change.');
+
+  return consoleFinish(async () => {
+    // The console hands back the event as the exact input updateClubEvent
+    // takes, publish flag included, so only what the exec typed is overlaid:
+    // nothing is blanked, and a published event stays published.
+    const current = await adminGet<{ events: ConsoleEvent[] }>(`/api/discord/reads/events?id=${eventId}`, callerId);
+    if (!current.ok) return consoleRefusalText(current);
+    const row = current.data.events[0];
+    if (!row) return 'That event no longer exists.';
+    if (row.status === 'cancelled') return 'A cancelled event cannot be edited.';
+    const input = { ...row.editInput, ...overlay };
+    // Said here because the console's own refusal arrives uncoded, and so as
+    // "something went wrong". Zero-padded wall-clock strings compare as text.
+    if (typeof input.ends_at === 'string' && input.ends_at <= String(input.starts_at ?? '')) {
+      return 'The end has to be after the start.';
+    }
+    const reply = await adminSend<void>(actionPath('editClubEvent'), {
+      discordUserId: callerId,
+      args: [eventId, input, reason],
+    });
+    if (!reply.ok) return consoleRefusalText(reply);
+    const title = String(input.title ?? row.label);
+    // The Discord copy is the club-events sync's job: it compares the row with
+    // what it last pushed on every tick, so editing the row is enough.
+    return row.status === 'published'
+      ? `Updated: ${title}. Its Discord event follows within a few minutes.`
+      : `Updated: ${title}. It is still a draft.`;
   });
 }
 
@@ -7015,7 +7577,7 @@ export async function handleSessionAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return {
         type: 8,
         data: {
@@ -7031,7 +7593,7 @@ export async function handleSessionAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return {
         type: 8,
         data: {
@@ -7064,7 +7626,7 @@ export async function handleEventAutocomplete(
       context.discordUserId,
       CONSOLE_PICKER_TIMEOUT_MS
     );
-    if (!reply.ok) return empty;
+    if (!reply.ok) return pickerRefusal(reply);
     return {
       type: 8,
       data: {
@@ -7181,6 +7743,8 @@ export function handleTourney(options: CommandOption[] | undefined, context: Int
       });
     case 'resume':
       return send('resumeTournament', [tournamentId], 'Play resumed.');
+    case 'details':
+      return tourneyDetails(chosen.options, callerId, tournamentId);
     case 'fee': {
       const playerId = stringOption(chosen.options, 'player');
       if (!playerId || !UUID_PATTERN.test(playerId)) return consoleLine('Pick a player from the list.');
@@ -7216,6 +7780,51 @@ export function handleTourney(options: CommandOption[] | undefined, context: Int
     default:
       return consoleLine('Unknown subcommand.');
   }
+}
+
+/** The times as a reply says them, matching describeTournamentTimes in the app. */
+function tourneyTimesText(starts: string | null, ends: string | null): string {
+  if (starts && ends) return `${starts} to ${ends}`;
+  if (starts) return `from ${starts}`;
+  if (ends) return `until ${ends}`;
+  return 'no times set';
+}
+
+/** /tourney details: the tournament's own times and venue (00304). */
+function tourneyDetails(options: CommandOption[] | undefined, callerId: string, tournamentId: string): BotResponse {
+  const startText = stringOption(options, 'start');
+  const endText = stringOption(options, 'end');
+  const location = stringOption(options, 'location')?.trim();
+  const start = startText ? clockTime(startText) : null;
+  const end = endText ? clockTime(endText) : null;
+  if ((startText && !start) || (endText && !end)) {
+    return consoleLine('Start and end have to be 24-hour times, like 09:00.');
+  }
+  // Only checkable here when both arrived. One alone is checked by the console
+  // against the time already saved.
+  if (start && end && end <= start) return consoleLine('The end time has to be after the start time.');
+  const input = {
+    ...(start ? { starts_time: start } : {}),
+    ...(end ? { ends_time: end } : {}),
+    ...(location ? { location } : {}),
+  };
+  if (Object.keys(input).length === 0) return consoleLine('Fill in at least one of start, end or location.');
+
+  return consoleFinish(async () => {
+    const reply = await adminSend<{
+      name: string;
+      starts_time: string | null;
+      ends_time: string | null;
+      location: string | null;
+    }>(actionPath('updateTournamentDetails'), { discordUserId: callerId, args: [tournamentId, input] });
+    if (!reply.ok) return consoleRefusalText(reply);
+    const saved = reply.data;
+    return (
+      `Updated: ${saved.name}, ${tourneyTimesText(saved.starts_time, saved.ends_time)}` +
+      `${saved.location ? ` at ${saved.location}` : ', no location set'}. ` +
+      'Its page shows this now, and its Discord event follows within a few minutes.'
+    ).slice(0, 1900);
+  });
 }
 
 function tourneyMatchCommand(
@@ -7302,7 +7911,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.tournaments.map((t) => ({ name: t.label, value: t.id })));
     }
     if (!UUID_PATTERN.test(tournamentId)) return empty;
@@ -7313,7 +7922,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.entries.map((e) => ({ name: e.label, value: e.value })));
     }
     if (focused?.name === 'match') {
@@ -7322,7 +7931,7 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.matches.map((m) => ({ name: m.label, value: m.id })));
     }
     if (focused?.name === 'player') {
@@ -7331,13 +7940,371 @@ export async function handleTourneyAutocomplete(
         context.discordUserId,
         CONSOLE_PICKER_TIMEOUT_MS
       );
-      if (!reply.ok) return empty;
+      if (!reply.ok) return pickerRefusal(reply);
       return choicesFrom(reply.data.fees.map((f) => ({ name: f.label, value: f.playerId })));
     }
   } catch (error) {
     console.error('[bot] tourney picker failed:', error instanceof Error ? error.message : 'unknown');
   }
   return empty;
+}
+
+const MANAGE_GUILD_BIT = 1n << 5n;
+const ADMINISTRATOR_BIT = 1n << 3n;
+
+/** Manage Server or Administrator, from the caller's own mask. Missing or unreadable is no. */
+export function canManageServer(permissions: string | null | undefined): boolean {
+  if (!permissions) return false;
+  try {
+    return (BigInt(permissions) & (MANAGE_GUILD_BIT | ADMINISTRATOR_BIT)) !== 0n;
+  } catch {
+    return false;
+  }
+}
+
+/** Put up, take down or reword the trap channel warnings after a /config automod save. */
+async function updateTrapNotices(
+  guildId: string,
+  change: ServerSettingsChange,
+  added: string | null,
+  removed: string | null
+): Promise<string[]> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token || (!added && !removed && !change.automodTrapAction)) return [];
+  const api = new DiscordApi({ token });
+  const notes: string[] = [];
+  try {
+    if (removed) await takeDownTrapNotice(api, removed);
+    const { servers } = await fetchServerSettings();
+    const mine = servers.find((row) => row.guildId === guildId);
+    const action = mine?.automodTrapAction ?? 'softban';
+    // A new trap gets its warning; a changed answer rewords all of them.
+    const channels = change.automodTrapAction ? (mine?.automodTrapChannelIds ?? []) : added ? [added] : [];
+    for (const channelId of channels) {
+      const result = await putUpTrapNotice(api, channelId, action);
+      if (result === 'forbidden') {
+        notes.push(`I posted the warning in <#${channelId}> but could not pin it: I need **Manage Messages** (or **Pin Messages**) there.`);
+      } else if (result !== 'ok') {
+        notes.push(`I could not post the warning in <#${channelId}>. Check I can send messages there, then run this again.`);
+      }
+    }
+    if (added && notes.length === 0) notes.push(`<#${added}> now has a pinned warning that counts everyone caught there.`);
+  } catch (error) {
+    console.error('[bot] trap notice update failed:', error);
+    notes.push('The setting is saved, but I could not update the warning in the trap channel.');
+  }
+  return notes;
+}
+
+/** What each auto mod action does, in words, given the timeout length. */
+const AUTOMOD_ACTION_TEXT: Record<AutomodAction, (timeoutMinutes: number) => string> = {
+  timeout_then_softban: (minutes) =>
+    `a **${minutes}-minute timeout** and the posts deleted; a **soft-ban** if caught again within a day`,
+  timeout: (minutes) => `a **${minutes}-minute timeout** and the posts deleted`,
+  softban: () => 'a **soft-ban** at once (removed, last hour of messages deleted, free to rejoin)',
+  flag: () => 'a **server log entry** only, nothing done to them',
+};
+
+const WORDS_ACTION_TEXT: Record<AutomodWordsAction, string> = {
+  delete: 'deleted',
+  punish: 'deleted, and the author gets the action above',
+  flag: 'flagged in the server log only',
+};
+
+const MAX_AUTOMOD_WORDS = 100;
+const MAX_AUTOMOD_WORD_LENGTH = 30;
+const MAX_TRAP_CHANNELS = 10;
+
+/** A comma list from an option: trimmed, lowercased, no blanks. */
+function wordList(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+  return value
+    .split(',')
+    .map((word) => word.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+const NEEDS_MANAGE_SERVER = 'You need the Manage Server permission in this server to see or change its bot settings.';
+
+/** This server's log channel and scam guard, as /config show prints them. */
+async function serverSettingsText(guildId: string): Promise<string> {
+  const { servers } = await fetchServerSettings();
+  const mine = servers.find((row) => row.guildId === guildId);
+  const { scopes } = parseServerLogScopes(process.env.DISCORD_SERVER_LOG);
+  const lines = [
+    `**Server log**: ${mine?.serverLogChannelId ? `<#${mine.serverLogChannelId}>` : 'off, so nothing here is logged'}`,
+    `**Auto mod**: ${mine?.scamGuard ? 'on' : 'off'}`,
+  ];
+  if (mine?.scamGuard) {
+    const minutes = mine.automodSprayWindowMinutes;
+    lines.push(
+      `- **Caught accounts get**: ${AUTOMOD_ACTION_TEXT[mine.automodAction](mine.automodTimeoutMinutes)}`,
+      mine.automodSpray
+        ? `- **Spray**: the same post in **${mine.automodSprayChannels} channels** within **${minutes} minute${minutes === 1 ? '' : 's'}**`
+        : '- **Spray**: off',
+      mine.automodTrapChannelIds.length
+        ? `- **Trap channels**: ${mine.automodTrapChannelIds.map((id) => `<#${id}>`).join(', ')}; a post there gets ${AUTOMOD_ACTION_TEXT[mine.automodTrapAction ?? 'softban'](mine.automodTimeoutMinutes)}`
+        : '- **Trap channels**: none',
+      mine.automodWords.length
+        ? `- **Your words** (${WORDS_ACTION_TEXT[mine.automodWordsAction]}): ${mine.automodWords.map((word) => `\`${word.replace(/`/g, '')}\``).join(', ')}`
+        : '- **Your words**: none',
+      mine.automodFlagSuspects
+        ? `- **Giveaway posts are flagged** when they read like a giveaway (${GIVEAWAY_WORDS.join(', ')}) and carry 2+ pictures, a link, or crypto words (${CRYPTO_WORDS.join(', ')})`
+        : '- **Giveaway posts**: not flagged',
+      '- Never touches the owner, moderators, bots, or anyone ranked at or above me'
+    );
+  }
+  // The scopes are the bot's, not the server's, so say when they make a
+  // setting here do nothing rather than letting it look broken.
+  if (scopes.size === 0) lines.push('The server log is switched off for this bot, so nothing is logged anywhere.');
+  else if (!scopes.has('scam') && mine?.scamGuard) lines.push('Auto mod is switched off for this bot, so it does nothing yet.');
+  return lines.join('\n');
+}
+
+/**
+ * /config server_log and /config automod: the settings that belong to the
+ * server they are typed in (00302), in any server.
+ *
+ * THE SERVER IS ALWAYS THIS ONE. Every write names context.guildId, and the
+ * log channel is a channel option, which Discord only fills from this server,
+ * so nobody can point another server's log, or the club's, anywhere.
+ *
+ * Who may: Manage Server here, re-checked from the caller's own mask because
+ * a server admin can open any command to anyone. In a club server, also the
+ * club check the rest of /config uses, since a Discord admin there is not
+ * enough.
+ */
+async function handleServerSetting(
+  sub: 'server_log' | 'automod',
+  args: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { guildId, discordUserId } = context;
+  if (!guildId || !discordUserId) return ephemeral('Run this in the server you want to change.');
+  if (!canManageServer(context.permissions)) return ephemeral(NEEDS_MANAGE_SERVER);
+  const caller = { discordUserId, guildId };
+  if (await isClubServer(guildId)) {
+    const refusal = await checkDiscordManager(caller);
+    if (refusal) return ephemeral(managerRefusalText(refusal));
+  }
+
+  if (sub === 'automod') {
+    const change: ServerSettingsChange = {};
+    const flag = (name: string, field: 'scamGuard' | 'automodSpray' | 'automodFlagSuspects') => {
+      const value = option(args, name);
+      if (typeof value === 'boolean') change[field] = value;
+    };
+    const count = (name: string, field: 'automodTimeoutMinutes' | 'automodSprayChannels' | 'automodSprayWindowMinutes') => {
+      const value = option(args, name);
+      if (typeof value === 'number') change[field] = value;
+    };
+    flag('enabled', 'scamGuard');
+    flag('spray', 'automodSpray');
+    flag('flag_giveaways', 'automodFlagSuspects');
+    count('timeout_minutes', 'automodTimeoutMinutes');
+    count('spray_channels', 'automodSprayChannels');
+    count('spray_minutes', 'automodSprayWindowMinutes');
+    const action = option(args, 'action');
+    if (typeof action === 'string' && action in AUTOMOD_ACTION_TEXT) change.automodAction = action as AutomodAction;
+    const trapAction = option(args, 'trap_action');
+    if (typeof trapAction === 'string' && trapAction in AUTOMOD_ACTION_TEXT) change.automodTrapAction = trapAction as AutomodAction;
+    const wordsAction = option(args, 'words_action');
+    if (typeof wordsAction === 'string' && wordsAction in WORDS_ACTION_TEXT) {
+      change.automodWordsAction = wordsAction as AutomodWordsAction;
+    }
+
+    // The lists are edited, not replaced, so they start from what is saved.
+    const adding = wordList(option(args, 'add_words'));
+    const removing = wordList(option(args, 'remove_words'));
+    const addTrap = option(args, 'add_trap');
+    const removeTrap = option(args, 'remove_trap');
+    if (adding.length || removing.length || typeof addTrap === 'string' || typeof removeTrap === 'string') {
+      const { servers } = await fetchServerSettings();
+      const mine = servers.find((row) => row.guildId === guildId);
+      if (adding.length || removing.length) {
+        const tooLong = adding.find((word) => word.length > MAX_AUTOMOD_WORD_LENGTH);
+        if (tooLong) return ephemeral(`"${tooLong.slice(0, 40)}" is too long: a word or phrase can be up to ${MAX_AUTOMOD_WORD_LENGTH} letters.`);
+        const kept = removing.includes('all') ? [] : (mine?.automodWords ?? []).filter((word) => !removing.includes(word));
+        const words = [...new Set([...kept, ...adding])];
+        if (words.length > MAX_AUTOMOD_WORDS) return ephemeral(`That is over ${MAX_AUTOMOD_WORDS} words. Remove some first.`);
+        change.automodWords = words;
+      }
+      if (typeof addTrap === 'string' || typeof removeTrap === 'string') {
+        const traps = (mine?.automodTrapChannelIds ?? []).filter((id) => id !== removeTrap);
+        if (typeof addTrap === 'string' && !traps.includes(addTrap)) traps.push(addTrap);
+        if (traps.length > MAX_TRAP_CHANNELS) return ephemeral(`A server can have up to ${MAX_TRAP_CHANNELS} trap channels.`);
+        change.automodTrapChannelIds = traps;
+      }
+    }
+
+    if (Object.keys(change).length > 0) await writeServerSettings(caller, change);
+    const now = await serverSettingsText(guildId);
+    if (Object.keys(change).length === 0) {
+      return ephemeral(`${now}\n\nFill in any option of **/config automod** to change it.`);
+    }
+    // The warning in each trap channel: up when one is added, down when one
+    // is removed, and reworded everywhere when what a post there gets changes.
+    const trapNotes = await updateTrapNotices(guildId, change, typeof addTrap === 'string' ? addTrap : null,
+      typeof removeTrap === 'string' ? removeTrap : null);
+    const trapNote = trapNotes.length ? `\n\n${trapNotes.join('\n')}` : '';
+    return ephemeral(`Saved.\n\n${now}${trapNote}`);
+  }
+
+  if (option(args, 'off') === true) {
+    await writeServerSettings(caller, { serverLogChannelId: null });
+    return ephemeral("This server's log is off. Nothing is posted until you set a channel again.");
+  }
+  const channelId = option(args, 'channel');
+  if (typeof channelId !== 'string' || !channelId) {
+    return ephemeral('Pick a **channel** for the log, or set **off** to stop it.');
+  }
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] /config server_log: DISCORD_BOT_TOKEN is not set');
+    return ephemeral('I am not configured to post anywhere right now.');
+  }
+  // Saved only once a post there succeeds, as /config channels does.
+  if (!(await proveCanPost(new DiscordApi({ token }), channelId, 'This server\'s log'))) {
+    return ephemeral(`I could not post in <#${channelId}>, so nothing was changed. Let me see and post there first.`);
+  }
+  await writeServerSettings(caller, { serverLogChannelId: channelId });
+  return ephemeral(
+    `This server's log now posts in <#${channelId}>. It includes the text of deleted and edited messages, ` +
+      'so keep it to moderators.'
+  );
+}
+
+/** The pace of a one-at-a-time purge. Tests set both to 0. */
+export const purgeTiming = { gapMs: 1100, startDelayMs: 2000 };
+/** The latest background purge, for tests to wait on. */
+export let lastOldPurge: Promise<void> | null = null;
+
+/** Delete old messages one at a time, then edit the /purge reply to say how it went. Never throws. */
+async function purgeOneByOne(
+  api: DiscordApi,
+  channelId: string,
+  messageIds: string[],
+  reason: string,
+  report: { applicationId: string; interactionToken: string; bulkDeleted: number; memberId: string | null }
+): Promise<void> {
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  let deleted = 0;
+  let failed = 0;
+  try {
+    // Let the first answer land before this one replaces it.
+    await wait(purgeTiming.startDelayMs);
+    for (const messageId of messageIds) {
+      const result = await api.deleteMessages(channelId, [messageId], reason);
+      if (result === 'ok' || result === 'not_found') deleted += 1;
+      else failed += 1;
+      // Refused once means refused for all; no point grinding through the rest.
+      if (result === 'forbidden') break;
+      await wait(purgeTiming.gapMs);
+    }
+  } catch (error) {
+    console.error('[bot] /purge one-by-one stopped:', error);
+  }
+  const total = report.bulkDeleted + deleted;
+  const left = messageIds.length - deleted;
+  await editDeferredReply(report.applicationId, report.interactionToken, {
+    content:
+      `Done: deleted ${total} message${total === 1 ? '' : 's'}${report.memberId ? ` from <@${report.memberId}>` : ''}, ` +
+      `${deleted} of them older than 14 days.` +
+      (left > 0 ? ` ${left} could not be deleted${failed > 0 ? ': check I still have **Manage Messages** here' : ''}.` : ''),
+    allowed_mentions: { parse: [] },
+  });
+}
+
+/** Discord refuses to bulk delete a message older than this. */
+const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000 - 60_000;
+
+/**
+ * /purge: the latest messages here, or the latest of one person's. Pinned
+ * ones are kept. The server log records it as a bulk delete.
+ */
+export async function handlePurge(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!context.guildId || !context.channelId || !context.discordUserId) {
+    return ephemeral('Run /purge in the channel to clear.');
+  }
+  // The command is hidden from people without Manage Messages, but a server
+  // can open it to anyone in its settings, so the caller is checked here too.
+  let allowed = false;
+  try {
+    allowed = (BigInt(context.permissions ?? '0') & ((1n << 13n) | ADMINISTRATOR_BIT)) !== 0n;
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) return ephemeral('You need **Manage Messages** to purge.');
+  if (!token) {
+    console.error('[bot] /purge: DISCORD_BOT_TOKEN is not set');
+    return ephemeral('The bot is not set up to do that right now.');
+  }
+  const count = Math.min(100, Math.max(1, Number(option(options, 'count')) || 1));
+  const memberId = stringOption(options, 'member');
+
+  const api = new DiscordApi({ token });
+  const recent = await api.listRecentMessages(context.channelId, 100);
+  if (!recent) {
+    return ephemeral('I could not read this channel. I need **View Channel** and **Read Message History** here.');
+  }
+  const now = Date.now();
+  const picked = recent
+    .filter((message) => !message.pinned && (!memberId || message.authorId === memberId))
+    .slice(0, count);
+  const fresh = picked.filter((message) => now - message.at < BULK_DELETE_MAX_AGE_MS);
+  const old = picked.filter((message) => now - message.at >= BULK_DELETE_MAX_AGE_MS);
+  const tooOld = old.length;
+  const includeOld = option(options, 'include_old') === true && tooOld > 0;
+  if (fresh.length === 0 && !includeOld) {
+    if (tooOld > 0) {
+      return ephemeral(
+        'Those messages are over 14 days old, and Discord does not let bots bulk delete those. ' +
+          'Run it again with **include_old: True** to delete them one at a time.'
+      );
+    }
+    return ephemeral(memberId ? `<@${memberId}> has no recent messages here.` : 'There is nothing to delete here.');
+  }
+
+  const reason = `Purge by ${context.discordUserId}`;
+  const outcome = fresh.length
+    ? await api.deleteMessages(context.channelId, fresh.map((message) => message.id), reason)
+    : 'ok';
+  if (outcome === 'forbidden') return ephemeral('I need **Manage Messages** in this channel to purge.');
+  if (outcome !== 'ok') return ephemeral('Discord did not let me delete those just now. Try again in a moment.');
+
+  // Old ones go one at a time: a single delete works at any age but Discord
+  // rate limits it, so this runs after the reply and edits it when done.
+  // Without the token there is nowhere to say how it went, so it is not started.
+  const canReport = Boolean(context.applicationId && context.interactionToken);
+  if (includeOld && canReport) {
+    lastOldPurge = purgeOneByOne(api, context.channelId, old.map((message) => message.id), reason, {
+      applicationId: context.applicationId as string,
+      interactionToken: context.interactionToken as string,
+      bulkDeleted: fresh.length,
+      memberId,
+    });
+    const minutes = Math.max(1, Math.ceil((tooOld * purgeTiming.gapMs) / 60_000));
+    const recentPart = fresh.length ? `Deleted ${fresh.length} recent message${fresh.length === 1 ? '' : 's'}. Now deleting` : 'Deleting';
+    return ephemeral(
+      `${recentPart} ${tooOld} message${tooOld === 1 ? '' : 's'} over 14 days old, one at a time ` +
+        `(about ${minutes} minute${minutes === 1 ? '' : 's'}). This message updates when it is done.`
+    );
+  }
+
+  const notes = [
+    tooOld > 0
+      ? `${tooOld} older than 14 days ${tooOld === 1 ? 'was' : 'were'} left: Discord does not let bots bulk delete those. Use **include_old: True** to delete them one at a time.`
+      : '',
+    picked.length < count ? `Only ${picked.length} matching message${picked.length === 1 ? ' was' : 's were'} in the latest 100.` : '',
+  ].filter(Boolean);
+  return ephemeral(
+    `Deleted ${fresh.length} message${fresh.length === 1 ? '' : 's'}${memberId ? ` from <@${memberId}>` : ''}.` +
+      (notes.length ? `\n${notes.join('\n')}` : '')
+  );
 }
 
 export async function handleSoftban(
@@ -7370,8 +8337,10 @@ export async function handleSoftban(
   if (!outcome.ok) return ephemeral(outcome.message);
 
   const windowLabel = describeWindow(deleteSeconds);
-  const { auditChannelId } = await loadConfig();
-  await postAuditEntry(api, auditChannelId, {
+  // The audit channel is the club's: a soft-ban in somebody else's server is
+  // theirs, and a config read that fails must not turn a done ban into an error.
+  const auditTo = (await isClubServer(context.guildId)) ? (await loadConfig()).auditChannelId : undefined;
+  await postAuditEntry(api, auditTo, {
     kind: 'softban',
     moderatorId: context.discordUserId,
     targetId,
@@ -7452,6 +8421,8 @@ export async function dispatch(
         return handleTourney(options, context);
       case 'softban':
         return await handleSoftban(options, context);
+      case 'purge':
+        return await handlePurge(options, context);
       default:
         return ephemeral('Unknown command.');
     }

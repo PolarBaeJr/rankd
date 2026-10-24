@@ -214,7 +214,9 @@ describe('requireCapability', () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'exec-1', role: 'player', is_exec: true };
     state.adminPasskeyCount = 1;
-    await expect(requireCapability('fees.clubfees.markpaid.write'))
+    // An admin-area capability: since 2026-10-23 a money write is offerable,
+    // so an exec refused one is told to ask an admin, not "admin access".
+    await expect(requireCapability('audit.page'))
       .rejects.toThrow('Admin access required');
   });
 

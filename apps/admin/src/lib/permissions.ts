@@ -12,10 +12,11 @@
 //  - admin    role = 'admin'. Superuser BY LEVEL: permits() short-circuits
 //             before any set is consulted, so a capability added next year is
 //             automatically theirs.
-//  - exec     is_exec. EXEC_BASELINE — eight section pages and four reads, and
-//             NOT ONE WRITE. An officer with no permission_role can see the
-//             club's business and change none of it; the writes they used to
-//             hold by level are in EXEC_ASSIGNABLE and arrive by assignment.
+//  - exec     is_exec. EXEC_BASELINE: every read and page outside the admin
+//             areas (EXEC_READS, derived) and one write, filing an expense. An
+//             officer with no permission_role can see the club's business and
+//             change almost none of it; every other write arrives by a role
+//             or a grant.
 //  - trainer  is_trainer. TRAINER_BASELINE — reading the roster and writing
 //             varsity notes, and that is the whole level. See
 //             ./player-field-access.ts, where their writable field set is EMPTY.
@@ -119,7 +120,7 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // behind it — club fees, other income, expenses, reinstatements, the net
   // position — each have their own read, and an exec holds exactly one of them
   // (fees.expenses.read) because the club owner asked for "execs can add
-  // expenses", not for the finance page. /fees/page.tsx enforces that by
+  // expenses", not for the finance page. fees/page.tsx and finances/page.tsx enforce that by
   // skipping their FETCHES rather than hiding the rendered output: a hidden card
   // whose query still ran ships the figures into the RSC payload for anyone with
   // devtools. Same reasoning, and the same shape, as dashboard/page.tsx.
@@ -132,6 +133,10 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // canAccess(…, '/fees'). The dashboard finance snapshot is the one place that
   // nearly did, and reusing this line is precisely what would have leaked it.
   '/fees': 'fees.page',
+  // The other half of the same section: other income, expenses and the money
+  // summary, moved off /fees. Same page key, and the same rule as above: each
+  // ledger on it is gated by its own read, at the fetch.
+  '/finances': 'fees.page',
   '/audit': 'audit.page',
   // The audit log's CSV download, which is a route rather than a server action
   // because a file has to arrive as a response with its own headers. Listed

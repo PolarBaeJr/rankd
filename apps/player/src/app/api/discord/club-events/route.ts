@@ -37,6 +37,8 @@ interface ClubEventRow {
   ends_at: string | null;
   status: string;
   cost_cents: number | null;
+  /** The tournament event that runs it (00292), or null. */
+  tournament_event_id: string | null;
 }
 
 interface MappingRow {
@@ -79,7 +81,8 @@ const MAX_NAME = 100;
 const MAX_LOCATION = 100;
 const MAX_DESCRIPTION = 1000;
 
-const COLUMNS = 'id, title, kind, description, location, starts_at, ends_at, status, cost_cents';
+const COLUMNS =
+  'id, title, kind, description, location, starts_at, ends_at, status, cost_cents, tournament_event_id';
 
 /**
  * Cut to at most `max` UTF-16 units without splitting a character. Discord
@@ -96,7 +99,12 @@ function fit(s: string, max: number): string {
   return out;
 }
 
-function describeClubEvent(e: ClubEventRow, appUrl: string | null, formUrl: string | null): string {
+function describeClubEvent(
+  e: ClubEventRow,
+  appUrl: string | null,
+  formUrl: string | null,
+  tournamentId: string | null
+): string {
   const cost = formatClubEventCost(e.cost_cents);
   const kind = CLUB_EVENT_KIND_LABELS[e.kind as ClubEventKind] ?? e.kind;
   const header = cost ? `${kind}, ${cost}` : kind;
@@ -106,12 +114,17 @@ function describeClubEvent(e: ClubEventRow, appUrl: string | null, formUrl: stri
   // them up. The event's Google Form can, member or not.
   const link = appUrl ? `Event details: ${appUrl}/events/${e.id}` : null;
   const form = formUrl ? `Sign up with the Google Form: ${formUrl}` : null;
+  // An event run as a tournament (00292) is posted once, here, and the
+  // tournament route stands its own Discord event down. So this is the one
+  // place a Discord reader finds the draw, and it is reserved like the others.
+  const bracket =
+    appUrl && tournamentId ? `Bracket and draw: ${appUrl}/tournaments/${tournamentId}` : null;
 
-  const fixed = [header, link, form].filter((p): p is string => p !== null);
+  const fixed = [header, link, bracket, form].filter((p): p is string => p !== null);
   const reserved = fixed.reduce((n, p) => n + p.length, 0) + fixed.length * 2;
   const body = fit(e.description?.trim() ?? '', Math.max(0, MAX_DESCRIPTION - reserved)).trim();
 
-  const parts = [header, body, link, form].filter((p): p is string => !!p);
+  const parts = [header, body, link, bracket, form].filter((p): p is string => !!p);
   return fit(parts.join('\n\n'), MAX_DESCRIPTION);
 }
 
@@ -216,6 +229,49 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'forms_unavailable', detail: forms.error }, { status: 503 });
   }
 
+  // The tournament each linked event runs as, for the bracket link. Never
+  // degraded to "not linked": that would drop the link from every linked
+  // event's description, and put it back when the read recovers.
+  const linkedEventIds = [
+    ...new Set([...byId.values()].map((e) => e.tournament_event_id).filter((id): id is string => !!id)),
+  ];
+  const tournamentOf = new Map<string, string>();
+  if (linkedEventIds.length > 0) {
+    const { data: linkedRows, error: linkedError } = await supabase
+      .from('tournament_events')
+      .select('id, tournament_id')
+      .in('id', linkedEventIds);
+    if (linkedError) {
+      console.error('[discord] club-events linked tournament read failed:', linkedError.message);
+      return NextResponse.json(
+        { error: 'tournaments_unavailable', detail: linkedError.message },
+        { status: 503 }
+      );
+    }
+    // A draft tournament's page is a 404 to members, so its link waits until
+    // the tournament is published; the change detector then adds it.
+    const links = (linkedRows ?? []) as { id: string; tournament_id: string }[];
+    const { data: statusRows, error: statusError } = links.length
+      ? await supabase
+          .from('tournaments')
+          .select('id, status')
+          .in('id', [...new Set(links.map((l) => l.tournament_id))])
+      : { data: [], error: null };
+    if (statusError) {
+      console.error('[discord] club-events linked tournament read failed:', statusError.message);
+      return NextResponse.json(
+        { error: 'tournaments_unavailable', detail: statusError.message },
+        { status: 503 }
+      );
+    }
+    const published = new Set(
+      ((statusRows ?? []) as { id: string; status: string }[]).filter((t) => t.status !== 'draft').map((t) => t.id)
+    );
+    for (const row of links) {
+      if (published.has(row.tournament_id)) tournamentOf.set(row.id, row.tournament_id);
+    }
+  }
+
   const actions: Action[] = [];
   const skipped: { eventId: string; reason: string }[] = [];
 
@@ -301,7 +357,8 @@ export async function GET(request: Request) {
 
     const name = fit(e.title.trim(), MAX_NAME);
     const location = e.location?.trim() ? fit(e.location.trim(), MAX_LOCATION) : null;
-    const description = describeClubEvent(e, appUrl, forms.links.get(e.id) ?? null);
+    const tournamentId = e.tournament_event_id ? (tournamentOf.get(e.tournament_event_id) ?? null) : null;
+    const description = describeClubEvent(e, appUrl, forms.links.get(e.id) ?? null, tournamentId);
     // Clamped to send, unclamped to record, for the tournament route's reason.
     const sendStart = Math.max(start, now + CLAMP_SLACK_MS);
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // What this file guards, beyond what the tournament route's test already
 // covers for the shared shape:
@@ -18,6 +18,8 @@ let mapped: Record<string, unknown>[] = [];
 let clubEvents: Record<string, unknown>[] = [];
 let auditLogs: Record<string, unknown>[] = [];
 let forms: Record<string, unknown>[] = [];
+let tournamentEvents: Record<string, unknown>[] = [];
+let tournaments: Record<string, unknown>[] = [];
 let readError: Record<string, { code: string; message: string } | null> = {};
 let featuresRow: Record<string, unknown> | null = null;
 const upserted = vi.fn();
@@ -79,6 +81,8 @@ vi.mock("@/lib/supabase-server", () => ({
       if (table === "club_events") return thenable(clubEvents, readError.clubEvents ?? null);
       if (table === "audit_logs") return thenable(auditLogs, readError.audit ?? null);
       if (table === "registration_import_forms") return thenable(forms, readError.forms ?? null);
+      if (table === "tournament_events") return thenable(tournamentEvents, readError.tournamentEvents ?? null);
+      if (table === "tournaments") return thenable(tournaments, readError.tournaments ?? null);
       if (table === "discord_club_events") {
         return {
           ...thenable(mapped, readError.mapped ?? null),
@@ -208,12 +212,19 @@ beforeEach(() => {
   readError = {};
   featuresRow = null;
   forms = [];
+  tournamentEvents = [];
   mapped = [];
   auditLogs = [];
   upserted.mockReset();
   deleted.mockReset();
   clubEvents = [clubEvent()];
 });
+
+// Loading the route is slow on a cold CI runner; done once here with room to
+// spare, so the first test is not the one that pays for it and times out.
+beforeAll(async () => {
+  await import("../route");
+}, 30_000);
 
 describe("GET /api/discord/club-events", () => {
   it("refuses without the service secret", async () => {
@@ -423,6 +434,57 @@ describe("GET /api/discord/club-events", () => {
     const { actions, skipped } = await run();
     expect(actions).toHaveLength(150);
     expect(skipped).toContainEqual({ eventId: "*", reason: "mapping_cap_reached" });
+  });
+});
+
+describe("GET /api/discord/club-events, an event run as a tournament", () => {
+  const T1 = "00000000-0000-4000-8000-0000000000aa";
+
+  beforeEach(() => {
+    tournamentEvents = [{ id: "te1", tournament_id: T1 }];
+    tournaments = [{ id: T1, status: "active" }];
+    clubEvents = [clubEvent({ tournament_event_id: "te1" })];
+  });
+
+  it("leaves the link out while the tournament is a draft, whose page is a 404", async () => {
+    tournaments = [{ id: T1, status: "draft" }];
+    expect(only((await run()).actions).description).not.toContain("Bracket");
+  });
+
+  it("links the bracket, and keeps the link when the description is at its limit", async () => {
+    const link = `Bracket and draw: https://example.test/tournaments/${T1}`;
+    expect(only((await run()).actions).description).toContain(link);
+    clubEvents = [clubEvent({ tournament_event_id: "te1", description: "x".repeat(4000) })];
+    const description = only((await run()).actions).description;
+    expect(description).toContain(link);
+    expect(description.length).toBeLessThanOrEqual(1000);
+  });
+
+  it("PATCHes an event already posted without the link", async () => {
+    mapped = [
+      mapping({
+        synced_starts_at: clubEvents[0]!.starts_at,
+        synced_ends_at: clubEvents[0]!.ends_at,
+        synced_description: "Social, $5.00",
+      }),
+    ];
+    const a = only((await run()).actions);
+    expect(a.kind).toBe("update");
+    expect(a.description).toContain(`/tournaments/${T1}`);
+  });
+
+  it("refuses the tick when the link cannot be read, rather than dropping it", async () => {
+    for (const failing of ["tournamentEvents", "tournaments"]) {
+      readError = { [failing]: { code: "42501", message: "permission denied" } };
+      const { GET } = await import("../route");
+      expect((await GET(req())).status, failing).toBe(503);
+    }
+  });
+
+  it("adds no link and reads nothing more for an event that is not linked", async () => {
+    clubEvents = [clubEvent()];
+    readError = { tournamentEvents: { code: "42501", message: "permission denied" } };
+    expect(only((await run()).actions).description).not.toContain("Bracket");
   });
 });
 

@@ -18,6 +18,15 @@ let readError: { message: string } | null = null;
 const upserted = vi.fn();
 const deletedIn = vi.fn();
 
+// The caller check has its own tests; here every caller may.
+const { checkDiscordManager } = vi.hoisted(() => ({
+  checkDiscordManager: vi.fn(async () => ({ ok: true }) as { ok: true } | { ok: false; refusal: string }),
+}));
+vi.mock('@/lib/discord-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/discord-manager')>()),
+  checkDiscordManager,
+}));
+
 vi.mock('@/lib/supabase-server', () => ({
   createServiceRoleClient: () => ({
     from: () => ({
@@ -44,7 +53,12 @@ function post(body: unknown, auth = 'Bearer test-secret') {
   return new Request('http://localhost/api/discord/settings', {
     method: 'POST',
     headers: { authorization: auth, 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    // Every bot write names who ran the command and where (discord-manager.ts).
+    body: JSON.stringify(
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? { discordUserId: '111111111111111111', guildId: '222222222222222222', ...body }
+        : body
+    ),
   });
 }
 
@@ -110,10 +124,19 @@ describe('validation', () => {
     expect(upserted).not.toHaveBeenCalled();
   });
 
-  it('takes a 24-hour time and refuses anything else', async () => {
-    expect((await POST(post({ settings: { tournament_event_start_time: '09:00' } }))).status).toBe(200);
-    expect((await POST(post({ settings: { tournament_event_start_time: '9am' } }))).status).toBe(400);
-    expect((await POST(post({ settings: { tournament_event_start_time: '24:00' } }))).status).toBe(400);
+  it('no longer writes the club-wide tournament times or location', async () => {
+    // Each tournament keeps its own since 00304, and the old keys are only a
+    // fallback for a tournament with none set. A bot older than that must not
+    // be able to move the fallback for every tournament at once.
+    const retired: [string, string][] = [
+      ['tournament_event_start_time', '09:00'],
+      ['tournament_event_end_time', '18:00'],
+      ['tournament_event_location', 'Court 1'],
+    ];
+    for (const [key, value] of retired) {
+      expect((await POST(post({ settings: { [key]: value } }))).status, key).toBe(400);
+    }
+    expect(upserted).not.toHaveBeenCalled();
   });
 
   it('holds the ping lead time to something the cron can actually hit', async () => {
@@ -135,11 +158,6 @@ describe('validation', () => {
       expect((await POST(post({ settings: { [key]: '1547801288119558234' } }))).status, key).toBe(200);
       expect((await POST(post({ settings: { [key]: '@session ping' } }))).status, key).toBe(400);
     }
-  });
-
-  it('refuses a location longer than Discord will take', async () => {
-    expect((await POST(post({ settings: { tournament_event_location: 'Court 1' } }))).status).toBe(200);
-    expect((await POST(post({ settings: { tournament_event_location: 'x'.repeat(101) } }))).status).toBe(400);
   });
 });
 
@@ -209,5 +227,14 @@ describe('the service gate', () => {
 
   it('refuses an unauthenticated read', async () => {
     expect((await GET(get('Bearer wrong'))).status).toBe(401);
+  });
+});
+
+describe('the caller check', () => {
+  it('refuses a caller the club does not allow, and writes nothing', async () => {
+    checkDiscordManager.mockResolvedValueOnce({ ok: false, refusal: 'not_permitted' });
+    const response = await POST(post({ settings: { announcement_channel_id: '333333333333333333' } }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'not_permitted' });
   });
 });
