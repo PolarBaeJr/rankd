@@ -217,7 +217,8 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       }),
     ),
     ...guests,
-  ].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    // Newest first, so the latest sign-ups are at the top (owner, 2026-10-24).
+  ].sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   // The door list: members, then the Form's non-members (00284), who carry no
   // player id and are keyed by their own row.

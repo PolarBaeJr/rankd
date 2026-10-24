@@ -10,7 +10,7 @@ import { undoImportedEntry } from '@/lib/actions/registration-imports';
 
 /**
  * One person on the list. Members and the Google Form's non-members are one
- * list, in sign-up order: the club treats them the same way at the door.
+ * list, newest sign-up first: the club treats them the same way at the door.
  * A guest carries the Form entry that put them here (removing them is that
  * entry's Undo) or none, for a walk-in, who is dealt with at the door.
  * `partner` is the preferred partner the Form's answer named (00299), as typed.
