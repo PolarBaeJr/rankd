@@ -484,8 +484,9 @@ export function describeDispatch(
         key: `leave:${guildId}:${user.id}:${minute}`,
         embed: {
           title: 'Member left',
-          // A kick or a ban also removes, and the audit log names who did it.
-          description: `<@${user.id}>\nA kick or ban shows as its own entry.`,
+          // A kick or a ban also removes; it gets its own entry from the audit
+          // log, which names who did it.
+          description: `<@${user.id}>`,
           color: COLOR_NEUTRAL,
           footer: { text: `User ${user.id}` },
           timestamp,
