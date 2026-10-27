@@ -12,7 +12,6 @@
 
 import type { AutomodAction } from './api.js';
 import type { DiscordApi, RoleCallResult } from './discord-api.js';
-import type { Embed } from './audit.js';
 
 /**
  * How the bot recognises its own warning among the pins: the count button's
@@ -22,8 +21,8 @@ import type { Embed } from './audit.js';
 export const TRAP_STATS_BUTTON = 'trap:stats';
 export const TRAP_NOTICE_FOOTER = 'Auto mod trap channel';
 
-// Dark grey, so the bar all but disappears and the warning reads as a card.
-const COLOR_CARD = 0x2b2d31;
+/** Discord's IS_COMPONENTS_V2 message flag: the message is laid out by its components alone. */
+export const COMPONENTS_V2 = 1 << 15;
 
 /** What a post here gets, in the warning's words, and what its count button says. */
 const CONSEQUENCE: Record<AutomodAction, { result: string; counted: string }> = {
@@ -36,23 +35,26 @@ const CONSEQUENCE: Record<AutomodAction, { result: string; counted: string }> = 
   flag: { result: 'is **reported to the moderators**', counted: 'Reported' },
 };
 
-export function trapNoticeEmbed(action: AutomodAction): Embed {
-  return {
-    title: 'DO NOT SEND MESSAGES IN THIS CHANNEL',
-    description: `This channel is used to catch spam bots. Any message sent here ${CONSEQUENCE[action].result}.`,
-    color: COLOR_CARD,
-  };
-}
-
-/** The whole warning: the card, and under it the count as a button that shows the stats. */
+/**
+ * The whole warning as one card (a components V2 container): the heading, the
+ * line, and inside the card the count as a button that shows the stats.
+ */
 export function trapNoticeMessage(action: AutomodAction, count: number) {
+  const { result, counted } = CONSEQUENCE[action];
   return {
-    embeds: [trapNoticeEmbed(action)],
+    flags: COMPONENTS_V2,
     components: [
       {
-        type: 1,
+        type: 17, // container
         components: [
-          { type: 2, style: 2, custom_id: TRAP_STATS_BUTTON, label: `${CONSEQUENCE[action].counted}: ${count}` },
+          {
+            type: 10, // text display
+            content: `## DO NOT SEND MESSAGES IN THIS CHANNEL\nThis channel is used to catch spam bots. Any message sent here ${result}.`,
+          },
+          {
+            type: 1,
+            components: [{ type: 2, style: 2, custom_id: TRAP_STATS_BUTTON, label: `${counted}: ${count}` }],
+          },
         ],
       },
     ],
@@ -98,15 +100,35 @@ async function postNotice(api: NoticeApi, channelId: string, action: AutomodActi
 }
 
 /**
+ * Rewrite a warning with a new count. One posted before the card cannot be
+ * edited into one (a message cannot gain the components V2 flag), so it is
+ * replaced: the card posted and pinned first, the old one deleted after, so a
+ * failed post leaves the old warning up.
+ */
+async function writeNotice(
+  api: NoticeApi,
+  channelId: string,
+  notice: Pin,
+  action: AutomodAction,
+  count: number
+): Promise<RoleCallResult> {
+  if (!notice.componentsV2) {
+    const posted = await postNotice(api, channelId, action, count);
+    if (posted !== 'failed') await api.deleteMessage(channelId, notice.id);
+    return posted;
+  }
+  const result = await api.editMessage(channelId, notice.id, trapNoticeMessage(action, count));
+  if (result === 'gone') return postNotice(api, channelId, action, count);
+  return result === 'ok' ? 'ok' : 'failed';
+}
+
+/**
  * Put the warning up in a channel just made a trap, keeping the count of one
  * that is already there (a channel removed and added back again).
  */
 export async function putUpTrapNotice(api: NoticeApi, channelId: string, action: AutomodAction): Promise<RoleCallResult> {
   const { notice } = await findNotice(api, channelId);
-  if (notice) {
-    const result = await api.editMessage(channelId, notice.id, trapNoticeMessage(action, noticeCount(notice)));
-    return result === 'ok' ? 'ok' : 'failed';
-  }
+  if (notice) return writeNotice(api, channelId, notice, action, noticeCount(notice));
   return postNotice(api, channelId, action, 0);
 }
 
@@ -144,9 +166,7 @@ export function bumpTrapNotice(
         await postNotice(api, channelId, action, 1);
         return;
       }
-      const count = noticeCount(notice) + 1;
-      const result = await api.editMessage(channelId, notice.id, trapNoticeMessage(action, count));
-      if (result === 'gone') await postNotice(api, channelId, action, count);
+      await writeNotice(api, channelId, notice, action, noticeCount(notice) + 1);
     } catch (error) {
       log(`[trap-notice] ${channelId}: ${String(error)}`);
     }

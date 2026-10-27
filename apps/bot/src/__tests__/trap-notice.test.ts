@@ -6,6 +6,7 @@ import {
   putUpTrapNotice,
   readTrapCount,
   trapNoticeMessage,
+  COMPONENTS_V2,
 } from '../trap-notice.js';
 
 // The trap channel warning keeps its count in itself: found among the pins
@@ -16,6 +17,7 @@ type FakePin = {
   authorId: string;
   embed: { footer: string; description: string } | null;
   buttons: { customId: string; label: string }[];
+  componentsV2: boolean;
 };
 
 function fakeApi(pins: FakePin[] | null) {
@@ -34,32 +36,60 @@ const notice = (count: number, authorId = 'bot'): FakePin => ({
   authorId,
   embed: { footer: '', description: '' },
   buttons: [{ customId: TRAP_STATS_BUTTON, label: `Soft bans: ${count}` }],
+  componentsV2: true,
 });
 
-type Sent = { embeds: { title: string; description: string }[]; components: { components: { label: string; custom_id: string }[] }[] };
-const label = (payload: unknown) => (payload as Sent).components[0]?.components[0]?.label;
+type Sent = {
+  flags: number;
+  components: { components: ({ content?: string } & { components?: { label: string; custom_id: string }[] })[] }[];
+};
+const card = (payload: unknown) => (payload as Sent).components[0]?.components ?? [];
+const label = (payload: unknown) => card(payload)[1]?.components?.[0]?.label;
 const editedLabel = (api: ReturnType<typeof fakeApi>) => label((api.editMessage.mock.calls.at(-1) as unknown[])[2]);
 
 describe('trap channel warning', () => {
-  it('reads as the owner asked, with the count on a button that opens the stats', () => {
+  it('is one card, with the count as a button inside it that opens the stats', () => {
     const message = trapNoticeMessage('softban', 9);
-    expect(message.embeds[0]?.title).toBe('DO NOT SEND MESSAGES IN THIS CHANNEL');
-    expect(message.embeds[0]?.description).toContain('**a soft ban**');
-    expect(message.components[0]?.components[0]).toMatchObject({ custom_id: TRAP_STATS_BUTTON, label: 'Soft bans: 9' });
+    expect(message.flags).toBe(COMPONENTS_V2);
+    expect(message.components[0]?.type).toBe(17);
+    expect(card(message)[0]?.content).toContain('## DO NOT SEND MESSAGES IN THIS CHANNEL');
+    expect(card(message)[0]?.content).toContain('**a soft ban**');
+    expect(card(message)[1]?.components?.[0]).toMatchObject({ custom_id: TRAP_STATS_BUTTON, label: 'Soft bans: 9' });
     expect(readTrapCount('Soft bans: 9')).toBe(9);
     expect(readTrapCount('no number here')).toBe(0);
   });
 
-  it('counts on from a warning pinned before the button, rewriting it in the new look', async () => {
-    const old: FakePin = {
-      id: 'warning',
-      authorId: 'bot',
-      embed: { footer: TRAP_NOTICE_FOOTER, description: 'Anything posted here is deleted.\n\n**Soft ban count:** 7' },
-      buttons: [],
-    };
-    const api = fakeApi([old]);
+  it('replaces a warning from before the card (it cannot be edited into one), keeping its count', async () => {
+    for (const old of [
+      {
+        id: 'warning',
+        authorId: 'bot',
+        embed: { footer: TRAP_NOTICE_FOOTER, description: 'Anything posted here is deleted.\n\n**Soft ban count:** 7' },
+        buttons: [],
+        componentsV2: false,
+      },
+      {
+        id: 'warning',
+        authorId: 'bot',
+        embed: { footer: '', description: '' },
+        buttons: [{ customId: TRAP_STATS_BUTTON, label: 'Soft bans: 7' }],
+        componentsV2: false,
+      },
+    ]) {
+      const api = fakeApi([old]);
+      await bumpTrapNotice(api as never, 'trap', 'softban');
+      expect(api.editMessage).not.toHaveBeenCalled();
+      expect(label((api.postMessage.mock.calls[0] as unknown[])[1])).toBe('Soft bans: 8');
+      expect(api.pinMessage).toHaveBeenCalledWith('trap', 'new', expect.any(String));
+      expect(api.deleteMessage).toHaveBeenCalledWith('trap', 'warning');
+    }
+  });
+
+  it('leaves the old warning up when its replacement cannot be posted', async () => {
+    const api = fakeApi([{ id: 'warning', authorId: 'bot', embed: { footer: TRAP_NOTICE_FOOTER, description: '' }, buttons: [], componentsV2: false }]);
+    api.postMessage.mockImplementation(async () => null as never);
     await bumpTrapNotice(api as never, 'trap', 'softban');
-    expect(editedLabel(api)).toBe('Soft bans: 8');
+    expect(api.deleteMessage).not.toHaveBeenCalled();
   });
 
   it('is posted and pinned in a new trap channel at 0', async () => {
@@ -107,5 +137,18 @@ describe('trap stats button', () => {
     expect(isTrapStatsButton('trap:statsx')).toBe(false);
     expect(isTrapStatsButton('guide:link')).toBe(false);
     expect(isTrapStatsButton(undefined)).toBe(false);
+  });
+});
+
+describe('reading a pinned card', () => {
+  it('finds the button inside a components V2 container and sees the flag', async () => {
+    const { DiscordApi } = await import('../discord-api.js');
+    const sent = trapNoticeMessage('softban', 4);
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify([{ id: 'm1', author: { id: 'bot' }, flags: sent.flags, components: sent.components }]), { status: 200 })
+    ) as unknown as typeof fetch;
+    const pins = await new DiscordApi({ token: 't', fetchImpl, sleep: async () => {} }).listPinnedMessages('trap');
+    expect(pins?.[0]?.componentsV2).toBe(true);
+    expect(pins?.[0]?.buttons).toEqual([{ customId: TRAP_STATS_BUTTON, label: 'Soft bans: 4' }]);
   });
 });
