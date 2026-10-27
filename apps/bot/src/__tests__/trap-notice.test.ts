@@ -1,10 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TRAP_NOTICE_FOOTER, bumpTrapNotice, putUpTrapNotice, readTrapCount, trapNoticeEmbed } from '../trap-notice.js';
+import {
+  TRAP_NOTICE_FOOTER,
+  TRAP_STATS_BUTTON,
+  bumpTrapNotice,
+  putUpTrapNotice,
+  readTrapCount,
+  trapNoticeMessage,
+} from '../trap-notice.js';
 
 // The trap channel warning keeps its count in itself: found among the pins
-// by its footer, read, and written back one higher.
+// by its count button, read off the button, and written back one higher.
 
-function fakeApi(pins: { id: string; authorId: string; embed: { footer: string; description: string } | null }[] | null) {
+type FakePin = {
+  id: string;
+  authorId: string;
+  embed: { footer: string; description: string } | null;
+  buttons: { customId: string; label: string }[];
+};
+
+function fakeApi(pins: FakePin[] | null) {
   return {
     getBotUserId: vi.fn(async () => 'bot'),
     listPinnedMessages: vi.fn(async () => pins),
@@ -15,22 +29,37 @@ function fakeApi(pins: { id: string; authorId: string; embed: { footer: string; 
   };
 }
 
-const notice = (count: number, authorId = 'bot') => ({
+const notice = (count: number, authorId = 'bot'): FakePin => ({
   id: 'warning',
   authorId,
-  embed: { footer: TRAP_NOTICE_FOOTER, description: trapNoticeEmbed('softban', count).description ?? '' },
+  embed: { footer: '', description: '' },
+  buttons: [{ customId: TRAP_STATS_BUTTON, label: `Soft bans: ${count}` }],
 });
 
-const editedTo = (api: ReturnType<typeof fakeApi>) =>
-  ((api.editMessage.mock.calls.at(-1) as unknown[])[2] as { embeds: { title: string; description: string }[] }).embeds[0];
+type Sent = { embeds: { title: string; description: string }[]; components: { components: { label: string; custom_id: string }[] }[] };
+const label = (payload: unknown) => (payload as Sent).components[0]?.components[0]?.label;
+const editedLabel = (api: ReturnType<typeof fakeApi>) => label((api.editMessage.mock.calls.at(-1) as unknown[])[2]);
 
 describe('trap channel warning', () => {
-  it('reads as the owner asked, and its count reads back', () => {
-    const embed = trapNoticeEmbed('softban', 9);
-    expect(embed.title).toBe('Do not type in this chat or you will be soft banned');
-    expect(embed.description).toContain('**Soft ban count:** 9');
-    expect(readTrapCount(embed.description ?? '')).toBe(9);
+  it('reads as the owner asked, with the count on a button that opens the stats', () => {
+    const message = trapNoticeMessage('softban', 9);
+    expect(message.embeds[0]?.title).toBe('DO NOT SEND MESSAGES IN THIS CHANNEL');
+    expect(message.embeds[0]?.description).toContain('**a soft ban**');
+    expect(message.components[0]?.components[0]).toMatchObject({ custom_id: TRAP_STATS_BUTTON, label: 'Soft bans: 9' });
+    expect(readTrapCount('Soft bans: 9')).toBe(9);
     expect(readTrapCount('no number here')).toBe(0);
+  });
+
+  it('counts on from a warning pinned before the button, rewriting it in the new look', async () => {
+    const old: FakePin = {
+      id: 'warning',
+      authorId: 'bot',
+      embed: { footer: TRAP_NOTICE_FOOTER, description: 'Anything posted here is deleted.\n\n**Soft ban count:** 7' },
+      buttons: [],
+    };
+    const api = fakeApi([old]);
+    await bumpTrapNotice(api as never, 'trap', 'softban');
+    expect(editedLabel(api)).toBe('Soft bans: 8');
   });
 
   it('is posted and pinned in a new trap channel at 0', async () => {
@@ -44,7 +73,7 @@ describe('trap channel warning', () => {
     const api = fakeApi([notice(50, 'someone'), notice(9)]);
     await bumpTrapNotice(api as never, 'trap', 'softban');
     expect(api.editMessage).toHaveBeenCalledWith('trap', 'warning', expect.anything());
-    expect(editedTo(api)?.description).toContain('**Soft ban count:** 10');
+    expect(editedLabel(api)).toBe('Soft bans: 10');
   });
 
   it('counts catches at the same moment one after another', async () => {
@@ -52,7 +81,7 @@ describe('trap channel warning', () => {
     const api = fakeApi(null);
     api.listPinnedMessages.mockImplementation(async () => [notice(count)]);
     api.editMessage.mockImplementation(async (_channel: string, _id: string, payload: unknown) => {
-      count = readTrapCount((payload as { embeds: { description: string }[] }).embeds[0]?.description ?? '');
+      count = readTrapCount(label(payload) ?? '');
       return 'ok' as const;
     });
     await Promise.all([bumpTrapNotice(api as never, 'trap', 'softban'), bumpTrapNotice(api as never, 'trap', 'softban')]);
@@ -63,11 +92,20 @@ describe('trap channel warning', () => {
     const gone = fakeApi([]);
     await bumpTrapNotice(gone as never, 'trap', 'softban');
     expect(gone.postMessage).toHaveBeenCalledTimes(1);
-    const posted = (gone.postMessage.mock.calls[0] as unknown[])[1] as { embeds: { description: string }[] };
-    expect(posted.embeds[0]?.description).toContain('**Soft ban count:** 1');
+    expect(label((gone.postMessage.mock.calls[0] as unknown[])[1])).toBe('Soft bans: 1');
 
     const unreadable = fakeApi(null);
     await bumpTrapNotice(unreadable as never, 'trap', 'softban');
     expect(unreadable.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('trap stats button', () => {
+  it('answers only its own custom_id', async () => {
+    const { isTrapStatsButton } = await import('../commands.js');
+    expect(isTrapStatsButton(TRAP_STATS_BUTTON)).toBe(true);
+    expect(isTrapStatsButton('trap:statsx')).toBe(false);
+    expect(isTrapStatsButton('guide:link')).toBe(false);
+    expect(isTrapStatsButton(undefined)).toBe(false);
   });
 });
