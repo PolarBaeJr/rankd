@@ -375,6 +375,8 @@ export class DiscordApi {
         embed: { footer: string; description: string } | null;
         /** Every button on the message, in order. */
         buttons: { customId: string; label: string }[];
+        /** Laid out by components alone (IS_COMPONENTS_V2): editable only as such. */
+        componentsV2: boolean;
       }[]
     | null
   > {
@@ -385,7 +387,8 @@ export class DiscordApi {
         id?: unknown;
         author?: { id?: unknown };
         embeds?: { footer?: { text?: unknown }; description?: unknown }[];
-        components?: { components?: { custom_id?: unknown; label?: unknown }[] }[];
+        components?: unknown[];
+        flags?: unknown;
       }[];
       return body
         .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
@@ -394,13 +397,8 @@ export class DiscordApi {
           return {
             id: message.id,
             authorId: typeof message.author?.id === 'string' ? message.author.id : null,
-            buttons: (message.components ?? [])
-              .flatMap((row) => row.components ?? [])
-              .filter((button) => typeof button.custom_id === 'string')
-              .map((button) => ({
-                customId: button.custom_id as string,
-                label: typeof button.label === 'string' ? button.label : '',
-              })),
+            buttons: collectButtons(message.components ?? []),
+            componentsV2: typeof message.flags === 'number' && (message.flags & (1 << 15)) !== 0,
             embed: embed
               ? {
                   footer: typeof embed.footer?.text === 'string' ? embed.footer.text : '',
@@ -913,4 +911,23 @@ function multipartBody(payload: unknown, file: CardFile): FormData {
   // upload everything behind it.
   form.append('files[0]', new Blob([file.bytes], { type: file.contentType }), file.filename);
   return form;
+}
+
+/**
+ * Every button in a message's components, however deep: an action row's,
+ * and in a components V2 layout a container's rows and a section's accessory.
+ */
+function collectButtons(components: unknown[]): { customId: string; label: string }[] {
+  const found: { customId: string; label: string }[] = [];
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const component = node as { type?: unknown; custom_id?: unknown; label?: unknown; components?: unknown; accessory?: unknown };
+    if (component.type === 2 && typeof component.custom_id === 'string') {
+      found.push({ customId: component.custom_id, label: typeof component.label === 'string' ? component.label : '' });
+    }
+    if (Array.isArray(component.components)) component.components.forEach(visit);
+    visit(component.accessory);
+  };
+  components.forEach(visit);
+  return found;
 }
