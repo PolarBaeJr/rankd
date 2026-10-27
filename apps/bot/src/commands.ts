@@ -78,7 +78,7 @@ import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import { CRYPTO_WORDS, GIVEAWAY_WORDS } from './scam-guard.js';
-import { putUpTrapNotice, takeDownTrapNotice } from './trap-notice.js';
+import { TRAP_STATS_BUTTON, putUpTrapNotice, readTrapChannelCount, takeDownTrapNotice } from './trap-notice.js';
 import { socialsReply, type SocialsPayload } from './socials.js';
 import {
   ALL_SETTINGS,
@@ -7959,6 +7959,76 @@ export function canManageServer(permissions: string | null | undefined): boolean
     return (BigInt(permissions) & (MANAGE_GUILD_BIT | ADMINISTRATOR_BIT)) !== 0n;
   } catch {
     return false;
+  }
+}
+
+/** True for the count button on a trap channel's warning. */
+export function isTrapStatsButton(customId: string | undefined | null): boolean {
+  return customId === TRAP_STATS_BUTTON;
+}
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DISCORD_EPOCH_MS = 1420070400000n;
+
+/**
+ * The count button on a trap channel's warning: the trap stats, only to whoever
+ * pressed it. This server's traps channel by channel, the auto mod soft bans of
+ * the last week (from the audit log, which keeps 45 days), and the totals across
+ * every server using this bot. The counts are the ones on each warning.
+ */
+export async function handleTrapStatsButton(context: { guildId: string | null }) {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token || !context.guildId) return ephemeral('The stats are not available here.');
+  const guildId = context.guildId;
+  const api = new DiscordApi({ token });
+  try {
+    const { servers } = await fetchServerSettings();
+    const withTraps = servers.filter((row) => row.automodTrapChannelIds.length > 0);
+    const [counts, softBans] = await Promise.all([
+      Promise.all(
+        withTraps.flatMap((row) =>
+          row.automodTrapChannelIds.map(async (channelId) => ({
+            guildId: row.guildId,
+            channelId,
+            count: await readTrapChannelCount(api, channelId),
+          }))
+        )
+      ),
+      api.listAuditLogEntries(guildId, 22),
+    ]);
+    const mine = counts.filter((row) => row.guildId === guildId);
+    const sum = (rows: typeof counts) => rows.reduce((total, row) => total + (row.count ?? 0), 0);
+    const number = (value: number) => `\`${value.toLocaleString('en-CA')}\``;
+    const weekAgo = Date.now() - WEEK_MS;
+    const lastWeek = softBans
+      ? softBans.filter(
+          (entry) =>
+            Number((BigInt(entry.id) >> 22n) + DISCORD_EPOCH_MS) >= weekAgo &&
+            decodeURIComponentSafe(entry.reason).startsWith('Auto soft-ban (auto mod)')
+        ).length
+      : null;
+    const lines = [
+      '**This server**',
+      `Total caught: ${number(sum(mine))}`,
+      ...mine.map((row) => `- <#${row.channelId}>: ${row.count === null ? 'cannot read' : number(row.count)}`),
+      `Auto mod soft bans in the last 7 days: ${lastWeek === null ? 'unknown (I need View Audit Log)' : number(lastWeek)}`,
+      '',
+      '**All servers using this bot**',
+      `Servers with a trap channel: ${number(withTraps.length)}`,
+      `Total caught: ${number(sum(counts))}`,
+    ];
+    return ephemeralEmbed({ title: 'Trap channel stats', description: lines.join('\n'), color: 0x2b2d31 });
+  } catch (error) {
+    console.error('[bot] trap stats failed:', error);
+    return ephemeral('Could not read the stats just now. Try again in a moment.');
+  }
+}
+
+function decodeURIComponentSafe(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
   }
 }
 

@@ -14,33 +14,68 @@ import type { AutomodAction } from './api.js';
 import type { DiscordApi, RoleCallResult } from './discord-api.js';
 import type { Embed } from './audit.js';
 
-/** How the bot recognises its own warning among the pins. */
+/**
+ * How the bot recognises its own warning among the pins: the count button's
+ * custom_id. Warnings pinned before the button existed carry this footer
+ * instead, and are rewritten in the new look on their next count.
+ */
+export const TRAP_STATS_BUTTON = 'trap:stats';
 export const TRAP_NOTICE_FOOTER = 'Auto mod trap channel';
 
-const COLOR_WARNING = 0xe74c3c;
+// Dark grey, so the bar all but disappears and the warning reads as a card.
+const COLOR_CARD = 0x2b2d31;
 
-/** What a post here gets, in the warning's words, and what its count counts. */
-const CONSEQUENCE: Record<AutomodAction, { gets: string; counted: string }> = {
-  softban: { gets: 'soft banned', counted: 'Soft ban count' },
-  timeout_then_softban: { gets: 'timed out, then soft banned', counted: 'Caught' },
-  timeout: { gets: 'timed out', counted: 'Timeout count' },
-  flag: { gets: 'reported to the moderators', counted: 'Reported' },
+/** What a post here gets, in the warning's words, and what its count button says. */
+const CONSEQUENCE: Record<AutomodAction, { result: string; counted: string }> = {
+  softban: { result: 'will result in **a soft ban**', counted: 'Soft bans' },
+  timeout_then_softban: {
+    result: 'will result in **a timeout**, and **a soft ban** if it happens again',
+    counted: 'Caught',
+  },
+  timeout: { result: 'will result in **a timeout**', counted: 'Timeouts' },
+  flag: { result: 'is **reported to the moderators**', counted: 'Reported' },
 };
 
-export function trapNoticeEmbed(action: AutomodAction, count: number): Embed {
-  const { gets, counted } = CONSEQUENCE[action];
+export function trapNoticeEmbed(action: AutomodAction): Embed {
   return {
-    title: `Do not type in this chat or you will be ${gets}`,
-    description: `Anything posted here is deleted.\n\n**${counted}:** ${count}`,
-    color: COLOR_WARNING,
-    footer: { text: TRAP_NOTICE_FOOTER },
+    title: 'DO NOT SEND MESSAGES IN THIS CHANNEL',
+    description: `This channel is used to catch spam bots. Any message sent here ${CONSEQUENCE[action].result}.`,
+    color: COLOR_CARD,
   };
 }
 
-/** The number on a warning, or 0 when there is none to read. */
-export function readTrapCount(description: string): number {
-  const match = /\*\*[^*]+:\*\* (\d+)\s*$/.exec(description);
+/** The whole warning: the card, and under it the count as a button that shows the stats. */
+export function trapNoticeMessage(action: AutomodAction, count: number) {
+  return {
+    embeds: [trapNoticeEmbed(action)],
+    components: [
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, custom_id: TRAP_STATS_BUTTON, label: `${CONSEQUENCE[action].counted}: ${count}` },
+        ],
+      },
+    ],
+  };
+}
+
+/** The number at the end of a count button's label (or an old warning's text), or 0. */
+export function readTrapCount(text: string): number {
+  const match = /(\d+)\s*$/.exec(text);
   return match ? Number(match[1]) : 0;
+}
+
+type Pin = Awaited<ReturnType<DiscordApi['listPinnedMessages']>> extends (infer P)[] | null ? P : never;
+
+function isNotice(pin: Pin, botId: string): boolean {
+  if (pin.authorId !== botId) return false;
+  return pin.buttons.some((button) => button.customId === TRAP_STATS_BUTTON) || pin.embed?.footer === TRAP_NOTICE_FOOTER;
+}
+
+/** A warning's count: from its button, or from an old warning's last line. */
+export function noticeCount(pin: Pin): number {
+  const button = pin.buttons.find((candidate) => candidate.customId === TRAP_STATS_BUTTON);
+  return readTrapCount(button ? button.label : (pin.embed?.description ?? ''));
 }
 
 type NoticeApi = Pick<
@@ -51,13 +86,13 @@ type NoticeApi = Pick<
 async function findNotice(api: NoticeApi, channelId: string) {
   const [pins, botId] = await Promise.all([api.listPinnedMessages(channelId), api.getBotUserId()]);
   if (!pins) return { readable: false as const, notice: null };
-  const notice = pins.find((pin) => pin.authorId === botId && pin.embed?.footer === TRAP_NOTICE_FOOTER) ?? null;
+  const notice = pins.find((pin) => isNotice(pin, botId)) ?? null;
   return { readable: true as const, notice };
 }
 
 /** Post and pin a fresh warning. Says whether the pin took, so the caller can explain a missing one. */
 async function postNotice(api: NoticeApi, channelId: string, action: AutomodAction, count: number): Promise<RoleCallResult> {
-  const messageId = await api.postMessage(channelId, { embeds: [trapNoticeEmbed(action, count)], allowed_mentions: { parse: [] } });
+  const messageId = await api.postMessage(channelId, { ...trapNoticeMessage(action, count), allowed_mentions: { parse: [] } });
   if (!messageId) return 'failed';
   return api.pinMessage(channelId, messageId, 'Auto mod: the trap channel warning');
 }
@@ -69,11 +104,17 @@ async function postNotice(api: NoticeApi, channelId: string, action: AutomodActi
 export async function putUpTrapNotice(api: NoticeApi, channelId: string, action: AutomodAction): Promise<RoleCallResult> {
   const { notice } = await findNotice(api, channelId);
   if (notice) {
-    const count = readTrapCount(notice.embed?.description ?? '');
-    const result = await api.editMessage(channelId, notice.id, { embeds: [trapNoticeEmbed(action, count)] });
+    const result = await api.editMessage(channelId, notice.id, trapNoticeMessage(action, noticeCount(notice)));
     return result === 'ok' ? 'ok' : 'failed';
   }
   return postNotice(api, channelId, action, 0);
+}
+
+/** A trap channel's count, or null when its pins cannot be read. */
+export async function readTrapChannelCount(api: NoticeApi, channelId: string): Promise<number | null> {
+  const { readable, notice } = await findNotice(api, channelId);
+  if (!readable) return null;
+  return notice ? noticeCount(notice) : 0;
 }
 
 /** Take the warning down from a channel that is no longer a trap. */
@@ -103,8 +144,8 @@ export function bumpTrapNotice(
         await postNotice(api, channelId, action, 1);
         return;
       }
-      const count = readTrapCount(notice.embed?.description ?? '') + 1;
-      const result = await api.editMessage(channelId, notice.id, { embeds: [trapNoticeEmbed(action, count)] });
+      const count = noticeCount(notice) + 1;
+      const result = await api.editMessage(channelId, notice.id, trapNoticeMessage(action, count));
       if (result === 'gone') await postNotice(api, channelId, action, count);
     } catch (error) {
       log(`[trap-notice] ${channelId}: ${String(error)}`);

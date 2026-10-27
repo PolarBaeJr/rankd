@@ -43,6 +43,8 @@ import {
   handleTournamentListModal,
   handleTournamentPageButton,
   isGuideButton,
+  isTrapStatsButton,
+  handleTrapStatsButton,
   isReportModal,
   isSelfRoleButton,
   isSessionBoardButton,
@@ -931,6 +933,12 @@ const server = createServer(async (req, res) => {
           data: { content: 'Something went wrong. Please try again.', flags: 64 },
         });
       }
+    }
+
+    // The count button on a trap channel's warning: the stats, only to whoever
+    // pressed it. trap:stats is disjoint from every other prefix.
+    if (isTrapStatsButton(customId)) {
+      return send(res, 200, await handleTrapStatsButton({ guildId: interaction.guild_id ?? null }));
     }
 
     // The guide message's buttons. The same two fields as above and no role

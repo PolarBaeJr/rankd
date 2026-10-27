@@ -312,6 +312,27 @@ export class DiscordApi {
   }
 
   /**
+   * The server's latest audit log entries of one kind (newest first, at most
+   * 100), each with its id and reason. Null when unreadable: it needs View
+   * Audit Log.
+   */
+  async listAuditLogEntries(
+    guildId: string,
+    actionType: number
+  ): Promise<{ id: string; reason: string }[] | null> {
+    try {
+      const response = await this.request('GET', `/guilds/${guildId}/audit-logs?action_type=${actionType}&limit=100`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as { audit_log_entries?: { id?: unknown; reason?: unknown }[] };
+      return (body.audit_log_entries ?? [])
+        .filter((entry): entry is { id: string; reason?: unknown } => typeof entry.id === 'string')
+        .map((entry) => ({ id: entry.id, reason: typeof entry.reason === 'string' ? entry.reason : '' }));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Time a member out until `until` (Discord caps it at 28 days). They stay
    * in the server and can read, but cannot post, react or speak. Needs
    * Moderate Members, and the same role order as a ban.
@@ -347,7 +368,16 @@ export class DiscordApi {
   /** A channel's pinned messages, with who posted each and its first embed's text. Null when unreadable. */
   async listPinnedMessages(
     channelId: string
-  ): Promise<{ id: string; authorId: string | null; embed: { footer: string; description: string } | null }[] | null> {
+  ): Promise<
+    | {
+        id: string;
+        authorId: string | null;
+        embed: { footer: string; description: string } | null;
+        /** Every button on the message, in order. */
+        buttons: { customId: string; label: string }[];
+      }[]
+    | null
+  > {
     try {
       const response = await this.request('GET', `/channels/${channelId}/pins`);
       if (!response.ok) return null;
@@ -355,6 +385,7 @@ export class DiscordApi {
         id?: unknown;
         author?: { id?: unknown };
         embeds?: { footer?: { text?: unknown }; description?: unknown }[];
+        components?: { components?: { custom_id?: unknown; label?: unknown }[] }[];
       }[];
       return body
         .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
@@ -363,6 +394,13 @@ export class DiscordApi {
           return {
             id: message.id,
             authorId: typeof message.author?.id === 'string' ? message.author.id : null,
+            buttons: (message.components ?? [])
+              .flatMap((row) => row.components ?? [])
+              .filter((button) => typeof button.custom_id === 'string')
+              .map((button) => ({
+                customId: button.custom_id as string,
+                label: typeof button.label === 'string' ? button.label : '',
+              })),
             embed: embed
               ? {
                   footer: typeof embed.footer?.text === 'string' ? embed.footer.text : '',
