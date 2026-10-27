@@ -147,7 +147,7 @@ describe('describeDispatch', () => {
         action_type: 22,
         user_id: 'mod',
         target_id: 'spammer',
-        reason: encodeURIComponent('Soft ban by mod: spam'),
+        reason: encodeURIComponent('spam'),
       },
       context(['moderation'])
     );
@@ -156,7 +156,45 @@ describe('describeDispatch', () => {
     expect(entry?.embed.description).toContain('**By:** <@mod>');
     expect(entry?.actorId).toBe('mod');
     expect(entry?.embed.description).toContain('**On:** <@spammer>');
-    expect(entry?.embed.fields?.[0]?.value).toBe('Soft ban by mod: spam');
+    expect(entry?.embed.fields?.[0]?.value).toBe('spam');
+  });
+
+  it('shows a /softban as softbanned by the moderator, not banned by the bot', () => {
+    const entry = describeDispatch(
+      'GUILD_AUDIT_LOG_ENTRY_CREATE',
+      {
+        id: 'a1',
+        guild_id: 'g',
+        action_type: 22,
+        user_id: 'bot',
+        target_id: 'spammer',
+        reason: encodeURIComponent('Soft ban by 307750254281883650: spam / scam'),
+      },
+      context(['moderation'])
+    );
+    expect(entry?.embed.title).toBe('Member softbanned');
+    expect(entry?.embed.description).toContain('**By:** <@307750254281883650>');
+    expect(entry?.actorId).toBe('307750254281883650');
+    expect(entry?.embed.fields?.[0]?.value).toBe('spam / scam');
+  });
+
+  it('shows an auto mod soft ban as by auto mod, and drops the unbans that lift soft bans', () => {
+    const auto = describeDispatch(
+      'GUILD_AUDIT_LOG_ENTRY_CREATE',
+      { id: 'a2', guild_id: 'g', action_type: 22, user_id: 'bot', target_id: 's',
+        reason: encodeURIComponent('Auto soft-ban (auto mod): scam link') },
+      context(['moderation'])
+    );
+    expect(auto?.embed.title).toBe('Member softbanned');
+    expect(auto?.embed.description).toContain('**By:** auto mod');
+    expect(auto?.embed.fields?.[0]?.value).toBe('scam link');
+    for (const reason of ['Soft ban: lifting it (307750254281883650)', 'Auto soft-ban (auto mod): lifting it']) {
+      expect(describeDispatch(
+        'GUILD_AUDIT_LOG_ENTRY_CREATE',
+        { id: 'a3', guild_id: 'g', action_type: 23, user_id: 'bot', target_id: 's', reason: encodeURIComponent(reason) },
+        context(['moderation'])
+      )).toBeNull();
+    }
   });
 
   it('renders role changes and timeouts readably', () => {

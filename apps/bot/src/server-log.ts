@@ -511,6 +511,36 @@ export function describeDispatch(
       const footer = targetId ? { text: `ID: ${targetId}` } : undefined;
       const color = REMOVAL_ACTIONS.has(actionType) ? COLOR_REMOVAL : COLOR_MODERATION;
 
+      // A soft ban is the bot banning then unbanning, so Discord names the bot
+      // as the actor. The reason the bot wrote says who really asked (or that
+      // auto mod did it): show that, call it a soft ban, and drop the unban
+      // that only lifts it.
+      const reasonText = typeof d.reason === 'string' ? decodeReason(d.reason) : '';
+      if (actionType === 23 && /^(Soft ban: lifting it|Auto soft-ban \(auto mod\): lifting it)/.test(reasonText)) {
+        return null;
+      }
+      const softBan = actionType === 22
+        ? /^Soft ban by (\d+): ([\s\S]*)$/.exec(reasonText) ?? /^Auto soft-ban \(auto mod\): ([\s\S]*)$/.exec(reasonText)
+        : null;
+      if (softBan) {
+        const byModerator = softBan.length === 3;
+        const moderatorId = byModerator ? softBan[1] : undefined;
+        const why = (byModerator ? softBan[2] : softBan[1]) ?? '';
+        return {
+          key: `audit:${d.id}`,
+          actorId: moderatorId ?? actorId,
+          embed: {
+            title: 'Member softbanned',
+            description:
+              `**By:** ${moderatorId ? `<@${moderatorId}>` : 'auto mod'}` + (target ? `\n**On:** ${target}` : ''),
+            color,
+            fields: why ? [{ name: 'Reason', value: clip(why, 1000), inline: false }] : undefined,
+            footer,
+            timestamp,
+          },
+        };
+      }
+
       // A member's roles or nickname read as a sentence about them, headed by
       // whoever made the change.
       if ((actionType === 25 || actionType === 24) && target) {

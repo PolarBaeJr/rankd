@@ -109,7 +109,9 @@ export class DiscordApi {
         method,
         headers: {
           authorization: `Bot ${this.token}`,
-          ...(isForm ? {} : { 'content-type': 'application/json' }),
+          // Only with a JSON body: Discord rejects a bodyless call that claims
+          // JSON (50109 "invalid JSON"), which broke every unban on 2026-10-27.
+          ...(isForm || body === undefined ? {} : { 'content-type': 'application/json' }),
           ...extraHeaders,
         },
         ...(body === undefined
