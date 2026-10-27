@@ -53,6 +53,7 @@
 // held only while the `content` scope is on.
 
 import { createHash } from 'node:crypto';
+import { recallPurge } from './purge-memory.js';
 import type { DiscordApi } from './discord-api.js';
 import type { Embed } from './audit.js';
 
@@ -205,7 +206,8 @@ const AUDIT_ACTIONS: Record<number, string> = {
 };
 
 const MEMBER_TARGET_ACTIONS = new Set([20, 22, 23, 24, 25, 26, 27, 72, 143, 144, 145]);
-const CHANNEL_TARGET_ACTIONS = new Set([10, 11, 12, 13, 14, 15, 110, 111, 112]);
+// 73, a bulk delete, names the channel the messages were in.
+const CHANNEL_TARGET_ACTIONS = new Set([10, 11, 12, 13, 14, 15, 73, 110, 111, 112]);
 const ROLE_TARGET_ACTIONS = new Set([30, 31, 32]);
 const REMOVAL_ACTIONS = new Set([12, 20, 21, 22, 32, 72, 73, 145]);
 
@@ -577,6 +579,9 @@ export function describeDispatch(
         }
       }
 
+      // The bot's own bulk delete is a /purge: name who ran it, not the bot.
+      const purgedBy = actionType === 73 && targetId ? recallPurge(targetId) : null;
+      const byId = purgedBy ?? actorId;
       const lines = changes.slice(0, 8).map(changeLine);
       if (changes.length > 8) lines.push(`...and ${changes.length - 8} more`);
       const options = d.options as { channel_id?: string; count?: string } | undefined;
@@ -584,12 +589,12 @@ export function describeDispatch(
       const count = options?.count ? ` (${options.count})` : '';
       return {
         key: `audit:${d.id}`,
-        actorId,
+        actorId: byId,
         embed: {
           title: (AUDIT_ACTIONS[actionType] ?? `Server change (action ${actionType})`) + count,
           description:
-            `**By:** ${actorId ? `<@${actorId}>` : 'someone'}` +
-            (target ? `\n**On:** ${target}` : '') +
+            `**By:** ${byId ? `<@${byId}>` : 'someone'}` +
+            (target ? `\n**${actionType === 73 ? 'In' : 'On'}:** ${target}` : '') +
             where +
             (lines.length ? `\n\n${lines.join('\n')}` : ''),
           color,

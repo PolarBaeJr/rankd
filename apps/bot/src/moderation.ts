@@ -144,6 +144,17 @@ export async function softban(
   };
 }
 
+type SoftBanListener = (guildId: string) => void;
+const softBanListeners: SoftBanListener[] = [];
+
+/**
+ * Called after every soft ban whose ban landed, from /softban and auto mod
+ * alike (index.ts counts them on the trap channel warnings).
+ */
+export function onSoftBan(listener: SoftBanListener): void {
+  softBanListeners.push(listener);
+}
+
 /**
  * The soft ban itself, with no checks on who asked: a ban that deletes the
  * last `deleteSeconds` of messages, then the unban, retried. /softban runs its
@@ -165,6 +176,13 @@ export async function banThenUnban(
 ): Promise<'ok' | 'not_lifted' | 'forbidden' | 'failed'> {
   const banned = await api.banMember(input.guildId, input.targetId, input.deleteSeconds, input.reason);
   if (banned !== 'ok') return banned === 'forbidden' ? 'forbidden' : 'failed';
+  for (const listener of softBanListeners) {
+    try {
+      listener(input.guildId);
+    } catch (error) {
+      console.error('[bot] soft ban listener failed:', error);
+    }
+  }
   for (let attempt = 1; attempt <= UNBAN_ATTEMPTS; attempt += 1) {
     const result = await api.unbanMember(input.guildId, input.targetId, input.liftReason);
     // not_found means there is no ban to lift, which is the state we wanted.

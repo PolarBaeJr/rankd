@@ -78,6 +78,7 @@ import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import { CRYPTO_WORDS, GIVEAWAY_WORDS } from './scam-guard.js';
+import { rememberPurge } from './purge-memory.js';
 import { TRAP_STATS_BUTTON, putUpTrapNotice, readTrapChannelCount, takeDownTrapNotice } from './trap-notice.js';
 import { socialsReply, type SocialsPayload } from './socials.js';
 import {
@@ -7972,9 +7973,10 @@ const DISCORD_EPOCH_MS = 1420070400000n;
 
 /**
  * The count button on a trap channel's warning: the trap stats, only to whoever
- * pressed it. This server's traps channel by channel, the auto mod soft bans of
- * the last week (from the audit log, which keeps 45 days), and the totals across
- * every server using this bot. The counts are the ones on each warning.
+ * pressed it. This server's traps channel by channel, the soft bans of the
+ * last week from /softban and auto mod (the audit log keeps 45 days), and the
+ * totals across every server using this bot. The counts are the ones on each
+ * warning.
  */
 export async function handleTrapStatsButton(context: { guildId: string | null }) {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -8004,14 +8006,14 @@ export async function handleTrapStatsButton(context: { guildId: string | null })
       ? softBans.filter(
           (entry) =>
             Number((BigInt(entry.id) >> 22n) + DISCORD_EPOCH_MS) >= weekAgo &&
-            decodeURIComponentSafe(entry.reason).startsWith('Auto soft-ban (auto mod)')
+            /^(Auto soft-ban \(auto mod\)|Soft ban by )/.test(decodeURIComponentSafe(entry.reason))
         ).length
       : null;
     const lines = [
       '**This server**',
       `Total caught: ${number(sum(mine))}`,
       ...mine.map((row) => `- <#${row.channelId}>: ${row.count === null ? 'cannot read' : number(row.count)}`),
-      `Auto mod soft bans in the last 7 days: ${lastWeek === null ? 'unknown (I need View Audit Log)' : number(lastWeek)}`,
+      `Soft bans in the last 7 days: ${lastWeek === null ? 'unknown (I need View Audit Log)' : number(lastWeek)}`,
       '',
       '**All servers using this bot**',
       `Servers with a trap channel: ${number(withTraps.length)}`,
@@ -8340,6 +8342,7 @@ export async function handlePurge(
   }
 
   const reason = `Purge by ${context.discordUserId}`;
+  if (context.discordUserId) rememberPurge(context.channelId, context.discordUserId);
   const outcome = fresh.length
     ? await api.deleteMessages(context.channelId, fresh.map((message) => message.id), reason)
     : 'ok';

@@ -76,6 +76,7 @@ import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
 import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
 import { bumpTrapNotice } from './trap-notice.js';
+import { onSoftBan } from './moderation.js';
 import { createScamGuard, type GuardRules } from './scam-guard.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
@@ -1141,6 +1142,16 @@ function serverLogOptions(token: string) {
 
   const api = new DiscordApi({ token });
   const serverLog = createServerLog({ api, scopes, resolveChannel });
+  // A soft-banning trap's warning counts every soft ban in its server, from
+  // /softban as much as from auto mod.
+  onSoftBan((guildId) => {
+    void serverSettings(guildId)
+      .then((settings) => {
+        if (!settings || (settings.automodTrapAction ?? 'softban') !== 'softban') return;
+        for (const channelId of settings.automodTrapChannelIds) void bumpTrapNotice(api, channelId, 'softban');
+      })
+      .catch(() => {});
+  });
   if (!scopes.has('scam')) return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
 
   // The scam guard reads the same messages. See scam-guard.ts.
@@ -1148,7 +1159,11 @@ function serverLogOptions(token: string) {
     api,
     rulesFor,
     report: serverLog.post,
-    onTrapCaught: (_guildId, channelId, action) => void bumpTrapNotice(api, channelId, action),
+    // A soft ban is counted by onSoftBan below, whatever caught it, so a trap
+    // that soft-bans is not counted twice.
+    onTrapCaught: (_guildId, channelId, action) => {
+      if (action !== 'softban') void bumpTrapNotice(api, channelId, action);
+    },
   });
   return {
     intents: intentsFor(scopes),
