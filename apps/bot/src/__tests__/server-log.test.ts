@@ -60,20 +60,23 @@ describe('MessageCache', () => {
 });
 
 describe('describeDispatch', () => {
-  it('logs a deleted message with its author, and its text only with the content scope', () => {
+  it('logs a deleted message naming nobody, with its text only with the content scope', () => {
+    // Discord does not say who deleted it; a moderator is named later from
+    // the audit log, and somebody deleting their own stays just the message.
     const withText = context(['messages', 'content']);
     describeDispatch('MESSAGE_CREATE', created('m1'), withText);
     const entry = describeDispatch('MESSAGE_DELETE', { id: 'm1', guild_id: 'g', channel_id: 'general' }, withText);
     expect(entry?.key).toBe('delete:m1');
-    expect(entry?.embed.description).toContain('<@spammer>');
+    expect(entry?.embed.description).not.toContain('<@spammer>');
+    expect(entry?.embed.description).toContain('<#general>');
     expect(entry?.embed.description).toContain('buy crypto now');
-    expect(entry?.actorId).toBe('spammer');
-    expect(entry?.embed.footer?.text).toBe('Author: spammer | Message ID: m1');
+    expect(entry?.actorId).toBeUndefined();
+    expect(entry?.deleted?.authorId).toBe('spammer');
+    expect(entry?.embed.footer?.text).toBe('Message ID: m1');
 
     const noText = context(['messages']);
     describeDispatch('MESSAGE_CREATE', created('m2'), noText);
     const bare = describeDispatch('MESSAGE_DELETE', { id: 'm2', guild_id: 'g', channel_id: 'general' }, noText);
-    expect(bare?.embed.description).toContain('<@spammer>');
     expect(bare?.embed.description).not.toContain('crypto');
   });
 
@@ -395,10 +398,11 @@ describe('who deleted a message', () => {
     expect(embed?.description).toContain('rude');
   });
 
-  it('heads it with the author, naming nobody else, when there is no fresh entry', async () => {
+  it('names nobody when there is no fresh entry (they deleted their own)', async () => {
     // An old entry for the same person and channel is somebody's earlier delete.
     const embed = await deleteWith([{ id: '1000', userId: 'mod', targetId: 'spammer', channelId: 'general', count: 1 }]);
-    expect(embed?.author?.name).toBe('Spammer');
+    expect(embed?.author).toBeUndefined();
+    expect(embed?.description).not.toContain('<@spammer>');
     expect(embed?.description).not.toContain('Deleted by');
   });
 

@@ -417,15 +417,18 @@ export function describeDispatch(
       const files = cached.attachments
         ? `\n\n_${cached.attachments} attachment${cached.attachments === 1 ? '' : 's'}_`
         : '';
+      // Nobody named: Discord does not say who deletes a message. A moderator's
+      // delete is matched to its audit entry later (nameDeleter), which adds who
+      // wrote it and who removed it; one that people delete themselves stays
+      // as just the message, owner's call (2026-10-27).
       return {
         key: `delete:${d.id}`,
-        actorId: cached.authorId,
         deleted: { authorId: cached.authorId, channelId: d.channel_id },
         embed: {
           title: 'Message deleted',
-          description: `**From:** <@${cached.authorId}>   **In:** <#${d.channel_id}>${body}${files}`,
+          description: `**In:** <#${d.channel_id}>${body}${files}`,
           color: COLOR_REMOVAL,
-          footer: { text: `Author: ${cached.authorId} | Message ID: ${d.id}` },
+          footer: { text: `Message ID: ${d.id}` },
           timestamp,
         },
       };
@@ -804,9 +807,8 @@ export function createServerLog(options: ServerLogOptions): ServerLog {
     entry.actorId = fresh.userId;
     const by = `   **Deleted by:** <@${fresh.userId}>`;
     let description = entry.embed.description ?? '';
-    if (!deleted.authorId && fresh.targetId) {
-      description = description.replace('**In:**', `**From:** <@${fresh.targetId}>   **In:**`);
-    }
+    const authorId = deleted.authorId ?? fresh.targetId;
+    if (authorId) description = description.replace('**In:**', `**From:** <@${authorId}>   **In:**`);
     const firstBreak = description.indexOf('\n');
     entry.embed.description =
       firstBreak === -1 ? description + by : description.slice(0, firstBreak) + by + description.slice(firstBreak);
