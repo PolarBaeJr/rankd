@@ -14,6 +14,8 @@ import { undoImportedEntry } from '@/lib/actions/registration-imports';
  * A guest carries the Form entry that put them here (removing them is that
  * entry's Undo) or none, for a walk-in, who is dealt with at the door.
  * `partner` is the preferred partner the Form's answer named (00299), as typed.
+ * A member row can be a guest record (00292), such as somebody an officer added
+ * by hand (00306) with the answers they gave.
  */
 export type ClubEventSignupRow =
   | {
@@ -24,6 +26,8 @@ export type ClubEventSignupRow =
       created_at: string;
       partner?: string | null;
       fee?: { amountCents: number | null; paid: boolean } | null;
+      guest?: boolean;
+      answers?: Record<string, string> | null;
     }
   | {
       kind: 'guest';
@@ -103,11 +107,19 @@ export function ClubEventSignupsTable({
               {row.kind === 'guest' && (
                 <Badge variant="neutral">{row.walkIn ? 'Walk-in' : 'Non-member'}</Badge>
               )}
+              {row.kind === 'member' && row.guest && <Badge variant="neutral">Guest</Badge>}
             </div>
             {row.kind === 'guest' && row.email && (
               <div className="truncate text-xs text-[var(--ink-2)]">{row.email}</div>
             )}
             {row.partner && <div className="truncate text-xs text-[var(--mute)]">Partner: {row.partner}</div>}
+            {row.kind === 'member' &&
+              row.answers &&
+              Object.entries(row.answers).map(([question, answer]) => (
+                <div key={question} className="text-xs text-[var(--mute)]">
+                  {question}: <span className="text-[var(--ink-2)]">{answer}</span>
+                </div>
+              ))}
             <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--mute)]">
               {row.kind === 'guest' && !row.walkIn ? 'Google Form' : 'Signed up'} {formatDateTime(row.created_at)}
               {row.kind === 'guest' && row.waiverSigned !== null && (
