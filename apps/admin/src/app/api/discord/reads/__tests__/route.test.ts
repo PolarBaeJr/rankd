@@ -355,6 +355,14 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
           players: { full_name: 'Fay Formed', is_guest: false },
         },
         {
+          player_id: 'p-gil',
+          created_at: '2026-10-05T12:00:00Z',
+          checked_in_at: null,
+          no_show_at: null,
+          walk_in: false,
+          players: { full_name: 'Gil Linked', is_guest: true },
+        },
+        {
           player_id: 'p-hal',
           created_at: '2026-10-06T00:00:00Z',
           checked_in_at: null,
@@ -363,7 +371,7 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
           players: { full_name: 'Hal Handed', is_guest: false },
         },
       ],
-      registration_import_entries: [{ entrant_id: 'p-fay' }],
+      registration_import_entries: [{ entrant_id: 'p-fay' }, { entrant_id: 'p-gil' }],
       audit_logs: [{ new_value: { player_id: 'p-hal' } }],
       club_event_external_signups: [
         {
@@ -405,13 +413,17 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
       { name: 'Eve Outside', kind: 'external', source: 'manual', checkedIn: false, noShow: false, walkIn: true },
       // A guest record no Form entry names was added by hand.
       { name: 'Gus Guest', kind: 'guest', source: 'manual', checkedIn: false, noShow: true, walkIn: false },
-      { name: 'Fay Formed', kind: 'member', source: 'form', checkedIn: false, noShow: false, walkIn: false },
+      // A member who filled in the Form has an account: app.
+      { name: 'Fay Formed', kind: 'member', source: 'app', checkedIn: false, noShow: false, walkIn: false },
+      { name: 'Gil Linked', kind: 'guest', source: 'form', checkedIn: false, noShow: false, walkIn: false },
       { name: 'Hal Handed', kind: 'member', source: 'manual', checkedIn: false, noShow: false, walkIn: false },
       { name: 'Ivy Imported', kind: 'external', source: 'form', checkedIn: false, noShow: false, walkIn: false },
     ]);
     // A no-show frees their place, as club_event_taken counts it.
-    expect(body.data.taken).toBe(5);
-    expect(body.data.signups).toEqual(['Ada Member', 'Eve Outside', 'Gus Guest', 'Fay Formed', 'Hal Handed', 'Ivy Imported']);
+    expect(body.data.taken).toBe(6);
+    expect(body.data.signups).toEqual([
+      'Ada Member', 'Eve Outside', 'Gus Guest', 'Fay Formed', 'Gil Linked', 'Hal Handed', 'Ivy Imported',
+    ]);
     expect(body.data.waitlist).toEqual(['Wes Waiting']);
     expect(state.filters).toContainEqual({ table: 'club_event_waitlist', method: 'eq', column: 'status', value: 'waiting' });
   });

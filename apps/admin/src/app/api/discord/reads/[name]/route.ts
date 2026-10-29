@@ -306,8 +306,8 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
       .eq('event_id', id)
       .eq('status', 'waiting')
       .order('joined_at', { ascending: true }),
-    // Members the Form put on the list, a guest record a link admitted from it
-    // (00292) included: their entry names them.
+    // Guest records a tournament link admitted from the Form (00292): their
+    // entry names them.
     adminClient
       .from('registration_import_entries')
       .select('entrant_id')
@@ -337,16 +337,18 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
     const person: SignupPerson = {
       name: player?.full_name ?? 'A member',
       kind: player?.is_guest ? 'guest' : 'member',
-      // A guest record nobody's Form entry names was added by hand: a guest
-      // has no account, so cannot have signed up in the app.
+      // Anybody with an account is "app", however they signed up: a member
+      // who filled in the Form is still a member (owner, 2026-10-28). A guest
+      // record has no account: "form" when a Form entry names it, else an
+      // officer added it by hand.
       source:
         row.walk_in === true || byHand.has(row.player_id)
           ? 'manual'
-          : fromForm.has(row.player_id)
-            ? 'form'
-            : player?.is_guest
-              ? 'manual'
-              : 'app',
+          : !player?.is_guest
+            ? 'app'
+            : fromForm.has(row.player_id)
+              ? 'form'
+              : 'manual',
       checkedIn: row.checked_in_at !== null,
       noShow: row.no_show_at !== null,
       walkIn: row.walk_in === true,
