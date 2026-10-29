@@ -246,12 +246,15 @@ async function readEvents(adminClient: AdminClient, params: URLSearchParams): Pr
 type SignupPerson = {
   name: string;
   kind: 'member' | 'guest' | 'external';
+  /** How they got on the list: the Google Form, the app, or an officer by hand. */
+  source: 'form' | 'app' | 'manual';
   checkedIn: boolean;
   noShow: boolean;
   walkIn: boolean;
 };
 
 type MemberSignupRow = {
+  player_id: string;
   created_at: string;
   checked_in_at: string | null;
   no_show_at: string | null;
@@ -261,6 +264,7 @@ type MemberSignupRow = {
 
 type ExternalSignupRow = {
   full_name: string;
+  import_entry_id: string | null;
   created_at: string;
   checked_in_at: string | null;
   no_show_at: string | null;
@@ -282,16 +286,16 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
   const id = params.get('id') ?? '';
   if (!UUID.test(id)) return { ok: true, data: { event: null } };
 
-  const [eventRes, membersRes, externalsRes, waitlistRes] = await Promise.all([
+  const [eventRes, membersRes, externalsRes, waitlistRes, formRes, byHandRes] = await Promise.all([
     adminClient.from('club_events').select(EVENT_COLUMNS).eq('id', id).maybeSingle(),
     adminClient
       .from('club_event_signups')
-      .select('created_at, checked_in_at, no_show_at, walk_in, players(full_name, is_guest)')
+      .select('player_id, created_at, checked_in_at, no_show_at, walk_in, players(full_name, is_guest)')
       .eq('event_id', id)
       .order('created_at', { ascending: true }),
     adminClient
       .from('club_event_external_signups')
-      .select('full_name, created_at, checked_in_at, no_show_at, walk_in')
+      .select('full_name, import_entry_id, created_at, checked_in_at, no_show_at, walk_in')
       .eq('event_id', id)
       .order('created_at', { ascending: true }),
     // Named embed: resolved_by is a second foreign key to players, so an
@@ -302,11 +306,30 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
       .eq('event_id', id)
       .eq('status', 'waiting')
       .order('joined_at', { ascending: true }),
+    // Members the Form put on the list, a guest record a link admitted from it
+    // (00292) included: their entry names them.
+    adminClient
+      .from('registration_import_entries')
+      .select('entrant_id')
+      .eq('club_event_id', id)
+      .eq('status', 'entered'),
+    // Members an officer added with Add person (00306).
+    adminClient
+      .from('audit_logs')
+      .select('new_value')
+      .eq('target_id', id)
+      .eq('action_type', 'club_event_added_by_hand'),
   ]);
   if (eventRes.error) return failed('event-signups', eventRes.error);
   if (membersRes.error) return failed('event-signups', membersRes.error);
   if (externalsRes.error) return failed('event-signups', externalsRes.error);
   if (waitlistRes.error) return failed('event-signups', waitlistRes.error);
+  if (formRes.error) return failed('event-signups', formRes.error);
+  if (byHandRes.error) return failed('event-signups', byHandRes.error);
+  const fromForm = new Set(((formRes.data ?? []) as { entrant_id: string | null }[]).map((row) => row.entrant_id));
+  const byHand = new Set(
+    ((byHandRes.data ?? []) as { new_value: { player_id?: string } | null }[]).map((row) => row.new_value?.player_id),
+  );
   if (!eventRes.data) return { ok: true, data: { event: null } };
 
   const members = ((membersRes.data ?? []) as unknown as MemberSignupRow[]).map((row) => {
@@ -314,6 +337,16 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
     const person: SignupPerson = {
       name: player?.full_name ?? 'A member',
       kind: player?.is_guest ? 'guest' : 'member',
+      // A guest record nobody's Form entry names was added by hand: a guest
+      // has no account, so cannot have signed up in the app.
+      source:
+        row.walk_in === true || byHand.has(row.player_id)
+          ? 'manual'
+          : fromForm.has(row.player_id)
+            ? 'form'
+            : player?.is_guest
+              ? 'manual'
+              : 'app',
       checkedIn: row.checked_in_at !== null,
       noShow: row.no_show_at !== null,
       walkIn: row.walk_in === true,
@@ -325,6 +358,7 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
     person: {
       name: row.full_name,
       kind: 'external',
+      source: row.import_entry_id && row.walk_in !== true ? 'form' : 'manual',
       checkedIn: row.checked_in_at !== null,
       noShow: row.no_show_at !== null,
       walkIn: row.walk_in === true,

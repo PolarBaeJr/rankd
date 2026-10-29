@@ -331,6 +331,7 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
       club_events: [EVENT_ROW],
       club_event_signups: [
         {
+          player_id: 'p-ada',
           created_at: '2026-10-01T00:00:00Z',
           checked_in_at: '2026-10-31T02:05:00Z',
           no_show_at: null,
@@ -338,21 +339,49 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
           players: { full_name: 'Ada Member', is_guest: false },
         },
         {
+          player_id: 'p-gus',
           created_at: '2026-10-03T00:00:00Z',
           checked_in_at: null,
           no_show_at: '2026-10-31T03:00:00Z',
           walk_in: false,
           players: [{ full_name: 'Gus Guest', is_guest: true }],
         },
+        {
+          player_id: 'p-fay',
+          created_at: '2026-10-05T00:00:00Z',
+          checked_in_at: null,
+          no_show_at: null,
+          walk_in: false,
+          players: { full_name: 'Fay Formed', is_guest: false },
+        },
+        {
+          player_id: 'p-hal',
+          created_at: '2026-10-06T00:00:00Z',
+          checked_in_at: null,
+          no_show_at: null,
+          walk_in: false,
+          players: { full_name: 'Hal Handed', is_guest: false },
+        },
       ],
+      registration_import_entries: [{ entrant_id: 'p-fay' }],
+      audit_logs: [{ new_value: { player_id: 'p-hal' } }],
       club_event_external_signups: [
         {
           full_name: 'Eve Outside',
+          import_entry_id: null,
           created_at: '2026-10-02T00:00:00Z',
           checked_in_at: null,
           no_show_at: null,
           walk_in: true,
           email: 'never-shown@example.invalid',
+        },
+        {
+          full_name: 'Ivy Imported',
+          import_entry_id: 'entry-ivy',
+          created_at: '2026-10-07T00:00:00Z',
+          checked_in_at: null,
+          no_show_at: null,
+          walk_in: false,
         },
       ],
       club_event_waitlist: [{ joined_at: '2026-10-04T00:00:00Z', players: { full_name: 'Wes Waiting' } }],
@@ -372,13 +401,17 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
     expect(body.data.event).toMatchObject({ id: EVENT, title: 'Halloween social', capacity: 20, status: 'published' });
     expect(typeof body.data.event.when).toBe('string');
     expect(body.data.people).toEqual([
-      { name: 'Ada Member', kind: 'member', checkedIn: true, noShow: false, walkIn: false },
-      { name: 'Eve Outside', kind: 'external', checkedIn: false, noShow: false, walkIn: true },
-      { name: 'Gus Guest', kind: 'guest', checkedIn: false, noShow: true, walkIn: false },
+      { name: 'Ada Member', kind: 'member', source: 'app', checkedIn: true, noShow: false, walkIn: false },
+      { name: 'Eve Outside', kind: 'external', source: 'manual', checkedIn: false, noShow: false, walkIn: true },
+      // A guest record no Form entry names was added by hand.
+      { name: 'Gus Guest', kind: 'guest', source: 'manual', checkedIn: false, noShow: true, walkIn: false },
+      { name: 'Fay Formed', kind: 'member', source: 'form', checkedIn: false, noShow: false, walkIn: false },
+      { name: 'Hal Handed', kind: 'member', source: 'manual', checkedIn: false, noShow: false, walkIn: false },
+      { name: 'Ivy Imported', kind: 'external', source: 'form', checkedIn: false, noShow: false, walkIn: false },
     ]);
     // A no-show frees their place, as club_event_taken counts it.
-    expect(body.data.taken).toBe(2);
-    expect(body.data.signups).toEqual(['Ada Member', 'Eve Outside', 'Gus Guest']);
+    expect(body.data.taken).toBe(5);
+    expect(body.data.signups).toEqual(['Ada Member', 'Eve Outside', 'Gus Guest', 'Fay Formed', 'Hal Handed', 'Ivy Imported']);
     expect(body.data.waitlist).toEqual(['Wes Waiting']);
     expect(state.filters).toContainEqual({ table: 'club_event_waitlist', method: 'eq', column: 'status', value: 'waiting' });
   });
