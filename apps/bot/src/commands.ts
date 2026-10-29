@@ -7291,6 +7291,8 @@ type EventSignupsEvent = {
 export type EventSignupsPerson = {
   name: string;
   kind: 'member' | 'guest' | 'external';
+  /** How they got on the list. An older console sends none, and kind is shown. */
+  source?: 'form' | 'app' | 'manual';
   checkedIn: boolean;
   noShow: boolean;
   walkIn: boolean;
@@ -7319,9 +7321,15 @@ function plainName(name: string): string {
 
 function signupMarkers(person: EventSignupsPerson): string[] {
   const markers: string[] = [];
-  if (person.kind === 'guest') markers.push('guest');
-  if (person.kind === 'external') markers.push('external');
-  if (person.walkIn) markers.push('walk-in');
+  // Where they came from, not who they are (owner, 2026-10-28): a walk-in is
+  // manual, as is somebody an officer added.
+  if (person.source) {
+    markers.push(person.source);
+  } else {
+    if (person.kind === 'guest') markers.push('guest');
+    if (person.kind === 'external') markers.push('external');
+    if (person.walkIn) markers.push('walk-in');
+  }
   if (person.checkedIn) markers.push('checked in');
   if (person.noShow) markers.push('no-show');
   return markers;

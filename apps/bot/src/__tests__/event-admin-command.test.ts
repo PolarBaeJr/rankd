@@ -333,6 +333,26 @@ describe('/event signups', () => {
     expect((await answer()).content).toBe('That event no longer exists.');
   });
 
+  it('labels each person by where they came from when the console says so', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      json({
+        ok: true,
+        data: {
+          event: EVENT,
+          taken: 3,
+          people: [
+            { name: 'Ada Member', kind: 'member', source: 'app', checkedIn: true, noShow: false, walkIn: false },
+            { name: 'Eve Outside', kind: 'external', source: 'form', checkedIn: false, noShow: false, walkIn: false },
+            { name: 'Gus Guest', kind: 'guest', source: 'manual', checkedIn: false, noShow: false, walkIn: true },
+          ],
+          waitlist: [],
+        },
+      })
+    );
+    const lines = (await answer()).embeds![0]!.description!.split('\n');
+    expect(lines.slice(2)).toEqual(['1. Ada Member (app, checked in)', '2. Eve Outside (form)', '3. Gus Guest (manual)']);
+  });
+
   it('shows the event, the count against the cap, and a numbered list with plain-word markers', async () => {
     fetchSpy.mockResolvedValueOnce(
       json({
