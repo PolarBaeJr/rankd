@@ -10,6 +10,14 @@ import {
 import type { ReceiptMethod } from '@badminton/shared/src/utils/receipt-method';
 import { createClient } from '@/lib/supabase-browser';
 import { submitFeeSubmission } from '@/lib/actions/fee-submissions';
+import type { ActionResult } from '@/lib/actions/_shared';
+
+/** What the form hands on once the screenshot is uploaded. */
+export interface SentReceipt {
+  reference: string;
+  screenshotPath: string;
+  detectedMethod: ReceiptMethod | null;
+}
 
 // One unpaid line's "I have paid" form: the screenshot and the reference, both
 // required. The member is not asked how they paid. Picking a screenshot runs
@@ -23,6 +31,10 @@ import { submitFeeSubmission } from '@/lib/actions/fee-submissions';
 // The screenshot is uploaded straight to fee-proofs from the browser, into the
 // member's own folder (the one storage path 00248 allows), the way
 // /feedback does it, and the action is handed the path.
+//
+// `onSend` replaces the Membership page's action: a paid club event's sign-up
+// sends the receipt with the sign-up itself, so nobody is on the list without
+// one. The server removes the upload when it refuses, either way.
 
 // Mirrors 00248's bucket, so a wrong file is refused at the picker.
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -33,11 +45,17 @@ export function EtransferForm({
   feeId,
   duesSeasonId,
   dues,
+  onSend,
+  sendLabel = 'Send receipt',
+  onSent,
 }: {
   feeId: string | null;
   duesSeasonId: string | null;
   /** Only dues are sold on the SFU Rec website; every other line is an e-transfer. */
   dues: boolean;
+  onSend?: (receipt: SentReceipt) => Promise<ActionResult>;
+  sendLabel?: string;
+  onSent?: () => void;
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -122,13 +140,15 @@ export function EtransferForm({
           setError(`The screenshot could not be uploaded (${uploadError.message}). Try a smaller image.`);
           return;
         }
-        const res = await submitFeeSubmission({
-          feeId,
-          duesSeasonId,
-          reference: cleaned,
-          screenshotPath: path,
-          detectedMethod,
-        });
+        const res = onSend
+          ? await onSend({ reference: cleaned, screenshotPath: path, detectedMethod })
+          : await submitFeeSubmission({
+              feeId,
+              duesSeasonId,
+              reference: cleaned,
+              screenshotPath: path,
+              detectedMethod,
+            });
         if (!res.ok) {
           setError(res.error);
           return;
@@ -138,6 +158,7 @@ export function EtransferForm({
         setDetectedMethod(null);
         setReadHint(null);
         if (fileInput.current) fileInput.current.value = '';
+        onSent?.();
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not send that receipt');
@@ -197,7 +218,7 @@ export function EtransferForm({
       <div>
         <button type="submit" className="btn btn-primary" disabled={busy}>
           {pending ? <Loader2 size={14} className="animate-spin" /> : null}
-          {pending ? 'Sending...' : reading ? 'Reading screenshot...' : 'Send receipt'}
+          {pending ? 'Sending...' : reading ? 'Reading screenshot...' : sendLabel}
         </button>
       </div>
     </form>
