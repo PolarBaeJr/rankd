@@ -46,9 +46,14 @@ interface Props {
    * the database has none or the member is already in the event.
    */
   waitlist?: MyWaitlistState | null;
+  /**
+   * The club event this tournament is run for (00292). Its sign-up is the way
+   * in, so it replaces the Register and waitlist buttons (00307).
+   */
+  clubEventHref?: string | null;
 }
 
-export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist }: Props) {
+export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist, clubEventHref }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -242,6 +247,18 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   if (!playerRegistration) {
     if (eventStatus === 'registration' && !suspended) {
+      if (clubEventHref) {
+        return (
+          <div className="space-y-1" role="status">
+            <p className="text-xs text-[var(--text-secondary)]">
+              This tournament is run for a club event. Sign up there and you are entered here.
+            </p>
+            <Link href={clubEventHref} className="text-xs font-medium text-[var(--color-accent)]">
+              Go to the club event
+            </Link>
+          </div>
+        );
+      }
       if (membershipBlocked) {
         return (
           <div className="space-y-1" role="status">

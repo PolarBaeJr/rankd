@@ -44,6 +44,8 @@ const REFUSALS = [
   'You are already on the waitlist for this event.',
   'This event has room, so you can enter it now.',
   'You are not on the waitlist for this event.',
+  // 00307: a tournament run for a club event is entered from the club event.
+  'This tournament is run for a club event. Sign up on the club event page to be entered.',
 ];
 
 // Faults, and each one has a specific reason to stay loud.
@@ -95,7 +97,7 @@ describe('player refusal classification', () => {
       for (const hit of hits) expect(hit).toContain('ExpectedError');
     }
     // The RPC's reasons are mapped too, not left to the generic fault.
-    for (const reason of ['registration_not_open', 'registration_window_closed']) {
+    for (const reason of ['registration_not_open', 'registration_window_closed', 'club_event_linked']) {
       expect(ALL).toContain(`case '${reason}':`);
     }
     expect(ALL).toContain("reason === 'checkin_not_open'");
