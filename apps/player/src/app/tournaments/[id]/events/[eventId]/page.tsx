@@ -304,8 +304,10 @@ export default async function EventDetailPage({
   // and enter_tournament_event refuses a member's own entry (00307), so the
   // way in is a link there. A failed read shows the usual controls, which the
   // refusal then explains.
+  // Also for somebody who withdrew: signing up again on the club event puts
+  // them back in here.
   let clubEvent: { href: string; title: string } | null = null;
-  if (!playerRegistration) {
+  if (!playerRegistration || playerOutOfEvent) {
     const { data: linkedClubEvent } = await createServiceRoleClient()
       .from('club_events')
       .select('id, title')

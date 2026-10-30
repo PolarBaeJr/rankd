@@ -205,6 +205,23 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
     ...(isDoubles ? { soloEntryAcknowledged: true } : {}),
   };
 
+  // A tournament run for a club event (00307): the club event is the way in,
+  // while entries are still open.
+  const clubEventPanel = clubEvent && eventStatus === 'registration' && !suspended ? (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 sm:p-5" role="status">
+      <p className="eyebrow mb-1">How to enter</p>
+      <h2 className="display-md mb-2">Sign up on {clubEvent.title}</h2>
+      <p className="text-sm text-[var(--text-secondary)] mb-4 max-w-prose">
+        This tournament is run for the {clubEvent.title} club event. Everyone who signs up there is entered
+        here automatically, so there is nothing to register for on this page.
+      </p>
+      <Link href={clubEvent.href} className="btn btn-primary min-h-[44px]">
+        Go to {clubEvent.title}
+        <ArrowRight className="w-4 h-4 ml-1.5" aria-hidden="true" />
+      </Link>
+    </div>
+  ) : null;
+
   // ON THE WAITLIST. Their place in the queue and the way off it, whatever the
   // event's status: once the draw is made nobody is promoted, and they are
   // told so rather than left waiting for a place that cannot open.
@@ -247,22 +264,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   if (!playerRegistration) {
     if (eventStatus === 'registration' && !suspended) {
-      if (clubEvent) {
-        return (
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 sm:p-5" role="status">
-            <p className="eyebrow mb-1">How to enter</p>
-            <h2 className="display-md mb-2">Sign up on {clubEvent.title}</h2>
-            <p className="text-sm text-[var(--text-secondary)] mb-4 max-w-prose">
-              This tournament is run for the {clubEvent.title} club event. Everyone who signs up there is entered
-              here automatically, so there is nothing to register for on this page.
-            </p>
-            <Link href={clubEvent.href} className="btn btn-primary min-h-[44px]">
-              Go to {clubEvent.title}
-              <ArrowRight className="w-4 h-4 ml-1.5" aria-hidden="true" />
-            </Link>
-          </div>
-        );
-      }
+      if (clubEventPanel) return clubEventPanel;
       if (membershipBlocked) {
         return (
           <div className="space-y-1" role="status">
@@ -424,7 +426,8 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
       {stillIn && !drawPublished && !standing.ok && (
         <StandingNote standing={standing} activity="Check-in and withdrawal" />
       )}
-      {outOfEvent && (
+      {outOfEvent && regStatus === 'withdrawn' && clubEventPanel}
+      {outOfEvent && !(regStatus === 'withdrawn' && clubEventPanel) && (
         <p className="text-xs text-[var(--text-secondary)] italic">
           {regStatus === 'withdrawn'
             ? 'You have withdrawn from this event.'
