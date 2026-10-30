@@ -12,7 +12,7 @@ import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { UserPlus, UserMinus, CheckCircle, Clock } from 'lucide-react';
+import { UserPlus, UserMinus, CheckCircle, Clock, ArrowRight } from 'lucide-react';
 
 interface Props {
   eventId: string;
@@ -50,10 +50,10 @@ interface Props {
    * The club event this tournament is run for (00292). Its sign-up is the way
    * in, so it replaces the Register and waitlist buttons (00307).
    */
-  clubEventHref?: string | null;
+  clubEvent?: { href: string; title: string } | null;
 }
 
-export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist, clubEventHref }: Props) {
+export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist, clubEvent }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -247,14 +247,18 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   if (!playerRegistration) {
     if (eventStatus === 'registration' && !suspended) {
-      if (clubEventHref) {
+      if (clubEvent) {
         return (
-          <div className="space-y-1" role="status">
-            <p className="text-xs text-[var(--text-secondary)]">
-              This tournament is run for a club event. Sign up there and you are entered here.
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 sm:p-5" role="status">
+            <p className="eyebrow mb-1">How to enter</p>
+            <h2 className="display-md mb-2">Sign up on {clubEvent.title}</h2>
+            <p className="text-sm text-[var(--text-secondary)] mb-4 max-w-prose">
+              This tournament is run for the {clubEvent.title} club event. Everyone who signs up there is entered
+              here automatically, so there is nothing to register for on this page.
             </p>
-            <Link href={clubEventHref} className="text-xs font-medium text-[var(--color-accent)]">
-              Go to the club event
+            <Link href={clubEvent.href} className="btn btn-primary min-h-[44px]">
+              Go to {clubEvent.title}
+              <ArrowRight className="w-4 h-4 ml-1.5" aria-hidden="true" />
             </Link>
           </div>
         );

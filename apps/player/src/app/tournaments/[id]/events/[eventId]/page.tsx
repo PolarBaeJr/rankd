@@ -304,15 +304,15 @@ export default async function EventDetailPage({
   // and enter_tournament_event refuses a member's own entry (00307), so the
   // way in is a link there. A failed read shows the usual controls, which the
   // refusal then explains.
-  let clubEventHref: string | null = null;
+  let clubEvent: { href: string; title: string } | null = null;
   if (!playerRegistration) {
     const { data: linkedClubEvent } = await createServiceRoleClient()
       .from('club_events')
-      .select('id')
+      .select('id, title')
       .eq('tournament_event_id' as never, eventId as never)
       .maybeSingle();
-    const linkedId = (linkedClubEvent as { id: string } | null)?.id;
-    if (linkedId) clubEventHref = `/events/${linkedId}`;
+    const linked = linkedClubEvent as { id: string; title: string } | null;
+    if (linked) clubEvent = { href: `/events/${linked.id}`, title: linked.title };
   }
 
   // The club-fee refusal registerForEvent would make (00260), said before the
@@ -651,7 +651,7 @@ export default async function EventDetailPage({
               registrationNotice={registrationNotice}
               checkinNotice={checkinNotice}
               waitlist={waitlist}
-              clubEventHref={clubEventHref}
+              clubEvent={clubEvent}
             />
           </div>
         </div>
