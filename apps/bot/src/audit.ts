@@ -56,7 +56,10 @@ const COLOR_NEUTRAL = 0x95a5a6;
 const COLOR_CLUB_RED = 0xcc0000;
 
 export interface Embed {
-  title: string;
+  /** Optional: a server log entry headed by who did it reads better without one. */
+  title?: string;
+  /** The line above the title, with a small picture: who did it. */
+  author?: { name: string; icon_url?: string };
   description?: string;
   color: number;
   fields?: { name: string; value: string; inline?: boolean }[];

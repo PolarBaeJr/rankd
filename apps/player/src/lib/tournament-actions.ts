@@ -361,6 +361,10 @@ async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): P
           `You are already entered in ${joined.cap} ${joined.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
           'Withdraw from one to join this waitlist, or ask a tournament admin if one of them is a doubles pair.',
         );
+      // 00307: a tournament run for a club event fills from the club event's
+      // list, where the e-transfer screenshot is asked for.
+      case 'club_event_linked':
+        throw new ExpectedError('This tournament is run for a club event. Sign up on the club event page to be entered.');
       case 'registration_closed':
         throw new ExpectedError('Registration is closed');
       case 'registration_not_open':

@@ -16,6 +16,9 @@ import {
   effectiveWindows,
   validateEffectiveWindows,
   windowColumnsFromWallClock,
+  clockHHMM,
+  parseTournamentDetails,
+  TOURNAMENT_LOCATION_MAX,
 } from '@badminton/shared';
 import { createTournament, updateTournament, eventWaiverEditImpact, archiveTournament, completeTournamentWithEvents, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
@@ -39,6 +42,11 @@ export interface TournamentData extends WindowColumns {
   // This tournament's own bonus amounts (00275). Present on the page's
   // `select('*')` once the migration has run.
   placement_bonus_amounts?: Record<string, unknown> | null;
+  // Its own daily times and venue (00304). Present on the page's `select('*')`
+  // once the migration has run; a time arrives as HH:MM:SS.
+  starts_time?: string | null;
+  ends_time?: string | null;
+  location?: string | null;
   status: string;
 }
 
@@ -164,6 +172,14 @@ function TournamentFormDialog({
   const [name, setName] = useState(tournament?.name ?? '');
   const [startDate, setStartDate] = useState(tournament?.start_date ?? '');
   const [endDate, setEndDate] = useState(tournament?.end_date ?? '');
+  // HH:MM, because that is what a time input holds and what the action
+  // checks; the column hands back HH:MM:SS.
+  const [startsTime, setStartsTime] = useState(clockHHMM(tournament?.starts_time) ?? '');
+  const [endsTime, setEndsTime] = useState(clockHHMM(tournament?.ends_time) ?? '');
+  const [location, setLocation] = useState(tournament?.location ?? '');
+  // Same reasoning as the windows: a database without 00304 has no columns to
+  // offer, and saving blanks there would be refused.
+  const detailsAvailable = !tournament || 'starts_time' in tournament;
   const [eventMultiplier, setEventMultiplier] = useState(tournament?.event_multiplier ?? 1.15);
   const [placementBonus, setPlacementBonus] = useState(tournament?.placement_bonus_enabled ?? true);
   const [bonusAmounts, setBonusAmounts] = useState<BonusAmountsText>(() => bonusAmountsText(tournament?.placement_bonus_amounts));
@@ -206,6 +222,11 @@ function TournamentFormDialog({
         );
         if (refusal) { toast(refusal, 'error'); setLoading(false); return; }
       }
+      const details = { starts_time: startsTime, ends_time: endsTime, location };
+      if (detailsAvailable) {
+        const parsed = parseTournamentDetails(details);
+        if (!parsed.ok) { toast(parsed.error, 'error'); setLoading(false); return; }
+      }
       const data = {
         name,
         start_date: startDate,
@@ -218,6 +239,8 @@ function TournamentFormDialog({
         // so that clearing the box on an existing tournament REMOVES the cap.
         max_events_per_player: maxEventsPerPlayer.trim() ? Number(maxEventsPerPlayer) : null,
         ...(windowsAvailable ? windows : {}),
+        // Blank clears, so emptying a box on an edit removes the time.
+        ...(detailsAvailable ? details : {}),
       };
       if (isEdit) {
         // EDITING THE WAIVER TEXT SILENTLY UN-SIGNS EVERYONE WHO ACCEPTED THE
@@ -262,6 +285,7 @@ function TournamentFormDialog({
       onClose();
       if (!isEdit) {
         setName(''); setStartDate(''); setEndDate('');
+        setStartsTime(''); setEndsTime(''); setLocation('');
         setEventMultiplier(1.15); setPlacementBonus(true);
         setWaiverText('');
         setWindows(entryWindowText(null));
@@ -312,6 +336,26 @@ function TournamentFormDialog({
           <DatePicker label="Start Date" value={startDate} onChange={setStartDate} required />
           <DatePicker label="End Date" value={endDate} onChange={setEndDate} />
         </div>
+        {detailsAvailable && (
+          <div>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Start time (optional)" type="time" value={startsTime} onChange={(e) => setStartsTime(e.target.value)} />
+              <Input label="End time (optional)" type="time" value={endsTime} onChange={(e) => setEndsTime(e.target.value)} />
+            </div>
+            <div className="mt-4">
+              <Input
+                label="Location (optional)"
+                value={location}
+                maxLength={TOURNAMENT_LOCATION_MAX}
+                onChange={(e) => setLocation(e.target.value)}
+              />
+            </div>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              Club time, each day of the tournament. Shown on the tournament page and on its Discord
+              event, which starts at 09:00 and ends at 18:00 when these are left blank.
+            </p>
+          </div>
+        )}
         <Input
           label="Elo Multiplier"
           type="number"

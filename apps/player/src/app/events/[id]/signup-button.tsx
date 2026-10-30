@@ -2,15 +2,24 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '@badminton/ui';
+import { Button, Dialog } from '@badminton/ui';
 import type { ClubEventSignupState } from '@badminton/shared';
 import {
   joinClubEventWaitlist,
   leaveClubEventWaitlist,
   signUpForClubEvent,
+  signUpWithReceipt,
   withdrawFromClubEvent,
 } from '@/lib/club-event-actions';
 import { useToast } from '@/components/toast-provider';
+import { EtransferForm } from '@/app/membership/etransfer-form';
+
+/** A paid event's fee, when this member must send a receipt to sign up. */
+export interface SignupFee {
+  amount: string;
+  /** Where to send it; null when the club has not set one, and nobody can pay. */
+  etransferEmail: string | null;
+}
 
 type Act = 'sign_up' | 'withdraw' | 'join' | 'leave';
 
@@ -32,6 +41,7 @@ export function SignupButton({
   canWait = false,
   opensAt = null,
   closesAt = null,
+  fee = null,
 }: {
   eventId: string;
   state: ClubEventSignupState;
@@ -39,12 +49,19 @@ export function SignupButton({
   canWait?: boolean;
   opensAt?: string | null;
   closesAt?: string | null;
+  fee?: SignupFee | null;
 }) {
   const [loading, setLoading] = useState<Act | null>(null);
+  const [paying, setPaying] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
   async function act(what: Act) {
+    // A paid event: the receipt goes with the sign-up, from the pop-up.
+    if (what === 'sign_up' && fee) {
+      setPaying(true);
+      return;
+    }
     setLoading(what);
     try {
       const res =
@@ -97,6 +114,7 @@ export function SignupButton({
   } else if (state === 'open') {
     title = 'Places are open';
     detail = closesAt ? `Sign-ups close ${closesAt}.` : null;
+    if (fee) detail = `${fee.amount} by e-transfer. You send the screenshot when you sign up.${detail ? ` ${detail}` : ''}`;
     buttons.push(button('sign_up', 'Sign up'));
     if (canWait) {
       detail = 'Members on the waitlist are ahead of you for the free place.';
@@ -122,6 +140,35 @@ export function SignupButton({
 
   return (
     <div>
+      {paying && fee && (
+        <Dialog open onClose={() => setPaying(false)} title="Pay to sign up">
+          {fee.etransferEmail ? (
+            <>
+              <p style={{ fontSize: 14, margin: 0 }}>
+                Send <b>{fee.amount}</b> by Interac e-Transfer to <b>{fee.etransferEmail}</b>, then add the
+                screenshot of the confirmation here. You are signed up as soon as you send it, and an exec checks it.
+              </p>
+              <EtransferForm
+                feeId={null}
+                duesSeasonId={null}
+                dues={false}
+                sendLabel="Sign up"
+                onSend={(receipt) =>
+                  signUpWithReceipt(eventId, { reference: receipt.reference, screenshotPath: receipt.screenshotPath })
+                }
+                onSent={() => {
+                  setPaying(false);
+                  toast(DONE.sign_up, 'success');
+                }}
+              />
+            </>
+          ) : (
+            <p style={{ fontSize: 14, margin: 0 }}>
+              This event costs {fee.amount}, and the club has not said where to send it yet. Ask an exec how to pay.
+            </p>
+          )}
+        </Dialog>
+      )}
       <div className="ev-label">Your spot</div>
       <div className="ev-spot-title">{title}</div>
       {detail && <p className="ev-spot-detail">{detail}</p>}

@@ -935,7 +935,8 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   discord_guilds: 'Which Discord servers the bot is in.',
   discord_guild_roles: 'The bot\'s role mapping per server.',
   discord_server_roles: 'A catalogue of roles discovered on a Discord server.',
-  discord_self_roles: 'Which roles members may give themselves. A club-wide menu.',
+  discord_self_roles: 'Which roles members may give themselves, per Discord server.',
+  discord_server_settings: 'One Discord server\'s own bot settings (00302): its log channel and scam guard switch. No player column.',
   discord_session_pings: 'Which session announcements the bot has already pinged.',
   discord_announcement_posts: 'Which announcements the bot has already posted.',
   discord_match_posts: 'Which match results the bot has already posted.',
@@ -951,7 +952,8 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   guest_waiver_invites:
     'Waiver emails owed to non-members a form entered (00283). No member column; it holds non-members\' emails, which a member export cannot reach.',
   club_event_external_signups:
-    'Non-members a form signed up for a club event (00284). No member column; it holds non-members\' names and emails.',
+    'Non-members a form signed up for a club event (00284). No member column; it holds non-members\' names and emails.',  club_event_activity:
+    'When each club event\'s sign-ups last changed, so the console page updates live (00301). An event id and a time; no person.',
 };
 
 /**
@@ -979,11 +981,15 @@ export const DROPPED_TABLES: Record<string, string> = {
  *   _00128_acl_before  00128:144, `CREATE TEMP TABLE ... ON COMMIT DROP`
  *   _00134_acl_before  00134:382, created TEMP and dropped at 376 and 629
  *   _mp_guard_probe    00207:790, the merge-guard test harness
+ *   role_additions     00305, TEMP ... ON COMMIT DROP: which write follows which
+ *   role_changes       00305, TEMP ... ON COMMIT DROP: what each role gained
  */
 export const MIGRATION_SCRATCH_TABLES = [
   '_00128_acl_before',
   '_00134_acl_before',
   '_mp_guard_probe',
+  'role_additions',
+  'role_changes',
 ] as const;
 
 /**

@@ -387,6 +387,13 @@ export interface Tournament {
    * Optional because a database without 00275 has no such column.
    */
   placement_bonus_amounts?: Record<string, unknown> | null;
+  /**
+   * The tournament's own daily times and venue (00304). PostgREST returns a
+   * time as HH:MM:SS. Optional because a database without 00304 has none.
+   */
+  starts_time?: string | null;
+  ends_time?: string | null;
+  location?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

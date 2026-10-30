@@ -984,15 +984,7 @@ export type Database = {
           sort_order?: number
           track?: Database["public"]["Enums"]["session_group"] | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "discord_self_roles_guild_id_fkey"
-            columns: ["guild_id"]
-            isOneToOne: false
-            referencedRelation: "discord_guilds"
-            referencedColumns: ["guild_id"]
-          },
-        ]
+        Relationships: []
       }
       discord_server_roles: {
         Row: {
@@ -1025,6 +1017,57 @@ export type Database = {
             referencedColumns: ["guild_id"]
           },
         ]
+      }
+      discord_server_settings: {
+        Row: {
+          automod_action: string
+          automod_flag_suspects: boolean
+          automod_spray: boolean
+          automod_spray_channels: number
+          automod_spray_window_minutes: number
+          automod_timeout_minutes: number
+          automod_trap_action: string
+          automod_trap_channel_ids: string[]
+          automod_words: string[]
+          automod_words_action: string
+          guild_id: string
+          scam_guard: boolean
+          server_log_channel_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          automod_action?: string
+          automod_flag_suspects?: boolean
+          automod_spray?: boolean
+          automod_spray_channels?: number
+          automod_spray_window_minutes?: number
+          automod_timeout_minutes?: number
+          automod_trap_action?: string
+          automod_trap_channel_ids?: string[]
+          automod_words?: string[]
+          automod_words_action?: string
+          guild_id: string
+          scam_guard?: boolean
+          server_log_channel_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          automod_action?: string
+          automod_flag_suspects?: boolean
+          automod_spray?: boolean
+          automod_spray_channels?: number
+          automod_spray_window_minutes?: number
+          automod_timeout_minutes?: number
+          automod_trap_action?: string
+          automod_trap_channel_ids?: string[]
+          automod_words?: string[]
+          automod_words_action?: string
+          guild_id?: string
+          scam_guard?: boolean
+          server_log_channel_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       discord_session_pings: {
         Row: {
@@ -1160,6 +1203,7 @@ export type Database = {
           discord_event_id: string
           guild_id: string
           synced_ends_at: string
+          synced_location: string | null
           synced_name: string
           synced_starts_at: string
           tournament_id: string
@@ -1170,6 +1214,7 @@ export type Database = {
           discord_event_id: string
           guild_id: string
           synced_ends_at: string
+          synced_location?: string | null
           synced_name: string
           synced_starts_at: string
           tournament_id: string
@@ -1180,6 +1225,7 @@ export type Database = {
           discord_event_id?: string
           guild_id?: string
           synced_ends_at?: string
+          synced_location?: string | null
           synced_name?: string
           synced_starts_at?: string
           tournament_id?: string
@@ -3879,8 +3925,10 @@ export type Database = {
           created_at: string
           created_by: string | null
           end_date: string | null
+          ends_time: string | null
           event_multiplier: number
           id: string
+          location: string | null
           max_events_per_player: number | null
           name: string
           placement_bonus_amounts: Json | null
@@ -3889,6 +3937,7 @@ export type Database = {
           registration_opens_at: string | null
           season_id: string | null
           start_date: string
+          starts_time: string | null
           status: Database["public"]["Enums"]["tournament_status"]
           suspended_at: string | null
           suspension_reason: string | null
@@ -3902,8 +3951,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           end_date?: string | null
+          ends_time?: string | null
           event_multiplier?: number
           id?: string
+          location?: string | null
           max_events_per_player?: number | null
           name: string
           placement_bonus_amounts?: Json | null
@@ -3912,6 +3963,7 @@ export type Database = {
           registration_opens_at?: string | null
           season_id?: string | null
           start_date: string
+          starts_time?: string | null
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null
@@ -3925,8 +3977,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           end_date?: string | null
+          ends_time?: string | null
           event_multiplier?: number
           id?: string
+          location?: string | null
           max_events_per_player?: number | null
           name?: string
           placement_bonus_amounts?: Json | null
@@ -3935,6 +3989,7 @@ export type Database = {
           registration_opens_at?: string | null
           season_id?: string | null
           start_date?: string
+          starts_time?: string | null
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null

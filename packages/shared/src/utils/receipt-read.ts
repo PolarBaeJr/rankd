@@ -108,13 +108,19 @@ function payeeName(lines: string[], collapsed: string): string | null {
   return null;
 }
 
+// A capital I in an email address is a lower case l the OCR misread: the two
+// are the same shape in most banking fonts, and banks show an address in lower
+// case. A real "i" reads as a lower case i, so an address that differs by an i
+// for an l still never matches.
+const emailText = (address: string) => address.replace(/I/g, 'l').toLowerCase();
+
 function payeeEmail(lines: string[], text: string): string | null {
   for (let i = 0; i < lines.length; i += 1) {
     if (!/^e-?mail\b/i.test(lines[i]!)) continue;
     const found = `${lines[i]} ${lines[i + 1] ?? ''}`.match(EMAIL);
-    if (found) return found[0]!.toLowerCase();
+    if (found) return emailText(found[0]!);
   }
-  const all = [...new Set((text.match(EMAIL) ?? []).map((e) => e.toLowerCase()))];
+  const all = [...new Set((text.match(EMAIL) ?? []).map(emailText))];
   return all.length === 1 ? all[0]! : null;
 }
 
@@ -164,7 +170,11 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
         amountAfter(collapsed, new RegExp(String.raw`\$\s?${MONEY}\s*\(?\s*CAD`, 'i')) ??
         amountAfter(collapsed, new RegExp(String.raw`\bamount\s*:?\s*\$?\s?${MONEY}`, 'i')) ??
         amountAfter(collapsed, new RegExp(String.raw`\bsent\s*:?\s*\$?\s?${MONEY}\b`, 'i')) ??
-        amountAfter(tidy, new RegExp(String.raw`^\$?\s?${MONEY}(?:\s*CAD)?$`, 'im')),
+        amountAfter(tidy, new RegExp(String.raw`^\$?\s?${MONEY}(?:\s*CAD)?$`, 'im')) ??
+        // RBC sets "Amount" and "Date" side by side, so the read comes out as
+        // "Amount Date" over "$5.00 Oct 22, 2026": the figure opens the line
+        // under the label line.
+        amountAfter(tidy, new RegExp(String.raw`^amount\b[^\n]*\n\$\s?${MONEY}\b`, 'im')),
       payeeName: payeeName(lines, collapsed),
       payeeEmail: payeeEmail(lines, tidy),
     };
@@ -221,6 +231,7 @@ export function namesMatch(read: string, member: string): boolean {
 
 const sameText = (a: string, b: string) =>
   a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
+
 
 const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
 

@@ -126,23 +126,68 @@ export async function softban(
     }
   }
 
-  const reason = `Soft ban by ${input.callerId}: ${input.reason}`;
-  const banned = await api.banMember(input.guildId, input.targetId, input.deleteSeconds, reason);
-  if (banned !== 'ok') {
-    return {
-      ok: false,
-      message:
-        banned === 'forbidden'
-          ? "Discord refused the ban. I need the Ban Members permission, and my role above theirs."
-          : 'The ban did not go through, so nothing changed. Try again in a moment.',
-    };
-  }
+  const result = await banThenUnban(api, {
+    guildId: input.guildId,
+    targetId: input.targetId,
+    deleteSeconds: input.deleteSeconds,
+    reason: `Soft ban by ${input.callerId}: ${input.reason}`,
+    liftReason: `Soft ban: lifting it (${input.callerId})`,
+    sleep,
+  });
+  if (result === 'ok' || result === 'not_lifted') return { ok: true, unbanned: result === 'ok' };
+  return {
+    ok: false,
+    message:
+      result === 'forbidden'
+        ? "Discord refused the ban. I need the Ban Members permission, and my role above theirs."
+        : 'The ban did not go through, so nothing changed. Try again in a moment.',
+  };
+}
 
-  for (let attempt = 1; attempt <= UNBAN_ATTEMPTS; attempt += 1) {
-    const result = await api.unbanMember(input.guildId, input.targetId, `Soft ban: lifting it (${input.callerId})`);
-    // not_found means there is no ban to lift, which is the state we wanted.
-    if (result === 'ok' || result === 'not_found') return { ok: true, unbanned: true };
-    if (attempt < UNBAN_ATTEMPTS) await sleep(1000 * attempt);
+type SoftBanListener = (guildId: string) => void;
+const softBanListeners: SoftBanListener[] = [];
+
+/**
+ * Called after every soft ban whose ban landed, from /softban and auto mod
+ * alike (index.ts counts them on the trap channel warnings).
+ */
+export function onSoftBan(listener: SoftBanListener): void {
+  softBanListeners.push(listener);
+}
+
+/**
+ * The soft ban itself, with no checks on who asked: a ban that deletes the
+ * last `deleteSeconds` of messages, then the unban, retried. /softban runs its
+ * caller checks first; scam-guard.ts runs its own.
+ *
+ * 'not_lifted' means the ban went through and every unban failed, so they are
+ * still banned and somebody has to lift it by hand.
+ */
+export async function banThenUnban(
+  api: Pick<DiscordApi, 'banMember' | 'unbanMember'>,
+  input: {
+    guildId: string;
+    targetId: string;
+    deleteSeconds: number;
+    reason: string;
+    liftReason: string;
+    sleep: (ms: number) => Promise<void>;
   }
-  return { ok: true, unbanned: false };
+): Promise<'ok' | 'not_lifted' | 'forbidden' | 'failed'> {
+  const banned = await api.banMember(input.guildId, input.targetId, input.deleteSeconds, input.reason);
+  if (banned !== 'ok') return banned === 'forbidden' ? 'forbidden' : 'failed';
+  for (const listener of softBanListeners) {
+    try {
+      listener(input.guildId);
+    } catch (error) {
+      console.error('[bot] soft ban listener failed:', error);
+    }
+  }
+  for (let attempt = 1; attempt <= UNBAN_ATTEMPTS; attempt += 1) {
+    const result = await api.unbanMember(input.guildId, input.targetId, input.liftReason);
+    // not_found means there is no ban to lift, which is the state we wanted.
+    if (result === 'ok' || result === 'not_found') return 'ok';
+    if (attempt < UNBAN_ATTEMPTS) await input.sleep(1000 * attempt);
+  }
+  return 'not_lifted';
 }

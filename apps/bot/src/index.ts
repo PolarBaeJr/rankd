@@ -1,5 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { clearRevocations, fetchDiscordSettings, fetchLinkedMembers } from './api.js';
+import {
+  clearRevocations,
+  fetchLinkedMembers,
+  fetchServerSettings,
+  type ServerSettings,
+} from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
@@ -38,6 +43,8 @@ import {
   handleTournamentListModal,
   handleTournamentPageButton,
   isGuideButton,
+  isTrapStatsButton,
+  handleTrapStatsButton,
   isReportModal,
   isSelfRoleButton,
   isSessionBoardButton,
@@ -68,6 +75,9 @@ import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
 import { createServerLog, intentsFor, parseServerLogScopes } from './server-log.js';
+import { bumpTrapNotice } from './trap-notice.js';
+import { onSoftBan } from './moderation.js';
+import { createScamGuard, type GuardRules } from './scam-guard.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -926,6 +936,12 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // The count button on a trap channel's warning: the stats, only to whoever
+    // pressed it. trap:stats is disjoint from every other prefix.
+    if (isTrapStatsButton(customId)) {
+      return send(res, 200, await handleTrapStatsButton({ guildId: interaction.guild_id ?? null }));
+    }
+
     // The guide message's buttons. The same two fields as above and no role
     // list, because nothing here toggles a role. Order against the self-role
     // block is a readability choice only: the two prefixes are disjoint.
@@ -1074,18 +1090,88 @@ function serverLogOptions(token: string) {
   if (scopes.size === 0) return {};
   console.log(`[server-log] on: ${[...scopes].join(', ')}`);
 
-  // The channel is a /config setting, read through the app and held for a
-  // minute so a busy server does not ask the app on every event.
-  let cached: { channelId: string | null; at: number } | null = null;
-  async function resolveChannel(): Promise<string | null> {
-    if (cached && Date.now() - cached.at < 60_000) return cached.channelId;
-    const { settings } = await fetchDiscordSettings();
-    cached = { channelId: settings.server_log_channel_id ?? null, at: Date.now() };
-    return cached.channelId;
+  // Each server's log channel and guard switch (/config server_log and scam_guard, 00302), read through
+  // the app and held for a minute so a busy server does not ask on every event.
+  // A failed read keeps the last answer; before any answer, nothing posts.
+  let servers: { byGuild: Map<string, ServerSettings>; at: number } | null = null;
+  let reading: Promise<Map<string, ServerSettings>> | null = null;
+  let lastReadFailure = 0;
+  async function serverSettings(guildId: string): Promise<ServerSettings | undefined> {
+    if (!servers || Date.now() - servers.at >= 60_000) {
+      reading ??= fetchServerSettings()
+        .then(({ servers: rows }) => {
+          servers = { byGuild: new Map(rows.map((row) => [row.guildId, row])), at: Date.now() };
+          return servers.byGuild;
+        })
+        .catch((error) => {
+          // Said out loud, at most every ten minutes: before the first answer a
+          // failed read means no server log and no scam guard anywhere.
+          if (Date.now() - lastReadFailure >= 600_000) {
+            lastReadFailure = Date.now();
+            console.error(
+              `[server-log] could not read the server settings${servers ? ', using the last ones' : ', so nothing is logged yet'}: ${String(error)}`
+            );
+          }
+          if (!servers) throw error;
+          return servers.byGuild;
+        })
+        .finally(() => {
+          reading = null;
+        });
+      await reading;
+    }
+    return servers?.byGuild.get(guildId);
   }
+  const resolveChannel = async (guildId: string) => (await serverSettings(guildId))?.serverLogChannelId ?? null;
+  const rulesFor = async (guildId: string): Promise<GuardRules | null> => {
+    const settings = await serverSettings(guildId);
+    if (!settings?.scamGuard) return null;
+    return {
+      action: settings.automodAction,
+      timeoutMinutes: settings.automodTimeoutMinutes,
+      spray: settings.automodSpray,
+      channels: settings.automodSprayChannels,
+      windowMinutes: settings.automodSprayWindowMinutes,
+      flagSuspects: settings.automodFlagSuspects,
+      words: settings.automodWords,
+      wordsAction: settings.automodWordsAction,
+      trapAction: settings.automodTrapAction ?? 'softban',
+      trapChannelIds: settings.automodTrapChannelIds,
+    };
+  };
 
-  const serverLog = createServerLog({ api: new DiscordApi({ token }), scopes, resolveChannel });
-  return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
+  const api = new DiscordApi({ token });
+  const serverLog = createServerLog({ api, scopes, resolveChannel });
+  // A soft-banning trap's warning counts every soft ban in its server, from
+  // /softban as much as from auto mod.
+  onSoftBan((guildId) => {
+    void serverSettings(guildId)
+      .then((settings) => {
+        if (!settings || (settings.automodTrapAction ?? 'softban') !== 'softban') return;
+        for (const channelId of settings.automodTrapChannelIds) void bumpTrapNotice(api, channelId, 'softban');
+      })
+      .catch(() => {});
+  });
+  if (!scopes.has('scam')) return { intents: intentsFor(scopes), onDispatch: serverLog.onDispatch };
+
+  // The scam guard reads the same messages. See scam-guard.ts.
+  const guard = createScamGuard({
+    api,
+    rulesFor,
+    report: serverLog.post,
+    // A soft ban is counted by onSoftBan below, whatever caught it, so a trap
+    // that soft-bans is not counted twice.
+    onTrapCaught: (_guildId, channelId, action) => {
+      if (action !== 'softban') void bumpTrapNotice(api, channelId, action);
+    },
+  });
+  return {
+    intents: intentsFor(scopes),
+    onDispatch: (type: string, data: unknown) => {
+      serverLog.onDispatch(type, data);
+      if (type === 'MESSAGE_CREATE') guard.onMessage(data);
+    },
+  };
 }
 
 server.listen(PORT, '0.0.0.0', () => {

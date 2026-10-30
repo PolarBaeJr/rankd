@@ -93,6 +93,7 @@ describe('the console nav', () => {
   it('refuses to open a section on a data read alone', () => {
     for (const read of ['fees.clubfees.read', 'fees.otherincome.read', 'fees.netposition.read', 'fees.reinstatements.read', 'fees.expenses.read'] as const) {
       expect(canAccess('exec', holding(read), '/fees'), read).toBe(false);
+      expect(canAccess('exec', holding(read), '/finances'), read).toBe(false);
     }
     // /players comes apart the same way now: the roster is data behind
     // players.read, and holding it without players.page must not be a way in.
@@ -109,11 +110,15 @@ describe('the console nav', () => {
       '/dashboard',
       '/matches',
       '/tournaments',
+      // Both read by level since 2026-10-23 ("read to everything").
+      '/events',
       '/sessions',
       '/announcements',
       '/seasons',
       '/fees',
+      '/finances',
       '/players',
+      '/club-changes',
       '/legal',
       '/legal/signatures',
       '/legal/guests',

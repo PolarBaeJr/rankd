@@ -100,6 +100,7 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput, r
 
   revalidatePath('/seasons');
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 export type SeasonEloPolicy = 'carry' | 'soft' | 'full';
@@ -140,6 +141,7 @@ export async function setActiveSeason(
 
   revalidatePath('/seasons');
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 // Closing a season freezes its ladder: every session, tournament, match and fee

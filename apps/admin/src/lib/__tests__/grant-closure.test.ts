@@ -452,12 +452,15 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
   // `fees.clubfees.read` USED TO BE IN THIS LIST AND IS NOW IN THE ONE BELOW.
   // Editable roles (00104) moved the four finance READS inside the ceiling,
   // because the club owner asked for a treasurer who can see money in as well as
-  // out and that is not expressible while the ceiling is the exec baseline. The
-  // corresponding WRITES did not move, which is why one of them stands in here.
+  // out and that is not expressible while the ceiling is the exec baseline.
+  // `fees.clubfees.markpaid.write` stood here too until 2026-10-23, when the
+  // owner opened every capability outside the five admin areas to roles and
+  // grants. What is refused now is those areas, so the cases are drawn from them.
   it('refuses even an admin the admin-only half of the vocabulary', async () => {
     for (const capability of [
       'audit.page',
-      'fees.clubfees.markpaid.write',
+      'accounts.apikey.mint.write',
+      'platform.settings.write',
       'permissions.write',
     ] as const) {
       const res = await setPlayerPermissions(EXEC_A, {

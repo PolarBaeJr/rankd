@@ -74,7 +74,8 @@ describe('atLeast', () => {
 // derived, so a change to the section map has to be made here too and cannot
 // pass silently.
 //
-// Every row is UNCHANGED from before capabilities replaced the level column:
+// Every row but the 2026-10-23 block below (officers read everything outside
+// the admin areas) is UNCHANGED from before capabilities replaced the level column:
 // canAccess now resolves a path to a capability namespace and asks whether the
 // viewer holds a read beneath it, and this table is the assertion that the two
 // formulations answer identically for an unrestricted person — which is
@@ -108,13 +109,32 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   // back into the admin-only group with it — an exec with a link that bounces
   // them is a bug that has shipped before.
   { path: '/fees', admin: true, exec: true, trainer: false },
+  // The other ledgers, moved off /fees. Opened by the same page key.
+  { path: '/finances', admin: true, exec: true, trainer: false },
   // Who allows photos. Legal, so an exec's and not a trainer's, even though the
   // members half of it is roster data a trainer can otherwise read.
   { path: '/legal/media-consent', admin: true, exec: true, trainer: false },
   // Which version each member last signed. Legal, like the consent list above.
   { path: '/legal/signatures', admin: true, exec: true, trainer: false },
 
-  // Admin territory.
+  // READ BY EVERY OFFICER SINCE 2026-10-23. These were admin territory until
+  // the owner's "give them read to everything, but write follow the roles":
+  // the floor now carries every page outside the five admin areas, so an
+  // unrestricted exec opens them, and every write inside still arrives only
+  // by a role or a grant.
+  { path: '/disputes', admin: true, exec: true, trainer: false },
+  { path: '/walkovers', admin: true, exec: true, trainer: false },
+  { path: '/challenges', admin: true, exec: true, trainer: false },
+  { path: '/events', admin: true, exec: true, trainer: false },
+  { path: '/events/abc-123', admin: true, exec: true, trainer: false },
+  // Club changes (00286).
+  { path: '/club-changes', admin: true, exec: true, trainer: false },
+  // The tournament fees sub-route, behind tournaments.fees.read.
+  { path: '/tournaments/abc-123/fees', admin: true, exec: true, trainer: false },
+
+  // Admin territory: the five admin areas (permissions, audit, ratings,
+  // accounts, platform), which no officer reads by level.
+  { path: '/permissions', admin: true, exec: false, trainer: false },
   { path: '/audit', admin: true, exec: false, trainer: false },
   // The audit log's CSV download. A route rather than a server action because a
   // file has to arrive as a response with its own headers, and its own row here
@@ -122,21 +142,12 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   // '/api/audit/export', so this path would otherwise fall through to the
   // admin-only safety net and pass for the wrong reason.
   { path: '/api/audit/export', admin: true, exec: false, trainer: false },
-  { path: '/disputes', admin: true, exec: false, trainer: false },
-  { path: '/walkovers', admin: true, exec: false, trainer: false },
-  { path: '/challenges', admin: true, exec: false, trainer: false },
-  { path: '/events', admin: true, exec: false, trainer: false },
-  { path: '/events/abc-123', admin: true, exec: false, trainer: false },
   // Platform configuration, split out of /settings. /settings itself stays
   // trainer-level for passkey enrolment, so these two MUST be listed
   // separately — the club owner's rule was that execs cannot edit them, and
   // there is no read-only view for them either.
   { path: '/ratings', admin: true, exec: false, trainer: false },
   { path: '/accounts', admin: true, exec: false, trainer: false },
-  // Club changes (00286): admin-only, in no baseline.
-  { path: '/club-changes', admin: true, exec: false, trainer: false },
-  // Admin-only sub-route under an exec-allowed section.
-  { path: '/tournaments/abc-123/fees', admin: true, exec: false, trainer: false },
 ];
 
 describe('canAccess — three-level matrix', () => {

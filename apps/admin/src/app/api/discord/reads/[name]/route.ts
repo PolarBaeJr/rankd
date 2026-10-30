@@ -15,6 +15,7 @@ import {
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { discordActorStore, resolveDiscordActor } from '@/lib/discord-actor';
 import { isWaivedFee } from '@/lib/fee-status';
+import { adminBaseUrl } from '@/lib/base-path';
 import { isAuthorizedDiscordService, discordServiceUnauthorized } from '@/lib/discord-service-auth';
 import type { Capability } from '@/lib/permissions';
 
@@ -242,31 +243,159 @@ async function readEvents(adminClient: AdminClient, params: URLSearchParams): Pr
   return { ok: true, data: { events: rows.slice(0, CHOICES_MAX).map(eventView) } };
 }
 
+type SignupPerson = {
+  name: string;
+  kind: 'member' | 'guest' | 'external';
+  /** How they got on the list: the Google Form, the app, or an officer by hand. */
+  source: 'form' | 'app' | 'manual';
+  checkedIn: boolean;
+  noShow: boolean;
+  walkIn: boolean;
+};
+
+type MemberSignupRow = {
+  player_id: string;
+  created_at: string;
+  checked_in_at: string | null;
+  no_show_at: string | null;
+  walk_in: boolean | null;
+  players: { full_name: string | null; is_guest: boolean | null } | { full_name: string | null; is_guest: boolean | null }[] | null;
+};
+
+type ExternalSignupRow = {
+  full_name: string;
+  import_entry_id: string | null;
+  created_at: string;
+  checked_in_at: string | null;
+  no_show_at: string | null;
+  walk_in: boolean | null;
+};
+
+/**
+ * Who is signed up, as the event page and the door read it: members (a guest
+ * record from a linked tournament, 00292, marked as one), the non-members a
+ * Form or the door added (00284, 00294), and the waitlist (00294).
+ *
+ * Only names and statuses leave here. An external's email and anybody's
+ * preferred partner stay in the console, so neither is selected at all.
+ *
+ * Every read is checked: a failed PostgREST read arrives as an empty list,
+ * which would say nobody signed up, and /event delete reads this too.
+ */
 async function readEventSignups(adminClient: AdminClient, params: URLSearchParams): Promise<ReadResult> {
   const id = params.get('id') ?? '';
   if (!UUID.test(id)) return { ok: true, data: { event: null } };
 
-  const [eventRes, signupsRes] = await Promise.all([
+  const [eventRes, membersRes, externalsRes, waitlistRes, formRes, byHandRes] = await Promise.all([
     adminClient.from('club_events').select(EVENT_COLUMNS).eq('id', id).maybeSingle(),
     adminClient
       .from('club_event_signups')
-      .select('player_id, created_at, players(full_name)')
+      .select('player_id, created_at, checked_in_at, no_show_at, walk_in, players(full_name, is_guest)')
       .eq('event_id', id)
       .order('created_at', { ascending: true }),
+    adminClient
+      .from('club_event_external_signups')
+      .select('full_name, import_entry_id, created_at, checked_in_at, no_show_at, walk_in')
+      .eq('event_id', id)
+      .order('created_at', { ascending: true }),
+    // Named embed: resolved_by is a second foreign key to players, so an
+    // unnamed one is ambiguous (PGRST201) and the whole read fails.
+    adminClient
+      .from('club_event_waitlist' as never)
+      .select('joined_at, players!club_event_waitlist_player_id_fkey(full_name)')
+      .eq('event_id', id)
+      .eq('status', 'waiting')
+      .order('joined_at', { ascending: true }),
+    // Guest records a tournament link admitted from the Form (00292): their
+    // entry names them.
+    adminClient
+      .from('registration_import_entries')
+      .select('entrant_id')
+      .eq('club_event_id', id)
+      .eq('status', 'entered'),
+    // Members an officer added with Add person (00306).
+    adminClient
+      .from('audit_logs')
+      .select('new_value')
+      .eq('target_id', id)
+      .eq('action_type', 'club_event_added_by_hand'),
   ]);
   if (eventRes.error) return failed('event-signups', eventRes.error);
-  if (signupsRes.error) return failed('event-signups', signupsRes.error);
+  if (membersRes.error) return failed('event-signups', membersRes.error);
+  if (externalsRes.error) return failed('event-signups', externalsRes.error);
+  if (waitlistRes.error) return failed('event-signups', waitlistRes.error);
+  if (formRes.error) return failed('event-signups', formRes.error);
+  if (byHandRes.error) return failed('event-signups', byHandRes.error);
+  const fromForm = new Set(((formRes.data ?? []) as { entrant_id: string | null }[]).map((row) => row.entrant_id));
+  const byHand = new Set(
+    ((byHandRes.data ?? []) as { new_value: { player_id?: string } | null }[]).map((row) => row.new_value?.player_id),
+  );
   if (!eventRes.data) return { ok: true, data: { event: null } };
 
-  type SignupRow = { players: { full_name: string | null } | { full_name: string | null }[] | null };
-  const names = ((signupsRes.data ?? []) as SignupRow[]).map((row) => {
+  const members = ((membersRes.data ?? []) as unknown as MemberSignupRow[]).map((row) => {
     const player = Array.isArray(row.players) ? row.players[0] : row.players;
-    return player?.full_name ?? 'A member';
+    const person: SignupPerson = {
+      name: player?.full_name ?? 'A member',
+      kind: player?.is_guest ? 'guest' : 'member',
+      // Anybody with an account is "app", however they signed up: a member
+      // who filled in the Form is still a member (owner, 2026-10-28). A guest
+      // record has no account: "form" when a Form entry names it, else an
+      // officer added it by hand.
+      source:
+        row.walk_in === true || byHand.has(row.player_id)
+          ? 'manual'
+          : !player?.is_guest
+            ? 'app'
+            : fromForm.has(row.player_id)
+              ? 'form'
+              : 'manual',
+      checkedIn: row.checked_in_at !== null,
+      noShow: row.no_show_at !== null,
+      walkIn: row.walk_in === true,
+    };
+    return { at: row.created_at, person };
   });
+  const externals = ((externalsRes.data ?? []) as unknown as ExternalSignupRow[]).map((row) => ({
+    at: row.created_at,
+    person: {
+      name: row.full_name,
+      kind: 'external',
+      source: row.import_entry_id && row.walk_in !== true ? 'form' : 'manual',
+      checkedIn: row.checked_in_at !== null,
+      noShow: row.no_show_at !== null,
+      walkIn: row.walk_in === true,
+    } satisfies SignupPerson,
+  }));
+  // One list in sign-up order, so the numbering is first come, first listed.
+  const people = [...members, ...externals].sort((a, b) => a.at.localeCompare(b.at)).map((row) => row.person);
+  const waitlist = ((waitlistRes.data ?? []) as unknown as { players: NameEmbed }[]).map(
+    (row) => embeddedName(row.players) ?? 'A member',
+  );
+
   const event = eventRes.data as EventRow;
+  // The console's own address, only when it is configured: ADMIN_API_URL can
+  // be an internal hostname, which would be no use as a link in Discord.
+  const url = process.env.NEXT_PUBLIC_ADMIN_URL ? `${adminBaseUrl('')}/events/${id}` : null;
   return {
     ok: true,
-    data: { event: { id, label: eventLabel(event), capacity: event.capacity }, signups: names },
+    data: {
+      event: {
+        id,
+        label: eventLabel(event),
+        title: event.title,
+        when: formatClubEventTime(event.starts_at),
+        status: event.status,
+        capacity: event.capacity,
+        url,
+      },
+      // Places taken as club_event_taken counts them (00294): a no-show frees
+      // theirs, so it is the number the capacity is measured against.
+      taken: people.filter((p) => !p.noShow).length,
+      // Plain names, the shape older bots read (and /event delete counts).
+      signups: people.map((p) => p.name),
+      people,
+      waitlist,
+    },
   };
 }
 

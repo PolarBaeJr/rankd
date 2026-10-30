@@ -2,10 +2,10 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags, isDoublesEvent } from '@badminton/shared';
+import { formatDate, describeTournamentTimes, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags, isDoublesEvent } from '@badminton/shared';
 import type { TournamentEventFormat, TournamentEventType } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign, MapPin } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Clock, Zap, Crown, Plus, Swords, DollarSign, MapPin } from 'lucide-react';
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
@@ -45,6 +45,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
+  const tournamentTimes = describeTournamentTimes(tournament.starts_time, tournament.ends_time);
 
   // Fetch events with participant counts
   const { data: events } = await supabase
@@ -175,54 +176,69 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       </Link>
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <PageHeader
-            className="no-period !mb-0"
-            title={tournament.name}
-            sub={
-              <span className="flex items-center gap-3">
-                <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatDate(tournament.start_date)}</span>
-                <span>&middot;</span>
-                <span>&middot;</span>
-                <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x default</span>
-              </span>
-            }
-          />
-          <div className="flex gap-2 mt-3 items-center">
-            {/* One code for the whole tournament — a scan checks the player
-                into every event they are entered in. */}
-            <TournamentCheckinQr tournamentId={tournament.id} tournamentName={tournament.name} />
-            <Link
-              href={`/tournaments/${tournament.id}/checkin`}
-              className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--bg-elevated)]"
-            >
-              Check-in list
-            </Link>
-            <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
-              <span className="sr-only">Tournament status: </span>{tournament.status}
-            </Badge>
-            {tournament.suspended_at && <Badge variant="danger">suspended</Badge>}
-            {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
-          </div>
-          {tournament.suspended_at && tournament.suspension_reason && (
-            <p className="text-sm text-[var(--text-muted)] mt-2">{tournament.suspension_reason}</p>
-          )}
+      <div>
+        <PageHeader
+          className="no-period !mb-0"
+          title={tournament.name}
+          sub={
+            <span className="flex items-center gap-3">
+              <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatDate(tournament.start_date)}</span>
+              {/* Its own times and venue (00304), when set. The Discord event
+                  falls back to 09:00 to 18:00, but the page says only what the
+                  tournament itself says. */}
+              {tournamentTimes && (
+                <>
+                  <span>&middot;</span>
+                  <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{tournamentTimes}</span>
+                </>
+              )}
+              {tournament.location && (
+                <>
+                  <span>&middot;</span>
+                  <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{tournament.location}</span>
+                </>
+              )}
+              <span>&middot;</span>
+              <span>&middot;</span>
+              <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x default</span>
+            </span>
+          }
+          actions={
+            <>
+              {canSeeFees && (
+                <Link href={`/tournaments/${id}/fees`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
+                  <DollarSign className="w-4 h-4" />
+                  Fees
+                </Link>
+              )}
+              <TournamentStatusControls
+                tournamentId={id}
+                status={tournament.status}
+                suspendedAt={tournament.suspended_at}
+                suspensionReason={tournament.suspension_reason}
+              />
+            </>
+          }
+        />
+        <div className="flex gap-2 mt-3 items-center">
+          {/* One code for the whole tournament: a scan checks the player
+              into every event they are entered in. */}
+          <TournamentCheckinQr tournamentId={tournament.id} tournamentName={tournament.name} />
+          <Link
+            href={`/tournaments/${tournament.id}/checkin`}
+            className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--bg-elevated)]"
+          >
+            Check-in list
+          </Link>
+          <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
+            <span className="sr-only">Tournament status: </span>{tournament.status}
+          </Badge>
+          {tournament.suspended_at && <Badge variant="danger">suspended</Badge>}
+          {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
         </div>
-        <div className="flex items-center gap-3">
-          {canSeeFees && (
-            <Link href={`/tournaments/${id}/fees`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
-              <DollarSign className="w-4 h-4" />
-              Fees
-            </Link>
-          )}
-          <TournamentStatusControls
-            tournamentId={id}
-            status={tournament.status}
-            suspendedAt={tournament.suspended_at}
-            suspensionReason={tournament.suspension_reason}
-          />
-        </div>
+        {tournament.suspended_at && tournament.suspension_reason && (
+          <p className="text-sm text-[var(--text-muted)] mt-2">{tournament.suspension_reason}</p>
+        )}
       </div>
 
       {/* Events Section */}

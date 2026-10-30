@@ -33,7 +33,10 @@ New here and not an engineer? The plain-language overview is in
   registration and check-in windows, a waitlist, and category change requests
   that need an approver.
 - **Club events.** Socials, workshops, clinics and the other events that are
-  not tournaments, also posted to the Discord server's Events tab.
+  not tournaments, also posted to the Discord server's Events tab. Members sign
+  up in the app, sending the e-transfer screenshot with the sign-up when the
+  event costs money; non-members sign up on the event's Google Form. A full
+  event takes a waitlist, and an event can later run as a tournament.
 - **Seasons and fees.** Members see their membership standing and fee status
   for the current season, and their record from past seasons. Seasons roll
   over on their own. Members pay their membership fee and upload the receipt;
@@ -59,7 +62,8 @@ A private console mounted under `/admin`. It covers members and accounts,
 seasons and fees, club finances (other income, expenses and their receipts),
 sessions and attendance, matches, challenges, disputes and walkovers, ratings,
 the tournament desk (events, seeding, brackets, scheduling, results and court
-check-in), announcements, the legal documents members accept, platform
+check-in), club events (their Google Forms, door check-in, walk-ins and
+adding somebody by hand), announcements, the legal documents members accept, platform
 settings, permissions and the audit log.
 
 Access has four levels: none, executive, varsity trainer and admin. On top of
@@ -72,10 +76,12 @@ get their own guided tour of the console.
 
 A small dependency-free Node service. It provides slash commands for the
 leaderboard, profiles, sessions, tournaments, the club's socials, feedback and
-bug reports. It keeps
+bug reports, and lets officers run sessions, events and tournaments from
+Discord. It keeps
 members' Discord roles in step with their club status once they link their
 account, and posts announcements, session pings, tournament events and match
-results from the app.
+results from the app. It works in any server: each one keeps its own settings,
+a server log, auto mod and moderation commands.
 
 ### Scheduled jobs
 

@@ -383,7 +383,19 @@ const TODAY: Row[] = [
   { capability: 'page.access.predictions',            admin: T, exec: F, trainer: F, was: 'no prior gate: the predictions switch is new in 00282' },
 ];
 
-describe('capability equivalence — nobody gained anything', () => {
+// THE OWNER'S READ WIDENING, written out here rather than imported. On
+// 2026-10-23 the club owner asked for "read to everything, but write follow the
+// roles": every `.read` and `.page` outside these five areas reaches every
+// officer by level. It is the one way an unrestricted exec may now hold
+// something the table above says no exec held, and it is restated from the
+// owner's words rather than from EXEC_READS so this file stays a second
+// derivation.
+const ADMIN_ONLY_AREAS = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
+const isOwnerRead = (capability: string) =>
+  (capability.endsWith('.read') || capability.endsWith('.page')) &&
+  !ADMIN_ONLY_AREAS.includes(capability.split('.')[0] ?? '');
+
+describe('capability equivalence: nobody gained a write', () => {
   it('covers every capability exactly once', () => {
     expect(TODAY.length).toBe(CAPABILITIES.length);
     expect(new Set(TODAY.map((r) => r.capability)).size).toBe(TODAY.length);
@@ -406,9 +418,17 @@ describe('capability equivalence — nobody gained anything', () => {
       // ever says yes where this table says no, somebody has handed a level
       // something no gate ever gave it, and this fails. A narrowing is silent
       // here on purpose — it is caught, exactly, by the set comparison against
-      // EXEC_BASELINE further down, which is where the twelve are pinned.
+      // EXEC_BASELINE further down.
+      //
+      // ONE WIDENING IS ALLOWED, AND ONLY AS READS: the owner's 2026-10-23
+      // "read to everything". A read or page outside the admin areas may reach
+      // an exec the table says never had it; a write, or anything in those
+      // areas, still fails here.
       if (permits('exec', UNRESTRICTED, row.capability)) {
-        expect(row.exec, `${row.capability} reaches an exec who never had it`).toBe(true);
+        expect(
+          row.exec || isOwnerRead(row.capability),
+          `${row.capability} reaches an exec who never had it`,
+        ).toBe(true);
       }
       // Trainer keeps the EQUALITY: TRAINER_BASELINE did not move, so there is
       // nothing to weaken and every reason not to.
@@ -480,12 +500,25 @@ describe('capability equivalence — nobody gained anything', () => {
   // baselines because "everyone" is what the floor means. The narrowing claim
   // this file exists to make is unaffected: the write was exec work before
   // composition shipped, so it is still a subset of what execs had.
-  it('leaves an unrestricted exec a strict subset of what execs had, with one named write', () => {
+  //
+  // AND SINCE 2026-10-23 A THIRD: every read and page outside the admin areas
+  // reaches every officer ("give them read to everything"). So the floor is now
+  // what execs had, plus those reads, and it is checked in both directions: it
+  // holds every one of them, and nothing beyond them and the historic set.
+  it('leaves an unrestricted exec what execs had plus every read, with one named write', () => {
     const historic = new Set(TODAY.filter((r) => r.exec).map((r) => r.capability));
     const today = CAPABILITIES.filter((c) => permits('exec', UNRESTRICTED, c));
 
     for (const capability of today) {
-      expect(historic.has(capability), `${capability} was never exec work`).toBe(true);
+      expect(
+        historic.has(capability) || isOwnerRead(capability),
+        `${capability} was never exec work`,
+      ).toBe(true);
+      expect(ADMIN_ONLY_AREAS.includes(capability.split('.')[0] ?? ''), capability).toBe(false);
+    }
+    // Read everything: every read and page outside the admin areas is held.
+    for (const capability of CAPABILITIES.filter(isOwnerRead)) {
+      expect(today, `${capability} is not readable by an officer`).toContain(capability);
     }
     expect(today.filter((c) => c.endsWith('.write'))).toEqual(['fees.expenses.add.write']);
     expect(today.length).toBeLessThan(historic.size);

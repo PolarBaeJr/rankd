@@ -27,7 +27,7 @@ import type { FormBinding, ImportedEntry, ImportedResponse, ImportTargetKind } f
 //
 // On /fees a form is linked to a SEASON (00290): it enters nobody, and each
 // response's e-transfer screenshot is filed against that person's dues for the
-// season, member or not, for review under Submitted.
+// season, member or not, for review under To review on /fees.
 // ---------------------------------------------------------------------------
 
 const STATUS_LABEL: Record<string, string> = {
@@ -160,6 +160,8 @@ export function FormImportCard({
   const [consumerId, setConsumerId] = useState(consumers[0]?.id ?? '');
   const [joinWaitlist, setJoinWaitlist] = useState(false);
   const [soloDoublesAck, setSoloDoublesAck] = useState(false);
+  // The link box opens from a button, like every other section's Edit.
+  const [linking, setLinking] = useState(false);
 
   function run(action: () => Promise<ActionResult<void>>, after?: () => void) {
     setError(null);
@@ -202,7 +204,7 @@ export function FormImportCard({
           No Google Form is linked yet. Paste the form&apos;s id and pick the Data API key its script sends with.
           Its responses then show up below.
           {targetKind === 'season' &&
-            ' Each e-transfer screenshot is filed against that person\'s dues for this season and waits under Submitted.'}
+            ' Each e-transfer screenshot is filed against that person\'s dues for this season and waits under To review.'}
         </p>
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
@@ -239,7 +241,15 @@ export function FormImportCard({
         </ul>
       )}
 
-      {canBind && (
+      {canBind && !linking && (
+        <div>
+          <Button variant="secondary" onClick={() => setLinking(true)}>
+            {bindings.length === 0 ? 'Link a Google Form' : 'Link another Google Form'}
+          </Button>
+        </div>
+      )}
+
+      {canBind && linking && (
         <div className="space-y-2 rounded-xl border border-[var(--border)] p-3">
           {consumers.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">
@@ -306,7 +316,10 @@ export function FormImportCard({
                         joinWaitlist,
                         soloDoublesAck,
                       }),
-                    () => setFormId(''),
+                    () => {
+                      setFormId('');
+                      setLinking(false);
+                    },
                   )
                 }
               >
@@ -314,6 +327,9 @@ export function FormImportCard({
               </Button>
             </>
           )}
+          <Button variant="secondary" onClick={() => setLinking(false)} disabled={pending}>
+            Cancel
+          </Button>
         </div>
       )}
 

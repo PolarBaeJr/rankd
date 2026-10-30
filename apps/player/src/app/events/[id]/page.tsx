@@ -19,7 +19,8 @@ import {
 } from '@/lib/club-event-view';
 import { clubEventFormLink } from '@/lib/event-form-link';
 import { VisitorSignup } from '@/components/visitor-signup';
-import { SignupButton } from './signup-button';
+import { getMembershipPayments } from '@/lib/club-socials';
+import { SignupButton, type SignupFee } from './signup-button';
 
 export default async function ClubEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -53,6 +54,8 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const taken = takenError || typeof takenByRpc !== 'number' ? takenCount ?? 0 : (takenByRpc as number);
   const state = clubEventSignupState(event, new Date(), taken, mineRow !== null);
   const cost = formatClubEventCost(event.cost_cents);
+  const fee =
+    player && cost && (event.cost_cents ?? 0) > 0 && state !== 'going' ? await signupFee(service, id, player, cost) : null;
   // A full event takes a waitlist until it ends, also after it starts: a
   // no-show's place is given at the door. So does one with a freed place that
   // members are already queued for.
@@ -183,6 +186,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 canWait={canWait}
                 closesAt={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
                 opensAt={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
+                fee={fee}
               />
             ) : (
               <VisitorSignup formUrl={formUrl} open={state === 'open' || state === 'full'} />
@@ -257,4 +261,33 @@ async function readWaitlist(
   const rows = (data ?? []) as { player_id: string }[];
   const index = rows.findIndex((row) => row.player_id === playerId);
   return { available: true, position: index === -1 ? null : index + 1, waiting: rows.length };
+}
+
+/**
+ * The fee a member pays to sign up, as club_event_signup_fee charges it: not
+ * an exec or fee-exempt, and no fee of theirs for it already paid or holding a
+ * receipt (a withdraw keeps one). signUpWithReceipt decides again either way.
+ */
+async function signupFee(
+  service: ReturnType<typeof createServiceRoleClient>,
+  eventId: string,
+  player: { id: string; is_exec?: boolean | null; fee_exempt?: boolean | null },
+  amount: string,
+): Promise<SignupFee | null> {
+  if (player.is_exec || player.fee_exempt) return null;
+  const [{ data }, payments] = await Promise.all([
+    service
+      .from('club_fees')
+      .select('paid_at, fee_submissions!fee_submissions_club_fee_fkey(status)')
+      .eq('fee_type', 'event')
+      .eq('club_event_id', eventId)
+      .eq('player_id', player.id)
+      .maybeSingle(),
+    getMembershipPayments(),
+  ]);
+  const existing = data as { paid_at: string | null; fee_submissions: { status: string }[] | null } | null;
+  if (existing?.paid_at || (existing?.fee_submissions ?? []).some((s) => s.status === 'submitted' || s.status === 'confirmed')) {
+    return null;
+  }
+  return { amount, etransferEmail: payments.etransferEmail };
 }
