@@ -1373,7 +1373,9 @@ export const COMMAND_DEFINITIONS = [
         type: 1,
         name: 'signups',
         description: 'Who has signed up, with check-in and the waitlist',
-        options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
+        options: [
+          { type: 3, name: 'event', description: 'The event (the next one if left empty)', required: false, autocomplete: true },
+        ],
       },
     ],
   },
@@ -7204,7 +7206,9 @@ export function handleEventAdmin(
 
   const chosen = subcommand(options);
   const eventId = stringOption(chosen.options, 'event');
-  if (chosen.name !== 'create' && chosen.name !== 'list' && (!eventId || !UUID_PATTERN.test(eventId))) {
+  // /event signups with no event shows the next one.
+  const optional = chosen.name === 'create' || chosen.name === 'list' || (chosen.name === 'signups' && !eventId);
+  if (!optional && (!eventId || !UUID_PATTERN.test(eventId))) {
     return consoleLine('Pick an event from the list.');
   }
 
@@ -7260,7 +7264,17 @@ export function handleEventAdmin(
       });
     case 'signups':
       return consoleFinishResponse(async () => {
-        const reply = await adminGet<EventSignupsRead>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
+        let id = eventId;
+        if (!id) {
+          // The next event: the console lists those not started more than a
+          // day ago, soonest first. A published one before a draft.
+          const listed = await adminGet<{ events: ConsoleEvent[] }>('/api/discord/reads/events', callerId);
+          if (!listed.ok) return consoleLine(consoleRefusalText(listed));
+          const next = listed.data.events.find((e) => e.status === 'published') ?? listed.data.events[0];
+          if (!next) return consoleLine('No club events coming up. Pick one from the list.');
+          id = next.id;
+        }
+        const reply = await adminGet<EventSignupsRead>(`/api/discord/reads/event-signups?id=${id}`, callerId);
         if (!reply.ok) return consoleLine(consoleRefusalText(reply));
         const event = reply.data.event;
         if (!event) return consoleLine('That event no longer exists.');

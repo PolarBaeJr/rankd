@@ -311,6 +311,36 @@ describe('/event signups', () => {
     expect(init.headers['x-discord-user-id']).toBe(CALLER);
   });
 
+  it('shows the next published event when none is picked', async () => {
+    const DRAFT_ID = '99999999-8888-4777-8666-555555555555';
+    fetchSpy
+      .mockResolvedValueOnce(
+        json({
+          ok: true,
+          data: {
+            events: [
+              { id: DRAFT_ID, label: 'Draft', status: 'draft' },
+              { id: EVENT_ID, label: EVENT.label, status: 'published' },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(json({ ok: true, data: { event: EVENT, taken: 0, signups: [], people: [] } }));
+    const response = await dispatch('event', sub('signups', []), CONTEXT);
+    const data = (await response.finish!()).data as { embeds?: Embed[] };
+    expect(fetchSpy.mock.calls[0]![0]).toBe(`${BASE}/api/discord/reads/events`);
+    expect(fetchSpy.mock.calls[1]![0]).toBe(`${BASE}/api/discord/reads/event-signups?id=${EVENT_ID}`);
+    expect(data.embeds![0]!.title).toBe('Halloween social');
+  });
+
+  it('says so when no event is picked and none is coming up', async () => {
+    fetchSpy.mockResolvedValueOnce(json({ ok: true, data: { events: [] } }));
+    const response = await dispatch('event', sub('signups', []), CONTEXT);
+    const data = (await response.finish!()).data as { content?: string };
+    expect(data.content).toContain('No club events coming up');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('says what the console said when the caller lacks the sign-ups permission', async () => {
     fetchSpy.mockResolvedValueOnce(
       json({ ok: false, error: 'Your permissions do not include this. Ask an admin.', code: 'AUTH-104' })
