@@ -345,6 +345,10 @@ export async function enterEventCore(
       // 00278: somebody is already waiting, so a free place is theirs.
       case 'waitlist_queue':
         throw new ExpectedError('Others are waiting for this event, join the waitlist');
+      // 00307: a tournament run for a club event fills from the club event's
+      // list, where the e-transfer screenshot is asked for.
+      case 'club_event_linked':
+        throw new ExpectedError('This tournament is run for a club event. Sign up on the club event page to be entered.');
       case 'registration_closed':
         throw new ExpectedError('Registration is closed');
       // The window (00276) moved between the check above and the lock.
