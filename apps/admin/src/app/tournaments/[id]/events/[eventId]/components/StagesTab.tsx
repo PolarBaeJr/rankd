@@ -147,14 +147,6 @@ export function StagesTab({
   const courtsInUse = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
   const activeCourts = useMemo(() => (courts ?? []).filter((c) => c.active), [courts]);
 
-  const rows = useMemo<CourtDeskRow[]>(() => {
-    const sideOf = (entryId: string | null) =>
-      entryId && nameMap[entryId] !== undefined ? { entryId, label: nameMap[entryId]! } : { entryId: null, label: 'TBD' };
-    return deskRows(matches, sideOf, isDoubles);
-  }, [matches, nameMap, isDoubles]);
-  const courtsInUse = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
-  const activeCourts = useMemo(() => (courts ?? []).filter((c) => c.active), [courts]);
-
   const categoryWarning = useMemo(() => (isDoubles ? uncategorisedWarning(pairs) : null), [isDoubles, pairs]);
 
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
