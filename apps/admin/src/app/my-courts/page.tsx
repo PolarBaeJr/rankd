@@ -11,7 +11,7 @@ import { LiveTournament } from '../tournaments/live-tournament';
 import { MyCourtsBoard, type BoardEvent } from './my-courts-board';
 
 // A COURT HELPER'S PAGE (00310). Every court this person was named to in an
-// active tournament, with the match on it now, its score form and the match it
+// running tournament, with the match on it now, its score form and the match it
 // takes next. Open to every console level (BASELINE_SECTIONS); what it shows
 // is decided by the helper rows, and the save is checked again on the server.
 export default async function MyCourtsPage() {

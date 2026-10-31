@@ -85,13 +85,16 @@ export interface MyCourt {
   tournament_name: string;
 }
 
-/** The courts this person helps on in active tournaments; empty before 00310. */
+/**
+ * The courts this person helps on in tournaments still running; empty before 00310.
+ * Draft counts: a draft tournament can still check in, draw and start its events.
+ */
 export async function readMyCourts(client: AdminClient, playerId: string): Promise<MyCourt[]> {
   const { data, error } = await client
     .from('tournament_court_helpers')
     .select('court_id, tournament_id, tournament:tournaments!tournament_court_helpers_tournament_id_fkey!inner(id, name, status)')
     .eq('player_id', playerId)
-    .eq('tournament.status', 'active');
+    .in('tournament.status', ['draft', 'active']);
   if (isCourtsSchemaMissing(error)) return [];
   if (error) throw new Error(`Could not read your courts: ${error.message}`);
   return (data ?? []).map((row) => {
