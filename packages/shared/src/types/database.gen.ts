@@ -5076,6 +5076,7 @@ export type Database = {
           media_consent_changed_at: string
         }[]
       }
+      staged_late_entry_open: { Args: { p_event_id: string }; Returns: boolean }
       staged_source_fingerprint: {
         Args: { p_event_id: string; p_stage: number }
         Returns: Json

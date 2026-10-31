@@ -94,6 +94,27 @@ describe('participantControls: a team category in a staged event', () => {
   });
 });
 
+describe('participantControls: a late entry into a staged event (00308)', () => {
+  const late = { status: 'live', drawLocked: false, staged: true, lateEntry: true };
+
+  it('opens Add, and only Add, while the window is open', () => {
+    expect(participantControls(late, EVERYTHING).add).toBe(true);
+    expect(participantControls({ ...late, status: 'bracket_generated' }, EVERYTHING).add).toBe(true);
+    expect(participantControls(late, EVERYTHING).addSolo).toBe(false);
+    expect(participantControls(late, EVERYTHING).pair).toBe(false);
+  });
+
+  it('still asks the capability and the draw lock', () => {
+    expect(participantControls(late, NOBODY).add).toBe(false);
+    expect(participantControls({ ...late, drawLocked: true }, EVERYTHING).add).toBe(false);
+  });
+
+  it('changes nothing when the window is shut', () => {
+    expect(participantControls({ ...late, lateEntry: false }, EVERYTHING))
+      .toEqual(participantControls({ status: 'live', drawLocked: false, staged: true }, EVERYTHING));
+  });
+});
+
 describe('participantControls — capability, not just status', () => {
   it('offers nothing at all to a viewer holding none of the six', () => {
     // The whole bug, in one assertion. This viewer could open the event page,

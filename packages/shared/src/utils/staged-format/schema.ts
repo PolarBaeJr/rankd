@@ -90,6 +90,9 @@ export const groupsStageSchema = z.object({
   ]).nullable().default(null),
   tiebreaks: z.array(stageTiebreakSchema).min(1).max(STAGE_TIEBREAKS.length).default(['wins', 'point_diff']),
   poolRanking: z.enum(['best_group_winner', 'none']).default('none'),
+  // How many rounds each group plays. Absent is a full round robin, so every
+  // config saved before this key existed draws exactly as it did.
+  gamesPerTeam: z.number().int().min(1).max(15).optional(),
 });
 
 export const knockoutStageSchema = z.object({

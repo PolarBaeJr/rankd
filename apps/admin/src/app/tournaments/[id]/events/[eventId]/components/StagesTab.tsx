@@ -10,14 +10,23 @@ import {
   matchSides,
   parseFormatConfig,
   slotRefLabel,
+  stageGroupLabel,
   stagedMatchHeading,
   stagesView,
+  type GroupsStage,
   type StageView,
   type TournamentEventStatus,
 } from '@badminton/shared';
-import { Layers, RefreshCw } from 'lucide-react';
-import { drawStage, redrawStage } from '@/lib/tournament-actions';
-import { stageDrawControl, uncategorisedWarning } from '@/lib/stage-controls';
+import { Layers, Plus, RefreshCw } from 'lucide-react';
+import { addStageRound, drawStage, placeLateEntrant, redrawStage } from '@/lib/tournament-actions';
+import {
+  lateEntrantConfirmMessage,
+  lateEntryWindow,
+  stageDrawControl,
+  stageExtendControl,
+  uncategorisedWarning,
+  unplacedLateEntries,
+} from '@/lib/stage-controls';
 import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { getName } from './entry-name';
@@ -80,8 +89,8 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
     [entries, nameMap],
   );
 
-  const views = useMemo(() => {
-    if (!cfg) return [];
+  const { views, lateEntries } = useMemo(() => {
+    if (!cfg) return { views: [], lateEntries: [] };
     const results = formatResultsFrom(
       cfg,
       entries.map((e) => ({ id: e.id, seed: e.seed_number ?? null, status: e.status })),
@@ -97,8 +106,16 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
         ...matchSides(m, isDoubles),
       })),
     );
-    return stagesView(cfg, results);
-  }, [cfg, entries, matches, isDoubles]);
+    // Entries in no group of the first stage, while 00308's window is open:
+    // they arrived after the draw and are placed one at a time.
+    const first = cfg.stages[0];
+    const open = canGenerate && first?.kind === 'groups'
+      && lateEntryWindow(event, matches.map((m) => m.stage));
+    return {
+      views: stagesView(cfg, results),
+      lateEntries: open && first.kind === 'groups' ? unplacedLateEntries(first, results, entries) : [],
+    };
+  }, [cfg, entries, matches, isDoubles, canGenerate, event]);
 
   const categoryWarning = useMemo(() => (isDoubles ? uncategorisedWarning(pairs) : null), [isDoubles, pairs]);
 
@@ -130,6 +147,42 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
     router.refresh();
   }
 
+  async function placeLate(view: StageView, entryId: string, message: string) {
+    const ok = await confirm({
+      title: `Place ${nameMap[entryId] ?? 'this entry'} in a group?`,
+      message,
+      confirmLabel: 'Place in a group',
+    });
+    if (!ok) return;
+    setBusy(`${view.stage.key}:late:${entryId}`);
+    const res = await placeLateEntrant(event.id, view.stage.key, entryId);
+    setBusy(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast(`${nameMap[entryId] ?? 'Entry'} placed, with ${res.data.matches} match${res.data.matches === 1 ? '' : 'es'} added`, 'success');
+    router.refresh();
+  }
+
+  async function addRound(view: StageView) {
+    const ok = await confirm({
+      title: `Add a round to ${view.stage.name}?`,
+      message: 'Every group plays one more round. In a group with an odd number of teams, the team with the most games sits out.',
+      confirmLabel: 'Add a round',
+    });
+    if (!ok) return;
+    setBusy(`${view.stage.key}:round`);
+    const res = await addStageRound(event.id, view.stage.key);
+    setBusy(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const { matches: added, repeats } = res.data;
+    toast(
+      repeats > 0
+        ? `${added} match${added === 1 ? '' : 'es'} added to ${view.stage.name}, ${repeats} of them ${repeats === 1 ? 'a rematch' : 'rematches'}`
+        : `${added} match${added === 1 ? '' : 'es'} added to ${view.stage.name}`,
+      'success',
+    );
+    router.refresh();
+  }
+
   return (
     <>
       <div className="space-y-6">
@@ -145,7 +198,17 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
               rows: own,
             },
           );
+          const extend = stageExtendControl(
+            { kind: view.stage.kind, drawn: view.drawn },
+            {
+              status,
+              drawLocked: event.draw_locked === true,
+              canGenerate,
+              laterDrawn: matches.some((m) => m.stage != null && m.stage > view.number),
+            },
+          );
           const hintId = `stage-${view.number}-draw-hint`;
+          const extendHintId = `stage-${view.number}-extend-hint`;
           return (
             <section
               key={view.stage.key}
@@ -169,17 +232,37 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
                 </div>
                 {status !== 'completed' && (
                   <div className="flex flex-col items-end gap-1">
-                    <Button
-                      variant={control.action === 'draw' ? 'primary' : 'ghost'}
-                      loading={busy === view.stage.key}
-                      disabled={control.blockedReason !== null || (busy !== null && busy !== view.stage.key)}
-                      aria-describedby={control.blockedReason ? hintId : undefined}
-                      onClick={() => press(view, control.action)}
-                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-                    >
-                      {control.action === 'redraw' && <RefreshCw className="w-4 h-4 mr-1" />}
-                      {control.action === 'draw' ? `Draw ${view.stage.name}` : 'Redraw'}
-                    </Button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {extend && (
+                        <Button
+                          variant="ghost"
+                          loading={busy === `${view.stage.key}:round`}
+                          disabled={extend.blockedReason !== null || (busy !== null && busy !== `${view.stage.key}:round`)}
+                          aria-describedby={extend.blockedReason ? (extend.blockedReason === control.blockedReason ? hintId : extendHintId) : undefined}
+                          onClick={() => addRound(view)}
+                          className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                        >
+                          <Plus className="w-4 h-4 mr-1" />
+                          Add a round
+                        </Button>
+                      )}
+                      <Button
+                        variant={control.action === 'draw' ? 'primary' : 'ghost'}
+                        loading={busy === view.stage.key}
+                        disabled={control.blockedReason !== null || (busy !== null && busy !== view.stage.key)}
+                        aria-describedby={control.blockedReason ? hintId : undefined}
+                        onClick={() => press(view, control.action)}
+                        className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                      >
+                        {control.action === 'redraw' && <RefreshCw className="w-4 h-4 mr-1" />}
+                        {control.action === 'draw' ? `Draw ${view.stage.name}` : 'Redraw'}
+                      </Button>
+                    </div>
+                    {extend?.blockedReason && extend.blockedReason !== control.blockedReason && (
+                      <p id={extendHintId} className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">
+                        {extend.blockedReason}
+                      </p>
+                    )}
                     {control.blockedReason && (
                       <p id={hintId} className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">
                         {control.blockedReason}
@@ -193,6 +276,41 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
                   </div>
                 )}
               </div>
+
+              {view.number === 1 && view.stage.kind === 'groups' && lateEntries.length > 0 && (
+                <div
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 space-y-2"
+                  role="region"
+                  aria-label="Entries not in a group yet"
+                >
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">Not in a group yet</p>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Entered after the draw. Placing one adds only their matches; nothing already drawn moves.
+                  </p>
+                  <ul className="space-y-1.5">
+                    {lateEntries.map(({ id, plan }) => {
+                      const groupLabel = stageGroupLabel(view.stage as GroupsStage, plan.pool, plan.group);
+                      const message = lateEntrantConfirmMessage(plan, groupLabel, plan.opponents.map((o) => nameMap[o] ?? 'Unknown'));
+                      const key = `${view.stage.key}:late:${id}`;
+                      return (
+                        <li key={id} className="flex items-center justify-between gap-3">
+                          <span className="text-sm text-[var(--text-primary)] truncate">{nameMap[id] ?? 'Unknown'}</span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            loading={busy === key}
+                            disabled={busy !== null && busy !== key}
+                            onClick={() => placeLate(view, id, message)}
+                            className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                          >
+                            Place in a group
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
               {!view.drawn && view.stage.entrants.from === 'slots' && (
                 <p className="text-xs text-[var(--text-muted)]">

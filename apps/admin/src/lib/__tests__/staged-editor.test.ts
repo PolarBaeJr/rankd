@@ -17,7 +17,7 @@ import {
   slotValue,
   stagedEditorErrors,
 } from '../staged-editor';
-import { stageDrawControl } from '../stage-controls';
+import { lateEntrantConfirmMessage, lateEntryWindow, stageDrawControl, stageExtendControl } from '../stage-controls';
 
 describe('presets', () => {
   it('builds the owner preset, unrated everywhere for an external event', () => {
@@ -159,6 +159,72 @@ describe('stageDrawControl', () => {
     expect(stageDrawControl(stage, { ...base, drawLocked: true }).blockedReason).toMatch(/locked/);
     expect(stageDrawControl(stage, { ...base, status: 'completed' }).blockedReason).toMatch(/finalised/);
     expect(stageDrawControl(stage, { ...base, canGenerate: false }).blockedReason).toMatch(/permission/);
+  });
+});
+
+describe('stageExtendControl', () => {
+  const base = { status: 'live' as const, drawLocked: false, canGenerate: true, laterDrawn: false };
+  const groups = { kind: 'groups' as const, drawn: true };
+
+  it('offers Add a round on a drawn groups stage, before and after Start', () => {
+    expect(stageExtendControl(groups, base)).toEqual({ blockedReason: null });
+    expect(stageExtendControl(groups, { ...base, status: 'bracket_generated' })).toEqual({ blockedReason: null });
+  });
+
+  it('has no button on an undrawn stage, a knockout, named matches or a finalised event', () => {
+    expect(stageExtendControl({ ...groups, drawn: false }, base)).toBeNull();
+    expect(stageExtendControl({ kind: 'knockout', drawn: true }, base)).toBeNull();
+    expect(stageExtendControl({ kind: 'matches', drawn: true }, base)).toBeNull();
+    expect(stageExtendControl(groups, { ...base, status: 'completed' })).toBeNull();
+  });
+
+  it('greys it with the reason the server would give', () => {
+    expect(stageExtendControl(groups, { ...base, canGenerate: false })?.blockedReason).toMatch(/permission/);
+    expect(stageExtendControl(groups, { ...base, drawLocked: true })?.blockedReason).toMatch(/locked/);
+    expect(stageExtendControl(groups, { ...base, laterDrawn: true })?.blockedReason).toBe('A later stage has been drawn from this one.');
+    expect(stageExtendControl(groups, { ...base, status: 'checkin' })?.blockedReason).toMatch(/Draw the stage/);
+  });
+});
+
+describe('lateEntryWindow', () => {
+  const groupsFirst = poolsThenSemisFinal();
+  const knockoutOnly = presetConfig('groupsThenTopKnockout', { pools: 2, advance: 4 }, false);
+  const knockoutFirst = knockoutOnly.ok ? { ...knockoutOnly.config, stages: knockoutOnly.config.stages.slice(1) } : null;
+  const base = { format: 'staged', status: 'live', draw_locked: false, format_config: groupsFirst };
+
+  it('opens once the first stage is drawn, at bracket_generated or live', () => {
+    expect(lateEntryWindow(base, [1, 1, 1])).toBe(true);
+    expect(lateEntryWindow({ ...base, status: 'bracket_generated' }, [1])).toBe(true);
+  });
+
+  it('shuts once a later stage is drawn, or before the first is', () => {
+    expect(lateEntryWindow(base, [1, 1, 2])).toBe(false);
+    expect(lateEntryWindow(base, [])).toBe(false);
+    expect(lateEntryWindow(base, [null])).toBe(false);
+  });
+
+  it('is shut for a locked draw, another status, another format or a first stage that is not groups', () => {
+    expect(lateEntryWindow({ ...base, draw_locked: true }, [1])).toBe(false);
+    for (const status of ['registration', 'checkin', 'completed']) expect(lateEntryWindow({ ...base, status }, [1])).toBe(false);
+    expect(lateEntryWindow({ ...base, format: 'round_robin' }, [1])).toBe(false);
+    expect(lateEntryWindow({ ...base, format_config: knockoutFirst }, [1])).toBe(false);
+    expect(lateEntryWindow({ ...base, format_config: { nonsense: true } }, [1])).toBe(false);
+  });
+});
+
+describe('lateEntrantConfirmMessage', () => {
+  it('names the group and the opponents', () => {
+    expect(lateEntrantConfirmMessage({ level: true, anyOddGroup: true }, 'Group A', ['Ann', 'Bo', 'Cy']))
+      .toBe('Joins Group A and plays Ann, Bo and Cy. Everyone ends level.');
+    expect(lateEntrantConfirmMessage({ level: true, anyOddGroup: false }, 'Group B', ['Ann']))
+      .toBe('Joins Group B and plays Ann. Everyone ends level.');
+  });
+
+  it('warns when the group will be uneven', () => {
+    expect(lateEntrantConfirmMessage({ level: false, anyOddGroup: false }, 'Group A', ['Ann', 'Bo']))
+      .toBe('Joins Group A and plays Ann and Bo. No group has an odd number of teams, so Group A will be uneven.');
+    expect(lateEntrantConfirmMessage({ level: false, anyOddGroup: true }, 'Group A', ['Ann', 'Bo']))
+      .toMatch(/No group can take them and end level/);
   });
 });
 

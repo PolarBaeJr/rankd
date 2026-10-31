@@ -64,8 +64,28 @@ export function groupTable(
   const ms = stageMatches(results, stage.key).filter((m) => m.pool === pool && m.group === group);
   const tally = tallyStage(members, ms, forfeitLookup(cfg), seedMap(results));
   const out = outSet(results);
-  const rows = rankStandings([...tally.values()].filter((r) => !out.has(r.id)), stage.tiebreaks, ms);
+  const active = [...tally.values()].filter((r) => !out.has(r.id));
+  const normalise = unevenSchedule(active.map((r) => r.id), ms, out);
+  const rows = rankStandings(active, stage.tiebreaks, ms, normalise ? { normalise: true } : {});
   return { rows, complete: ms.length > 0 && ms.every((m) => isSettledStatus(m.status)) };
+}
+
+/**
+ * Does one member of the group have more matches on its schedule than another.
+ * Only then does the table rank per match played: a full round robin keeps the
+ * raw counts it always had. Matches against a departed entry are left out,
+ * because a withdrawal voids only the ones not yet played, which would make an
+ * ordinary round robin look uneven. A voided match between two members still
+ * counts for the same reason: it was drawn, and leaving it out would change how
+ * an ordinary round robin with one void has always been ranked.
+ */
+function unevenSchedule(ids: readonly string[], ms: readonly StageMatchResult[], out: ReadonlySet<string>): boolean {
+  const scheduled = new Map(ids.map((id) => [id, 0]));
+  for (const m of ms) {
+    if (!m.a || !m.b || out.has(m.a) || out.has(m.b)) continue;
+    for (const id of [m.a, m.b]) if (scheduled.has(id)) scheduled.set(id, scheduled.get(id)! + 1);
+  }
+  return new Set(scheduled.values()).size > 1;
 }
 
 /** Every entry's record over the given stages, for ranking across groups. */
