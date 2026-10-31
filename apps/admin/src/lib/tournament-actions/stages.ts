@@ -11,7 +11,10 @@ import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import {
   ExpectedError,
+  buildAddedRoundRows,
+  buildLateEntrantRows,
   buildStageRows,
+  planLateEntrant,
   hasRedrawBlockers,
   isDoublesEvent,
   parseFormatConfig,
@@ -25,6 +28,7 @@ import {
   summariseRedrawBlockers,
   type FormatConfig,
   type FormatResults,
+  type GroupsStage,
   formatResultsFrom,
   resolveStageMatches,
   slotRefLabel,
@@ -426,4 +430,183 @@ export async function drawStage(eventId: string, stageKey: string): Promise<Acti
 
 export async function redrawStage(eventId: string, stageKey: string): Promise<ActionResult<void>> {
   return runAction(async () => { await drawStageImpl(eventId, stageKey, 'redraw'); });
+}
+
+// ---------------------------------------------------------------------------
+// Growing a drawn groups stage
+// ---------------------------------------------------------------------------
+//
+// A round added to a stage is inserted under the generation the stage was drawn
+// with, so the 00197 fence still refuses it if somebody redraws in between. It
+// is never torn down or republished: the rows already there, and any result on
+// them, stay exactly as they are.
+
+const STAGE_CHANGED = 'This stage changed while the round was being added. Reload and try again.';
+
+async function loadExtendableStage(eventId: string, stageKey: string) {
+  const admin = await requireCapability('tournaments.draw.generate.write');
+  const adminClient = createAdminClient();
+  await assertStagedSchema(adminClient, eventId);
+
+  const { data: event, error: eventError } = await adminClient.from('tournament_events').select('*').eq('id', eventId).maybeSingle();
+  if (eventError) throw new Error(`Could not read the event: ${eventError.message}`);
+  if (!event) throw new Error('Event not found');
+  if (event.format !== 'staged') throw new ExpectedError('This event is not played in stages.');
+  const cfg = parseFormatConfig(event.format_config);
+  if (!cfg) throw new ExpectedError('This event\'s stages are not set out correctly. Fix them in the event settings first.');
+  const k = stageNumber(cfg, stageKey);
+  const found = cfg.stages.find((s) => s.key === stageKey);
+  if (k == null || !found) throw new ExpectedError(`This event has no stage "${stageKey}".`);
+  if (found.kind !== 'groups') throw new ExpectedError(`"${found.name}" is not a groups stage.`);
+  const stage: GroupsStage = found;
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before changing a stage.');
+  if (event.status === 'completed') throw new ExpectedError('This event has been finalised, so its stages cannot be changed.');
+  if (event.status !== 'bracket_generated' && event.status !== 'live') {
+    throw new ExpectedError(`Draw "${stage.name}" before adding to it.`);
+  }
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  const doubles = isDoublesEvent(event.event_type);
+  const matches = await readStagedMatches(adminClient, eventId, doubles);
+  const own = matches.filter((m) => m.stage === k);
+  if (own.length === 0) throw new ExpectedError(`"${stage.name}" has not been drawn yet.`);
+  if (matches.some((m) => m.stage > k)) throw new ExpectedError('A later stage has been drawn from this stage, so it cannot be changed.');
+  // The generation the stage was drawn under. Null means no draw ever claimed
+  // one, so a row stamped with anything would be refused by the fence.
+  const generation = event.draw_generation_id;
+  if (typeof generation !== 'string') throw new Error('This event has no draw generation, so a round cannot be added under it.');
+
+  const entries = await readEntries(adminClient, eventId, doubles);
+  const results = formatResults(cfg, entries, matches);
+  const active = new Set(entries.filter((e) => e.status === 'registered' || e.status === 'checked_in').map((e) => e.id));
+  // Slots are counted across the whole stage, not per pool, because round_number
+  // is the slot and the unique index spans every pool of the stage.
+  const firstSlot = own.reduce((n, m) => Math.max(n, m.round_number), 0) + 1;
+  const firstMatchNumber = matches.reduce((n, m) => Math.max(n, m.match_number ?? 0), 0) + 1;
+  return { admin, adminClient, event, cfg, stage, k, doubles, entries, results, active, firstSlot, firstMatchNumber, generation };
+}
+
+async function insertStageExtension(
+  adminClient: AdminClient,
+  eventId: string,
+  tournamentId: string,
+  stageName: string,
+  rows: ReturnType<typeof buildAddedRoundRows>['rows'],
+  doubles: boolean,
+): Promise<{ courtsAssigned: number }> {
+  const courts = await readTournamentCourts(adminClient, tournamentId);
+  const { courtIds, unknown: unknownCourts } = resolveStageCourts(courts, rows);
+  if (unknownCourts.length > 0) throw new ExpectedError(unknownStageCourtsMessage(unknownCourts));
+
+  // Not mustWrite: it drops the error code, and the two codes below are how a
+  // double click or a redraw in between arrives. Both mean nothing was saved.
+  const { data, error } = await adminClient.from('tournament_matches')
+    .insert(rows.map((r) => rowForInsert(eventId, r, doubles, courtIds)) as never)
+    .select('id');
+  if (error) {
+    if (error.code === '23505' || error.code === '23514') throw new ExpectedError(STAGE_CHANGED);
+    if (isSchemaMissing(error)) throw new ExpectedError(MIGRATION_MISSING);
+    throw new Error(`Inserting the ${rows.length} matches of "${stageName}" failed: ${error.message}`);
+  }
+  if (!Array.isArray(data) || data.length !== rows.length) {
+    throw new Error(`Inserting the ${rows.length} matches of "${stageName}" saved ${Array.isArray(data) ? data.length : 0}.`);
+  }
+  return { courtsAssigned: courtIds ? rows.filter((r) => r.court && courtIds.has(r.court)).length : 0 };
+}
+
+async function addStageRoundImpl(eventId: string, stageKey: string): Promise<{ matches: number; repeats: number }> {
+  const loaded = await loadExtendableStage(eventId, stageKey);
+  const { admin, adminClient, event, cfg, stage, k, doubles, entries, results, active } = loaded;
+
+  const categories = new Map(entries.map((e) => [e.id, e.category]));
+  const { rows, groups } = buildAddedRoundRows(cfg, stageKey, results, active, categories, loaded.generation, {
+    firstSlot: loaded.firstSlot,
+    firstMatchNumber: loaded.firstMatchNumber,
+  });
+  if (rows.length === 0) throw new ExpectedError(`No group in "${stage.name}" has two teams still in it, so there is no round to add.`);
+
+  const { courtsAssigned } = await insertStageExtension(adminClient, eventId, event.tournament_id, stage.name, rows, doubles);
+  const repeats = groups.reduce((n, g) => n + g.repeats, 0);
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'bracket_generated',
+    performed_by: admin.id,
+    details: {
+      staged: true,
+      stage: k,
+      stage_key: stageKey,
+      extension: 'added_round',
+      matches: rows.length,
+      repeats,
+      courts_assigned: courtsAssigned,
+      generation: loaded.generation,
+    },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { matches: rows.length, repeats };
+}
+
+/** One more round for every group of a drawn groups stage. */
+export async function addStageRound(eventId: string, stageKey: string): Promise<ActionResult<{ matches: number; repeats: number }>> {
+  return runAction(() => addStageRoundImpl(eventId, stageKey));
+}
+
+// A LATE ENTRANT (00308) joins one group of the first stage and plays only the
+// matches that even that group out. The entry itself arrives through the usual
+// add paths, which 00308 opens while no later stage is drawn; this places it.
+async function placeLateEntrantImpl(eventId: string, stageKey: string, entryId: string): Promise<{ matches: number }> {
+  const loaded = await loadExtendableStage(eventId, stageKey);
+  const { admin, adminClient, event, cfg, stage, k, doubles, entries, results, active } = loaded;
+  if (k !== 1 || stage.entrants.from !== 'field') {
+    throw new ExpectedError('A late entry joins the first stage, drawn from the field, only.');
+  }
+  // In doubles the entries read are pairs, so a loose player in the pool is
+  // never one of them: they have to be paired first.
+  if (!entries.some((e) => e.id === entryId)) {
+    throw new ExpectedError(doubles ? 'Pair this player first: a team joins a group, not one player.' : 'That entry is not in this event.');
+  }
+  if (!active.has(entryId)) throw new ExpectedError('That entry has left the event.');
+  await assertDrawFieldEventWaiverSigned(adminClient, event.tournament_id, [entryId], doubles);
+
+  const plan = planLateEntrant(stage, results, active, entryId);
+  if (!plan) throw new ExpectedError(`That entry is already in a group of "${stage.name}".`);
+  const categories = new Map(entries.map((e) => [e.id, e.category]));
+  const rows = buildLateEntrantRows(cfg, stageKey, plan, entryId, categories, loaded.generation, {
+    firstSlot: loaded.firstSlot,
+    firstMatchNumber: loaded.firstMatchNumber,
+  });
+  if (rows.length === 0) throw new ExpectedError('That group has nobody left in it to play.');
+
+  const { courtsAssigned } = await insertStageExtension(adminClient, eventId, event.tournament_id, stage.name, rows, doubles);
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'bracket_generated',
+    performed_by: admin.id,
+    details: {
+      staged: true,
+      stage: k,
+      stage_key: stageKey,
+      extension: 'late_entrant',
+      entry_id: entryId,
+      pool: plan.pool,
+      group: plan.group,
+      level: plan.level,
+      matches: rows.length,
+      courts_assigned: courtsAssigned,
+      generation: loaded.generation,
+    },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { matches: rows.length };
+}
+
+/** Put an entry that arrived after the draw into a group of the first stage. */
+export async function placeLateEntrant(eventId: string, stageKey: string, entryId: string): Promise<ActionResult<{ matches: number }>> {
+  return runAction(() => placeLateEntrantImpl(eventId, stageKey, entryId));
 }

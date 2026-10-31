@@ -62,6 +62,9 @@ interface Props {
   // Entries a Google Form made (00283), by participant or pair id, with the
   // import's status. Empty or absent: no badges.
   imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
+  // A staged event still taking a late entry after its first stage's draw
+  // (00308, lateEntryWindow). Opens Add only.
+  lateEntry?: boolean;
 }
 
 // A small tag beside an entry a Google Form made. "Awaiting partner" is a
@@ -318,7 +321,7 @@ function CategoryCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null, lateEntry = false }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -430,7 +433,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // moment the player themselves is no longer allowed to do it. That rule has
   // not moved; it now has to be held by somebody who may actually perform it.
   const controls = participantControls(
-    { status: event.status as string, drawLocked, staged: event.format === 'staged' },
+    { status: event.status as string, drawLocked, staged: event.format === 'staged', lateEntry },
     capabilities,
   );
   const pendingCategory = (pairId: string) => {

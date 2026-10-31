@@ -227,7 +227,7 @@ export function EventSettingsDialog({
               label="Set it out in stages"
               description={switchingToStages
                 ? 'Build the event stage by stage: groups, knockouts and one-off matches, and who goes through from each. Saving switches the format for good.'
-                : 'For any shape the format above cannot make, such as the best 8 from 3 groups, a playoff, or placement matches.'}
+                : 'For any shape the format below cannot make, such as the best 8 from 3 groups, a playoff, or placement matches.'}
               checked={switchingToStages}
               onChange={setSwitchingToStages}
             />

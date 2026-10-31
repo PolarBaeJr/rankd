@@ -73,7 +73,7 @@ export {
   unlockDraw,
 } from './tournament-actions/brackets';
 
-export { drawStage, redrawStage } from './tournament-actions/stages';
+export { drawStage, redrawStage, addStageRound, placeLateEntrant } from './tournament-actions/stages';
 
 export {
   setPairCategory,

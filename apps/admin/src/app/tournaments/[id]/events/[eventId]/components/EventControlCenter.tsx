@@ -32,6 +32,7 @@ import type {
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
+import { lateEntryWindow } from '@/lib/stage-controls';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
@@ -153,6 +154,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // because that is where stage 1 is drawn. playsRoundRobin and endsInKnockout
   // are both false for it here, so the legacy tabs never show.
   const staged = format === 'staged';
+  // A staged event between its first stage's draw and the next takes a late entry (00308).
+  const lateEntry = staged && lateEntryWindow(event, matches.map((m) => m.stage));
   if (staged && status !== 'registration') {
     tabs.push({ id: 'stages', label: 'Stages', icon: <Layers className="w-4 h-4" /> });
   }
@@ -355,6 +358,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waitlist={waitlist}
             categoryRequests={categoryRequests}
             imported={imported}
+            lateEntry={lateEntry}
           />
         )}
         {activeTab === 'checkin' && (
