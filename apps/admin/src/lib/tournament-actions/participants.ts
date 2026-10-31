@@ -6,6 +6,7 @@ import { logAudit } from '../audit';
 // The withdrawal/DQ reason is exec-only free text and no longer lives on the
 // entry row — 00118. See lib/private-notes.ts.
 import { PAIR_NOTES, PARTICIPANT_NOTES, writePrivateNote } from '../private-notes';
+import { lateEntryWindow } from '../stage-controls';
 import {
   calculateTeamRating,
   ensureEntryFees,
@@ -66,6 +67,28 @@ import {
 // every member entry path too; these refusals only make the message readable.
 const EXTERNAL_EVENT_REFUSAL = 'This is an external event: add teams by name with Add external team.';
 const EXTERNAL_PAIR_SPLIT_REFUSAL = 'An external team cannot be split or changed. Remove it, or withdraw it once the draw exists.';
+
+// THE LATE-ENTRY WINDOW (00308). A staged event whose first stage is drawn
+// groups still takes an entry until a later stage is drawn; the console then
+// places it in a group (placeLateEntrant). Read only when the status alone
+// would refuse, so registration and check-in pay nothing for it. The entry
+// functions ask staged_late_entry_open again under the field lock.
+async function lateEntryOpen(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: { id: string; format: string | null; status: string; draw_locked: boolean | null; format_config: unknown },
+): Promise<boolean> {
+  if (event.format !== 'staged' || (event.status !== 'bracket_generated' && event.status !== 'live')) return false;
+  const { data, error } = await adminClient.from('tournament_matches')
+    .select('stage')
+    .eq('event_id', event.id)
+    .not('stage', 'is', null);
+  if (error) throw new Error(`Could not read the event's matches: ${error.message}`);
+  return lateEntryWindow(event, (data ?? []).map((m) => m.stage));
+}
+
+// A doubles draw places teams, so a late entry there has to arrive as a pair:
+// a loose player cannot be paired once check-in is over.
+const LATE_SOLO_REFUSAL = 'The draw has been made, so add a late entry as a pair.';
 
 // ---------------------------------------------------------------------------
 // THE FIELD FENCE (00199)
@@ -359,7 +382,8 @@ export async function addParticipantToEvent(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  const late = event.status !== 'registration' && event.status !== 'checkin' && await lateEntryOpen(adminClient, event);
+  if (event.status !== 'registration' && event.status !== 'checkin' && !late) {
     throw new ExpectedError('Cannot add participants in current status');
   }
   if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
@@ -370,6 +394,7 @@ export async function addParticipantToEvent(
   // What it must not take is the same person twice, and the second way to be in
   // a doubles event is as half of a team.
   const doubles = isDoublesEvent(event.event_type);
+  if (late && doubles) throw new ExpectedError(LATE_SOLO_REFUSAL);
   if (doubles) {
     const paired = await playersAlreadyPaired(adminClient, eventId, [playerId]);
     if (paired.has(playerId)) {
@@ -544,7 +569,8 @@ export async function addParticipantsToEvent(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  const late = event.status !== 'registration' && event.status !== 'checkin' && await lateEntryOpen(adminClient, event);
+  if (event.status !== 'registration' && event.status !== 'checkin' && !late) {
     throw new ExpectedError('Cannot add participants in current status');
   }
   if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
@@ -553,6 +579,7 @@ export async function addParticipantsToEvent(
 
   // Solo entry into a doubles event, same as the per-player path above.
   const doubles = isDoublesEvent(event.event_type);
+  if (late && doubles) throw new ExpectedError(LATE_SOLO_REFUSAL);
 
   const failures: BatchAddFailure[] = [];
 
@@ -1243,7 +1270,7 @@ async function addPairToEventImpl(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  if (event.status !== 'registration' && event.status !== 'checkin' && !(await lateEntryOpen(adminClient, event))) {
     throw new ExpectedError('Cannot add pairs in current status');
   }
   if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
@@ -1500,7 +1527,7 @@ async function addExternalPairToEventImpl(
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).maybeSingle();
   if (!event) throw new Error('Event not found');
   if (event.external_event !== true) throw new ExpectedError('External teams can only be entered in an external event.');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  if (event.status !== 'registration' && event.status !== 'checkin' && !(await lateEntryOpen(adminClient, event))) {
     throw new ExpectedError('Cannot add pairs in current status');
   }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');

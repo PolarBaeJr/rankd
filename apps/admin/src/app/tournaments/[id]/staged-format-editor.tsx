@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Button, Input, Select, Switch } from '@badminton/ui';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import {
@@ -743,6 +743,7 @@ function SlotsEditor({
 
 function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked: boolean; onChange: (s: GroupsStage) => void }) {
   const courtsMode = stage.courts?.mode ?? 'none';
+  const gamesHintId = useId();
   return (
     <div className="space-y-2">
       <p className={heading}>Groups</p>
@@ -758,6 +759,17 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
           value={stage.groupSize === 'auto' ? '' : shown(stage.groupSize)}
           placeholder="Even split"
           onChange={(e) => onChange({ ...stage, groupSize: e.target.value.trim() === '' ? 'auto' : num(e.target.value) })}
+        />
+        <Input
+          label="Games per team"
+          type="number"
+          min={1}
+          max={15}
+          disabled={locked}
+          value={shown(stage.gamesPerTeam)}
+          placeholder="Everyone plays everyone"
+          aria-describedby={gamesHintId}
+          onChange={(e) => onChange({ ...stage, gamesPerTeam: e.target.value.trim() === '' ? undefined : num(e.target.value) })}
         />
         <Select
           label="Dealt into groups"
@@ -797,6 +809,9 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
           ]}
         />
       </div>
+      <p id={gamesHintId} className="text-xs text-[var(--text-muted)]">
+        Games per team: each group plays this many rounds. In a group with an odd number of teams one team sits out each round, so some play one fewer.
+      </p>
       {stage.courts?.mode === 'per_pool' && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {stage.courts.pools.map((list, pi) => (

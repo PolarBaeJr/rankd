@@ -222,12 +222,18 @@ const DRAWN_STATUSES = new Set<string>([
 ]);
 
 export function participantControls(
-  event: { status: string; drawLocked: boolean; staged?: boolean },
+  event: { status: string; drawLocked: boolean; staged?: boolean; lateEntry?: boolean },
   can: DrawCapabilities,
 ): ParticipantControls {
   // The entry list is open for editing: still taking registrations, and not
   // frozen. Three separate capabilities sit on top of this one condition.
   const open = event.status === 'registration' && !event.drawLocked;
+
+  // A STAGED EVENT'S LATE ENTRY (00308, lateEntryWindow): after the first stage
+  // is drawn and before the next, an entry can still be added and then placed
+  // in a group. Only Add opens. Solo entry into a doubles pool stays shut,
+  // because pairing closes with check-in and a group takes a team.
+  const lateAdd = event.lateEntry === true && !event.drawLocked;
 
   // A completed event is history. Withdrawing from it would forfeit matches
   // that already have results.
@@ -268,7 +274,7 @@ export function participantControls(
   const pair = pairingOpen && can.add;
 
   return {
-    add: open && can.add,
+    add: (open || lateAdd) && can.add,
     autoSeed: open && can.seedAuto,
     clearSeeds: open && can.seedClear,
     editSeed: open && can.seedSet,
