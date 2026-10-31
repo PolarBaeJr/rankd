@@ -219,7 +219,7 @@ export function EventSettingsDialog({
   }
 
   return (
-    <Dialog open onClose={onClose} title="Event Settings">
+    <Dialog open onClose={onClose} title="Event Settings" size="wide">
       <form onSubmit={handleSave} className="space-y-4">
         {!staged && !pointsOnly && (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">

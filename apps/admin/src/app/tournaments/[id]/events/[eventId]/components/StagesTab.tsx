@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, useConfirm } from '@badminton/ui';
+import { Badge, Button, Dialog, Input, useConfirm } from '@badminton/ui';
 import {
   allowedTournamentCourts,
   describeStageScoring,
@@ -79,6 +79,8 @@ export function StagesTab({
   const [busy, setBusy] = useState<string | null>(null);
   const { toast } = useToast();
   const confirm = useConfirm();
+  const [roundsFor, setRoundsFor] = useState<string | null>(null);
+  const [roundCount, setRoundCount] = useState('1');
   const router = useRouter();
   const status = event.status as TournamentEventStatus;
   // The server's rule (enterMatchResultImpl), not the legacy tabs' wider one:
@@ -134,6 +136,8 @@ export function StagesTab({
       lateEntries: open && first.kind === 'groups' ? unplacedLateEntries(first, results, entries) : [],
     };
   }, [cfg, entries, matches, isDoubles, canGenerate, event]);
+  const roundsView = roundsFor ? views.find((v) => v.stage.key === roundsFor) ?? null : null;
+  const roundCountValid = /^\d+$/.test(roundCount.trim()) && Number(roundCount) >= 1 && Number(roundCount) <= 10;
 
   const rows = useMemo<CourtDeskRow[]>(() => {
     const sideOf = (entryId: string | null) =>
@@ -190,24 +194,32 @@ export function StagesTab({
     router.refresh();
   }
 
-  async function addRound(view: StageView) {
-    const ok = await confirm({
-      title: `Add a round to ${view.stage.name}?`,
-      message: 'Every group plays one more round. In a group with an odd number of teams, the team with the most games sits out.',
-      confirmLabel: 'Add a round',
-    });
-    if (!ok) return;
+  // Rounds go in one at a time, each planned after the last, so no round repeats
+  // a pairing the one before it already used.
+  async function addRounds(view: StageView, count: number) {
+    setRoundsFor(null);
     setBusy(`${view.stage.key}:round`);
-    const res = await addStageRound(event.id, view.stage.key);
+    let added = 0;
+    let repeats = 0;
+    let done = 0;
+    let failure: string | null = null;
+    for (; done < count; done++) {
+      const res = await addStageRound(event.id, view.stage.key);
+      if (!res.ok) { failure = res.error; break; }
+      added += res.data.matches;
+      repeats += res.data.repeats;
+    }
     setBusy(null);
-    if (!res.ok) { toast(res.error, 'error'); return; }
-    const { matches: added, repeats } = res.data;
-    toast(
-      repeats > 0
-        ? `${added} match${added === 1 ? '' : 'es'} added to ${view.stage.name}, ${repeats} of them ${repeats === 1 ? 'a rematch' : 'rematches'}`
-        : `${added} match${added === 1 ? '' : 'es'} added to ${view.stage.name}`,
-      'success',
-    );
+    if (done > 0) {
+      const rounds = done === 1 ? 'a round' : `${done} rounds`;
+      toast(
+        repeats > 0
+          ? `${rounds} added to ${view.stage.name}: ${added} match${added === 1 ? '' : 'es'}, ${repeats} of them ${repeats === 1 ? 'a rematch' : 'rematches'}`
+          : `${rounds} added to ${view.stage.name}: ${added} match${added === 1 ? '' : 'es'}`,
+        'success',
+      );
+    }
+    if (failure) toast(done > 0 ? `Stopped after ${done}: ${failure}` : failure, 'error');
     router.refresh();
   }
 
@@ -296,7 +308,7 @@ export function StagesTab({
                           loading={busy === `${view.stage.key}:round`}
                           disabled={extend.blockedReason !== null || (busy !== null && busy !== `${view.stage.key}:round`)}
                           aria-describedby={extend.blockedReason ? (extend.blockedReason === control.blockedReason ? hintId : extendHintId) : undefined}
-                          onClick={() => addRound(view)}
+                          onClick={() => { setRoundsFor(view.stage.key); setRoundCount('1'); }}
                           className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                         >
                           <Plus className="w-4 h-4 mr-1" />
@@ -438,6 +450,34 @@ export function StagesTab({
           );
         })}
       </div>
+
+      {roundsView && (
+        <Dialog open onClose={() => setRoundsFor(null)} title={`Add rounds to ${roundsView.stage.name}`}>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); if (roundCountValid) void addRounds(roundsView, Number(roundCount)); }}
+          >
+            <p className="text-sm text-[var(--text-muted)]">
+              Every group plays this many more rounds. In a group with an odd number of teams, the team with the most games sits out.
+            </p>
+            <Input
+              label="How many rounds"
+              type="number"
+              min={1}
+              max={10}
+              value={roundCount}
+              onChange={(e) => setRoundCount(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-between gap-2">
+              <Button type="button" variant="ghost" onClick={() => setRoundsFor(null)}>Cancel</Button>
+              <Button type="submit" disabled={!roundCountValid}>
+                {roundCountValid && Number(roundCount) > 1 ? `Add ${roundCount} rounds` : 'Add a round'}
+              </Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
 
       {scoreMatch && (
         <ScoreEntryDialog
