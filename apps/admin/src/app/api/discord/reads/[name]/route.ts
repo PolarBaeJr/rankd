@@ -290,7 +290,7 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
     adminClient.from('club_events').select(EVENT_COLUMNS).eq('id', id).maybeSingle(),
     adminClient
       .from('club_event_signups')
-      .select('player_id, created_at, checked_in_at, no_show_at, walk_in, players(full_name, is_guest)')
+      .select('player_id, created_at, checked_in_at, no_show_at, walk_in, players!club_event_signups_player_id_fkey(full_name, is_guest)')
       .eq('event_id', id)
       .order('created_at', { ascending: true }),
     adminClient

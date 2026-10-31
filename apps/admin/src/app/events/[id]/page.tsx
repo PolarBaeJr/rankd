@@ -22,6 +22,9 @@ import { FormImportCard } from '@/components/registration-import/FormImportCard'
 import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
 import { LiveEvent } from '../live-event';
+import { loadPartnerBoard } from '@/lib/partner-board';
+import { partnerAdvice } from '@/lib/partner-check';
+import type { PartnerOption } from '@/components/partner-notes/PartnerChoiceDialog';
 import type { CheckInRow } from '@/components/checkin-list';
 
 type EventRow = {
@@ -115,11 +118,11 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       .order('created_at', { ascending: true });
   let checkInReady = true;
   let { data: signupData, error: signupError } = canSeeSignups
-    ? await readSignups('player_id, created_at, checked_in_at, players(full_name, is_guest)')
+    ? await readSignups('player_id, created_at, checked_in_at, players!club_event_signups_player_id_fkey(full_name, is_guest)')
     : { data: null, error: null };
   if (signupError) {
     checkInReady = false;
-    ({ data: signupData } = await readSignups('player_id, created_at, players(full_name, is_guest)'));
+    ({ data: signupData } = await readSignups('player_id, created_at, players!club_event_signups_player_id_fkey(full_name, is_guest)'));
   }
   const signupRows = (signupData ?? []) as unknown as SignupRow[];
   const signups = signupRows.map((row) => {
@@ -143,24 +146,16 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           .eq('event_id', id)
           .order('created_at', { ascending: true })
       : { data: [] };
-  // The preferred partner each Form answer named (00299), read on its own so
-  // a database without the column shows no notes rather than no list.
-  const [{ data: memberNotes }, { data: guestNotes }] = canSeeSignups
-    ? await Promise.all([
-        adminClient
-          .from('club_event_signups')
-          .select('player_id, preferred_partner')
-          .eq('event_id', id)
-          .not('preferred_partner', 'is', null),
-        externals > 0
-          ? adminClient
-              .from('club_event_external_signups')
-              .select('id, preferred_partner')
-              .eq('event_id', id)
-              .not('preferred_partner', 'is', null)
-          : Promise.resolve({ data: [] }),
-      ])
-    : [{ data: [] }, { data: [] }];
+  // The partner check (00311): what each Form answer named (00299), the
+  // desk's choice, and how it squares with the linked tournament's teams.
+  // Behind the same gate as the list, since it carries the same names.
+  const partnerBoard = canSeeSignups ? await loadPartnerBoard(adminClient, id) : null;
+  const partners = partnerBoard ? partnerAdvice(partnerBoard.people, partnerBoard.result, partnerBoard.pool) : {};
+  const partnerOptions: PartnerOption[] = (partnerBoard?.people ?? []).map((person) => ({
+    key: person.key,
+    name: person.name,
+    guest: person.key.startsWith('guest:'),
+  }));
   // A member's fee for the event, so their row says paid or unpaid as a
   // guest's does. Members sign the club waiver when they join, so there is no
   // per-event waiver to show.
@@ -211,15 +206,6 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       .filter((player) => !signedUpIds.has(player.id) && player.full_name)
       .map((player) => ({ id: player.id, name: player.full_name as string, meta: player.is_guest ? 'Guest' : null }));
   }
-  const memberPartner = new Map(
-    ((memberNotes ?? []) as { player_id: string; preferred_partner: string }[]).map((row) => [
-      row.player_id,
-      row.preferred_partner,
-    ]),
-  );
-  const guestPartner = new Map(
-    ((guestNotes ?? []) as { id: string; preferred_partner: string }[]).map((row) => [row.id, row.preferred_partner]),
-  );
 
   const entryById = new Map((formImports?.entries ?? []).map((entry) => [entry.id, entry]));
   const guests = (
@@ -243,7 +229,6 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       entryId: entry && entry.status === 'entered' ? entry.id : null,
       waiverSigned: row.walk_in ? false : entry ? !!entry.waiver?.signed : null,
       fee: entry?.fee ?? null,
-      partner: guestPartner.get(row.id) ?? null,
     };
   });
   const signedUp: ClubEventSignupRow[] = [
@@ -252,7 +237,6 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         kind: 'member',
         key: `member:${row.player_id}`,
         ...row,
-        partner: memberPartner.get(row.player_id) ?? null,
         fee: memberFee.get(row.player_id) ?? null,
         answers: memberAnswers.get(row.player_id) ?? null,
       }),
@@ -460,7 +444,17 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 />
               )}
             </div>
-            <ClubEventSignupsTable eventId={event.id} rows={signedUp} canRemove={canRemoveSignup} />
+            <ClubEventSignupsTable
+              eventId={event.id}
+              rows={signedUp}
+              canRemove={canRemoveSignup}
+              partners={partners}
+              partnerOptions={partnerOptions}
+              canEditPartner={canCheckIn && !cancelled && partnerBoard?.choiceReady === true}
+              canPair={
+                !!partnerBoard?.linkedEventId && partnerBoard.doubles && may('tournaments.draw.pairs.add.write')
+              }
+            />
           </Card>
         )}
 
