@@ -355,4 +355,23 @@ describe('deskCourtSuggestion', () => {
   it('suggests nothing when every active court is busy', () => {
     expect(deskCourtSuggestion(row({}), courts, new Set(['c1', 'c2']))).toBeNull();
   });
+
+  // A staged match's stage courts: only these are suggested.
+  it('keeps to the allowed courts', () => {
+    const onlyTwo = [courts[1]!];
+    expect(deskCourtSuggestion(row({}), courts, new Set(), onlyTwo)?.id).toBe('c2');
+    expect(deskCourtSuggestion(row({ court: '2', court_id: 'c2' }), courts, new Set(), onlyTwo)).toBeNull();
+    expect(deskCourtSuggestion(row({}), courts, new Set(['c2']), onlyTwo)).toBeNull();
+  });
+
+  it('never calls a current court outside the allowed ones fine', () => {
+    const onlyTwo = [courts[1]!];
+    expect(deskCourtSuggestion(row({ court: '1', court_id: 'c1' }), courts, new Set(), onlyTwo)?.id).toBe('c2');
+    expect(deskCourtSuggestion(row({ court: 'Court 1' }), courts, new Set(), onlyTwo)?.id).toBe('c2');
+  });
+
+  it('skips a switched-off allowed court, and null allows any', () => {
+    expect(deskCourtSuggestion(row({}), courts, new Set(), [courts[2]!, courts[1]!])?.id).toBe('c2');
+    expect(deskCourtSuggestion(row({}), courts, new Set(), null)?.id).toBe('c1');
+  });
 });

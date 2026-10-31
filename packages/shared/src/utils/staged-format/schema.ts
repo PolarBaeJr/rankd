@@ -106,6 +106,8 @@ export const knockoutStageSchema = z.object({
   // list fills the draw lines top to bottom.
   seeding: z.enum(['standard', 'as_listed']).default('standard'),
   thirdPlace: z.boolean().default(false),
+  // The courts this stage's matches may go on. Absent is any court.
+  courts: z.array(courtName).min(1).max(64).optional(),
 });
 
 export const stageMatchDefSchema = z.object({

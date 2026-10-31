@@ -3,7 +3,9 @@
 import { useState, useTransition, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, Check, Loader2, AlertCircle, Play, Square, ArrowRight } from 'lucide-react';
-import { courtKey, courtLabel, courtsInOrder, parseFormatConfig, type FormatConfig, type TournamentCourt } from '@badminton/shared';
+import {
+  allowedTournamentCourts, courtKey, courtLabel, courtsInOrder, parseFormatConfig, stageCourtLabels, type FormatConfig, type TournamentCourt,
+} from '@badminton/shared';
 import { SearchFilter } from '@badminton/ui';
 import { setMatchCourt, setMatchReadyForPlayer, setMatchLive } from '@/lib/tournament-actions';
 import {
@@ -226,7 +228,9 @@ export function CourtManagementTab({
   // One "next", never a live match and never a TBD one. See nextCallable.
   const nextRow = nextCallable(myRows);
   const busy = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
-  const nextSuggestion = nextRow ? deskCourtSuggestion(nextRow, courts, busy) : null;
+  const nextSuggestion = nextRow
+    ? deskCourtSuggestion(nextRow, courts, busy, courts ? allowedTournamentCourts(courts, stageCourtLabels(cfg, nextRow.match)) : null)
+    : null;
 
   const { live: liveCount, callable: callableCount, waiting: waitingCount, uncourted } = deskCounts(myRows);
 
@@ -419,7 +423,9 @@ function DeskRow({
   courts: TournamentCourt[] | null;
   busy: ReadonlySet<string>;
 }) {
-  const suggestion = state === 'callable' ? deskCourtSuggestion({ match }, courts, busy) : null;
+  // A staged match's stage courts (its pool's, in a groups stage); null is any court.
+  const allowed = courts ? allowedTournamentCourts(courts, stageCourtLabels(cfg, match)) : null;
+  const suggestion = state === 'callable' ? deskCourtSuggestion({ match }, courts, busy, allowed) : null;
   const readyIds = new Set(match.ready_player_ids ?? []);
   const everyone = [...a.players, ...b.players];
   const readyCount = everyone.filter((p) => readyIds.has(p.playerId)).length;
@@ -487,6 +493,7 @@ function DeskRow({
           court={match.court}
           courtId={match.court_id ?? null}
           courts={courts}
+          allowed={allowed}
           busy={busy}
           suggestion={suggestion}
           disabled={!canManageCourts}
@@ -669,6 +676,7 @@ function CourtPicker({
   court,
   courtId,
   courts,
+  allowed,
   busy,
   suggestion,
   disabled,
@@ -677,6 +685,8 @@ function CourtPicker({
   court: string | null;
   courtId: string | null;
   courts: TournamentCourt[];
+  /** The stage's courts, or null for any. Only these are offered. */
+  allowed: TournamentCourt[] | null;
   busy: ReadonlySet<string>;
   suggestion: TournamentCourt | null;
   disabled: boolean;
@@ -690,7 +700,9 @@ function CourtPicker({
     : courts.find((c) => courtLabel(court) != null && courtKey(c.label) === courtKey(court)) ?? null;
   // A court typed before the list existed and not on it: shown, not offered.
   const stray = !current && courtLabel(court) ? court : null;
-  const options = courtsInOrder(courts).filter((c) => c.active || c.id === current?.id);
+  const options = (allowed ?? courtsInOrder(courts)).filter((c) => c.active || c.id === current?.id);
+  // On a court outside its stage's list (set before the list changed): shown, not offered.
+  const outside = current && allowed && !allowed.some((c) => c.id === current.id) ? current : null;
 
   function save(label: string) {
     setError(null);
@@ -718,6 +730,7 @@ function CourtPicker({
           >
             <option value="">No court</option>
             {stray && <option value="__stray" disabled>{courtLabel(stray)} (not on the list)</option>}
+            {outside && <option value={outside.id} disabled>{courtLabel(outside.label)} (not this group's court)</option>}
             {options.map((c) => (
               <option key={c.id} value={c.id}>
                 {courtLabel(c.label)}

@@ -246,6 +246,19 @@ describe('buildAddedRoundRows', () => {
     }
   });
 
+  it('keeps each pool on its one court', () => {
+    const cfg = groupsConfig({ pools: 2, groupsPerPool: 1, courts: { mode: 'per_pool', pools: [['1'], ['2']] }, gamesPerTeam: 1 });
+    const field = teams(8);
+    const rows = buildStageRows(cfg, 'groups', field, 'g', { rng: rngFrom(11), newId: idsFrom('m') });
+    const { rows: extra } = buildAddedRoundRows(cfg, 'groups', resultsOf(cfg, field, rows), new Set(field.map((e) => e.id)), new Map(), 'g', {
+      firstSlot: Math.max(...rows.map((r) => r.round_number)) + 1,
+      firstMatchNumber: Math.max(...rows.map((r) => r.match_number)) + 1,
+      newId: idsFrom('x'),
+    });
+    expect(extra.length).toBeGreaterThan(0);
+    expect(extra.every((r) => r.court === String(r.pool_number))).toBe(true);
+  });
+
   it('leaves a departed team out of the new round', () => {
     const cfg = groupsConfig({ pools: 1, groupsPerPool: 1, gamesPerTeam: 2 });
     const field = teams(6);
@@ -361,6 +374,22 @@ describe('buildLateEntrantRows', () => {
       expect(new Set(group.members.map((id) => games.get(id))).size).toBe(1);
     });
   }
+
+  it('puts the newcomer on its pool\'s one court', () => {
+    const cfg = groupsConfig({ pools: 2, groupsPerPool: 1, courts: { mode: 'per_pool', pools: [['1'], ['2']] } });
+    const drawn = teams(10);
+    const rows = buildStageRows(cfg, 'groups', drawn, 'g', { rng: rngFrom(12), newId: idsFrom('m') });
+    const late = team(11);
+    const field = [...drawn, late];
+    const plan = planLateEntrant(cfg.stages[0]!, resultsOf(cfg, field, rows), new Set(field.map((e) => e.id)), late.id)!;
+    const extra = buildLateEntrantRows(cfg, 'groups', plan, late.id, new Map(), 'g', {
+      firstSlot: Math.max(...rows.map((r) => r.round_number)) + 1,
+      firstMatchNumber: Math.max(...rows.map((r) => r.match_number)) + 1,
+      newId: idsFrom('x'),
+    });
+    expect(extra.length).toBeGreaterThan(0);
+    expect(extra.every((r) => r.court === String(plan.pool))).toBe(true);
+  });
 });
 
 describe('groupTable on an uneven schedule', () => {
