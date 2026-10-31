@@ -9,6 +9,7 @@ import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts'
 import type { PairWithPlayers, ParticipantWithPlayer, TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 import { LiveTournament } from '../tournaments/live-tournament';
 import { MyCourtsBoard, type BoardEvent } from './my-courts-board';
+import { RefreshOnReturn } from './refresh-on-return';
 
 // A COURT HELPER'S PAGE (00310). Every court this person was named to in an
 // running tournament, with the match on it now, its score form and the match it
@@ -88,6 +89,7 @@ export default async function MyCourtsPage() {
 
   return (
     <div className="space-y-6">
+      <RefreshOnReturn />
       <PageHeader title="My courts" sub="The courts you are keeping score on. Save the score when a match ends; the next match goes on by itself." />
       {sections.map((section) => (
         <section key={section.tournamentId} className="space-y-3" aria-label={section.name}>
