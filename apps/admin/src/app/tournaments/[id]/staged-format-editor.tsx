@@ -862,7 +862,11 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
  * still change, so a court that breaks on the day can be swapped out.
  */
 function CourtsInput({ label, value, courtsLocked, onChange }: { label: string; value: string[]; courtsLocked: boolean; onChange: (next: string[]) => void }) {
-  const [text, setText] = useState(value.join(', '));
+  const joined = value.join(', ');
+  const [text, setText] = useState(joined);
+  // A preset replaces the list from outside; show it, or the next blur writes the old text back.
+  const [shown, setShown] = useState(joined);
+  if (joined !== shown) { setShown(joined); setText(joined); }
   return (
     <Input
       label={label}
