@@ -11,6 +11,7 @@ import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import {
   ExpectedError,
+  eventIsPlaying,
   buildAddedRoundRows,
   buildLateEntrantRows,
   buildStageRows,
@@ -49,6 +50,7 @@ import {
   newDrawSeed,
   inIdOrder,
 } from './_internal';
+import { fillFreeCourts, type AutoCallReport } from './auto-call';
 import { readTournamentCourts } from '../tournament-courts';
 import { resolveStageCourts, rowForInsert, unknownStageCourtsMessage } from './stage-rows';
 
@@ -233,7 +235,12 @@ async function publishStage(
   }
 }
 
-async function drawStageImpl(eventId: string, stageKey: string, mode: 'draw' | 'redraw', drawSeed: number = newDrawSeed()) {
+async function drawStageImpl(
+  eventId: string,
+  stageKey: string,
+  mode: 'draw' | 'redraw',
+  drawSeed: number = newDrawSeed(),
+): Promise<{ autoCall: AutoCallReport } | undefined> {
   const admin = await requireCapability('tournaments.draw.generate.write');
   const adminClient = createAdminClient();
   await assertStagedSchema(adminClient, eventId);
@@ -425,17 +432,30 @@ async function drawStageImpl(eventId: string, stageKey: string, mode: 'draw' | '
     },
   });
 
+  // A stage drawn while the event is live (the knockout after the groups) has
+  // every court free, so its first matches go on now. At check-in this is a no-op.
+  let autoCall: AutoCallReport | undefined;
+  if (eventIsPlaying(event.status)) {
+    try {
+      autoCall = (await fillFreeCourts(adminClient, { event, actorId: admin.id, trigger: 'draw' })) ?? undefined;
+    } catch (err) {
+      Sentry.captureException(err);
+      autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+    }
+  }
+
   revalidateEventPaths(event.tournament_id, eventId);
+  return autoCall ? { autoCall } : undefined;
 }
 
 // Returned as values, like the legacy generators: Next sanitises anything a
 // Server Action throws, and the refusals here are the point of the guards.
-export async function drawStage(eventId: string, stageKey: string): Promise<ActionResult<void>> {
-  return runAction(async () => { await drawStageImpl(eventId, stageKey, 'draw'); });
+export async function drawStage(eventId: string, stageKey: string): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(() => drawStageImpl(eventId, stageKey, 'draw'));
 }
 
-export async function redrawStage(eventId: string, stageKey: string): Promise<ActionResult<void>> {
-  return runAction(async () => { await drawStageImpl(eventId, stageKey, 'redraw'); });
+export async function redrawStage(eventId: string, stageKey: string): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(() => drawStageImpl(eventId, stageKey, 'redraw'));
 }
 
 // ---------------------------------------------------------------------------

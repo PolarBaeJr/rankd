@@ -1510,6 +1510,13 @@ vi.mock('../actions/_shared', () => ({
     return { id: 'admin-1' };
   },
 }));
+// Putting the next match on court is tested on its own (auto-call.test.ts).
+// Here only that the result calls it, after the result is saved, and survives
+// it failing; the default answer keeps every other case as it was.
+const autoCall = vi.hoisted(() => ({ fillFreeCourts: vi.fn() }));
+vi.mock('../tournament-actions/auto-call', () => ({
+  fillFreeCourts: (...args: unknown[]) => autoCall.fillFreeCourts(...args),
+}));
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
@@ -1581,6 +1588,8 @@ const LIVE_RATING_DEFAULTS = {
 };
 
 beforeEach(() => {
+  autoCall.fillFreeCourts.mockReset();
+  autoCall.fillFreeCourts.mockResolvedValue({ called: [], failed: [] });
   store.faults = [];
   capabilityGate.refuse = null;
   capabilityGate.asked = [];
@@ -8314,5 +8323,50 @@ describe('the waitlist (00278)', () => {
     const res = await setEventWaitlist('e1', { enabled: true, autoPromote: true });
     expect(res.ok === false && res.error).toBe('An external event has no waitlist: its teams are entered by name.');
     expect(store.rpcCalls.map((c) => c.name)).not.toContain('set_event_waitlist');
+  });
+});
+
+describe('a staged result puts the next match on court', () => {
+  function stagedQuarter() {
+    const cfg = legacyFormatDefinition({ format: 'round_robin', match_format: 'best_of_3_to_21' });
+    Object.assign(event(), { format: 'staged', format_config: cfg });
+    Object.assign(match(QF), {
+      stage: 1, pool_number: 1, group_number: 1, match_label: null, is_third_place: false,
+      winner_to_match_id: null, winner_to_position: null, handicap_a: 0, handicap_b: 0,
+      status: 'live', court: 'Court 1', court_id: 'court-1',
+    });
+  }
+
+  it('calls it once, after the match is completed, from the freed court, and passes its report back', async () => {
+    stagedQuarter();
+    let statusWhenCalled: unknown = null;
+    const report = { called: [{ matchId: 'next', court: 'Court 1' }], failed: [] };
+    autoCall.fillFreeCourts.mockImplementation(async () => { statusWhenCalled = match(QF).status; return report; });
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res).toEqual({ ok: true, data: { autoCall: report } });
+    expect(autoCall.fillFreeCourts).toHaveBeenCalledTimes(1);
+    expect(autoCall.fillFreeCourts.mock.calls[0]![1]).toMatchObject({ trigger: 'result', preferCourtId: 'court-1', actorId: 'admin-1' });
+    expect(statusWhenCalled).toBe('completed');
+  });
+
+  it('keeps the result when calling the next match throws, and says why', async () => {
+    stagedQuarter();
+    autoCall.fillFreeCourts.mockRejectedValue(new Error('courts read failed'));
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(true);
+    expect(match(QF).status).toBe('completed');
+    if (!res.ok) throw new Error('unreachable');
+    expect(res.data?.autoCall.failed[0]?.reason).toBe('courts read failed');
+  });
+
+  it('is not called for a result outside a staged event', async () => {
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res).toEqual({ ok: true, data: undefined });
+    expect(autoCall.fillFreeCourts).not.toHaveBeenCalled();
   });
 });

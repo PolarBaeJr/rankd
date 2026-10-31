@@ -50,6 +50,7 @@ import {
   currentStagedHeadStarts,
   type MatchRoute,
 } from './_internal';
+import { fillFreeCourts, type AutoCallEvent, type AutoCallReport } from './auto-call';
 
 // ============================================================
 // Score Entry & Advancement
@@ -447,7 +448,7 @@ async function enterMatchResultImpl(
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b',
   timeExceeded: boolean
-) {
+): Promise<{ autoCall: AutoCallReport } | undefined> {
   const admin = await requireCapability('tournaments.results.enter.write');
   const adminClient = createAdminClient();
 
@@ -619,7 +620,26 @@ async function enterMatchResultImpl(
     'tournament_match_result'
   );
 
+  // A staged result puts the next match on every free court, the freed one
+  // first, after advancing so a semi-final it just filled can be called too.
+  // The result is saved whatever happens here; a failure is reported back.
+  let autoCall: AutoCallReport | undefined;
+  if (match.stage != null && event.format === 'staged') {
+    try {
+      autoCall = (await fillFreeCourts(adminClient, {
+        event: event as unknown as AutoCallEvent,
+        actorId: admin.id,
+        trigger: 'result',
+        preferCourtId: (match.court_id as string | null) ?? null,
+      })) ?? undefined;
+    } catch (err) {
+      Sentry.captureException(err);
+      autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+    }
+  }
+
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  return autoCall ? { autoCall } : undefined;
 }
 
 async function enterWalkoverImpl(
@@ -1865,8 +1885,8 @@ export async function enterMatchResult(
   // Defaults to false so the strict rules stay the default everywhere — an
   // older caller, or one that simply forgets, gets the pre-00047 behaviour.
   timeExceeded = false,
-): Promise<ActionResult<void>> {
-  return runAction(async () => { await enterMatchResultImpl(matchId, scores, winnerSide, timeExceeded); });
+): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(() => enterMatchResultImpl(matchId, scores, winnerSide, timeExceeded));
 }
 
 export async function enterWalkover(

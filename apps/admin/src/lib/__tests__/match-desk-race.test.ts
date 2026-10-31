@@ -399,6 +399,38 @@ describe('courts of the tournament', () => {
   });
 });
 
+// A STAGED MATCH GOES ON COURT ONLY ONCE THE EVENT HAS STARTED: before then
+// it could not be scored there. Taking one off stays open.
+describe('sending a staged match on court before Start', () => {
+  const staged = (status: string) => ({ event: { tournament_id: TOURNAMENT, format: 'staged', status } });
+
+  it('is refused with the reason, writing and auditing nothing', async () => {
+    seedMatch(staged('bracket_generated'));
+
+    const res = await setMatchLive(MATCH, true);
+
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('unreachable');
+    expect(res.error).toBe('Start the tournament first. A match sent on court before then cannot be scored.');
+    expect(match().status).toBe('ready');
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it('goes through once the event is live', async () => {
+    seedMatch(staged('live'));
+
+    expect((await setMatchLive(MATCH, true)).ok).toBe(true);
+    expect(match().status).toBe('live');
+  });
+
+  it('can still be taken off court before Start', async () => {
+    seedMatch({ ...staged('bracket_generated'), status: 'live' });
+
+    expect((await setMatchLive(MATCH, false)).ok).toBe(true);
+    expect(match().status).toBe('ready');
+  });
+});
+
 // A STAGED MATCH STAYS ON ITS STAGE'S COURTS after the draw: group A on court 1,
 // group B on court 2, the knockout on its own list.
 describe('the courts of a staged match\'s stage', () => {
