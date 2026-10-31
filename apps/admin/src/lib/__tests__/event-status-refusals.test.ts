@@ -59,6 +59,10 @@ vi.mock('../tournament-actions/_internal', () => ({
   assertTournamentNotSuspended: vi.fn(async () => {}),
   forfeitOutOfEventEntries: vi.fn(async () => ({ forfeited: 0, unresolved: 0 })),
 }));
+const fillFreeCourts = vi.fn();
+vi.mock('../tournament-actions/auto-call', () => ({
+  fillFreeCourts: (...args: unknown[]) => fillFreeCourts(...args),
+}));
 
 const EVENT = '11111111-1111-4111-8111-111111111111';
 
@@ -68,6 +72,8 @@ beforeEach(() => {
   matchCount.mockReturnValue({ count: 0 });
   updateResult.mockReset();
   updateResult.mockReturnValue({ error: null, count: 1 });
+  fillFreeCourts.mockReset();
+  fillFreeCourts.mockResolvedValue({ called: [], failed: [] });
 });
 
 describe('setEventStatus refuses by returning, not by throwing', () => {
@@ -127,6 +133,46 @@ describe('setEventStatus refuses by returning, not by throwing', () => {
     const res = await setEventStatus(EVENT, 'checkin');
 
     expect(res.ok).toBe(true);
+  });
+
+  // Starting a staged event puts its first matches on court, and a failure
+  // there never undoes the start.
+  describe('starting a staged event', () => {
+    const stagedEvent = { id: EVENT, tournament_id: 't1', status: 'bracket_generated', format: 'staged', event_type: 'mens_singles' };
+
+    it('calls the next matches once, with the event as live', async () => {
+      single.mockResolvedValue({ data: stagedEvent });
+      matchCount.mockReturnValue({ count: 4 });
+      const report = { called: [{ matchId: 'm1', court: 'Court 1' }], failed: [] };
+      fillFreeCourts.mockResolvedValue(report);
+      const { setEventStatus } = await import('../tournament-actions/events');
+      const res = await setEventStatus(EVENT, 'live');
+
+      expect(res).toEqual({ ok: true, data: { autoCall: report } });
+      expect(fillFreeCourts).toHaveBeenCalledTimes(1);
+      expect(fillFreeCourts.mock.calls[0]![1]).toMatchObject({ trigger: 'start', event: { status: 'live' } });
+    });
+
+    it('still starts when calling them throws', async () => {
+      single.mockResolvedValue({ data: stagedEvent });
+      matchCount.mockReturnValue({ count: 4 });
+      fillFreeCourts.mockRejectedValue(new Error('courts read failed'));
+      const { setEventStatus } = await import('../tournament-actions/events');
+      const res = await setEventStatus(EVENT, 'live');
+
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.data?.autoCall.failed[0]?.reason).toBe('courts read failed');
+    });
+
+    it('is not called when a single elimination event starts', async () => {
+      single.mockResolvedValue({ data: { ...stagedEvent, format: 'single_elimination' } });
+      matchCount.mockReturnValue({ count: 4 });
+      const { setEventStatus } = await import('../tournament-actions/events');
+      const res = await setEventStatus(EVENT, 'live');
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(fillFreeCourts).not.toHaveBeenCalled();
+    });
   });
 
   // 'Event not found' is deliberately NOT in here. It stays a plain Error, the

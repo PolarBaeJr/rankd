@@ -31,6 +31,7 @@ import {
   updateTournamentEvent,
   drawStage,
 } from '@/lib/tournament-actions';
+import { autoCallFailureText } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock, SlidersHorizontal, RefreshCw, Clock } from 'lucide-react';
@@ -225,7 +226,13 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       } else if (status === 'bracket_generated') {
         const res = await setEventStatus(event.id as string, 'live');
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-        toast('Tournament is live!', 'success');
+        const called = staged ? res.data?.autoCall?.called.length ?? 0 : 0;
+        toast(
+          called > 0 ? `Tournament is live! ${called} match${called === 1 ? '' : 'es'} put on court` : 'Tournament is live!',
+          'success',
+        );
+        const autoCallFailure = autoCallFailureText(res.data?.autoCall);
+        if (autoCallFailure) toast(autoCallFailure, 'error');
       } else if (status === 'live') {
         await finalizeEvent(event.id as string);
         toast('Event finalized', 'success');

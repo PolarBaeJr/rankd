@@ -4,17 +4,22 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Button, useConfirm } from '@badminton/ui';
 import {
+  allowedTournamentCourts,
   describeStageScoring,
   eventIsPlaying,
   formatResultsFrom,
   matchSides,
   parseFormatConfig,
   slotRefLabel,
+  stageCourtLabels,
   stageGroupLabel,
   stagedMatchHeading,
   stagesView,
+  type FormatConfig,
   type GroupsStage,
   type StageView,
+  type StageViewGroup,
+  type TournamentCourt,
   type TournamentEventStatus,
 } from '@badminton/shared';
 import { Layers, Plus, RefreshCw } from 'lucide-react';
@@ -27,8 +32,10 @@ import {
   uncategorisedWarning,
   unplacedLateEntries,
 } from '@/lib/stage-controls';
+import { autoCallFailureText, deskRows } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { CourtCard, type CourtDeskRow } from './CourtCard';
 import { getName } from './entry-name';
 import type {
   TournamentEventRow,
@@ -45,6 +52,11 @@ interface Props {
   pairs: PairWithPlayers[];
   isDoubles: boolean;
   canGenerate: boolean;
+  /** The tournament's courts (00273), null before that migration, and the ids of the courts in use. */
+  courts: TournamentCourt[] | null;
+  busyCourtIds: string[];
+  canManageCourts: boolean;
+  canEnterResult: boolean;
 }
 
 const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named matches' } as const;
@@ -55,8 +67,14 @@ const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named ma
  * and the one button that draws it. The tables come from the same builder the
  * draw and the finaliser read (formatResultsFrom), so what is highlighted here
  * as going through is what the next draw will take.
+ *
+ * WHILE A STAGE IS PLAYED IT IS RUN FROM HERE, so the desk never switches tab:
+ * a groups stage is one column per group (or pool) with its courts, its table
+ * and its matches; a knockout has its courts above its matches.
  */
-export function StagesTab({ event, matches, participants, pairs, isDoubles, canGenerate }: Props) {
+export function StagesTab({
+  event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
+}: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const { toast } = useToast();
@@ -117,6 +135,14 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
     };
   }, [cfg, entries, matches, isDoubles, canGenerate, event]);
 
+  const rows = useMemo<CourtDeskRow[]>(() => {
+    const sideOf = (entryId: string | null) =>
+      entryId && nameMap[entryId] !== undefined ? { entryId, label: nameMap[entryId]! } : { entryId: null, label: 'TBD' };
+    return deskRows(matches, sideOf, isDoubles);
+  }, [matches, nameMap, isDoubles]);
+  const courtsInUse = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
+  const activeCourts = useMemo(() => (courts ?? []).filter((c) => c.active), [courts]);
+
   const categoryWarning = useMemo(() => (isDoubles ? uncategorisedWarning(pairs) : null), [isDoubles, pairs]);
 
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
@@ -144,6 +170,8 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
     setBusy(null);
     if (!res.ok) { toast(res.error, 'error'); return; }
     toast(action === 'draw' ? `${view.stage.name} drawn` : `${view.stage.name} redrawn`, 'success');
+    const failure = autoCallFailureText(res.data?.autoCall);
+    if (failure) toast(failure, 'error');
     router.refresh();
   }
 
@@ -182,6 +210,35 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
     );
     router.refresh();
   }
+
+  const courtCard = (court: TournamentCourt, groupName: string | null = null) => (
+    <CourtCard
+      key={court.id}
+      court={court}
+      groupName={groupName}
+      rows={rows}
+      courts={courts ?? []}
+      cfg={cfg}
+      isLive={isLive}
+      canEnterResult={canEnterResult}
+      canManageCourts={canManageCourts}
+      busyElsewhere={courtsInUse.has(court.id) && !rows.some((r) => r.state === 'live' && r.match.court_id === court.id)}
+      onMore={setScoreMatchId}
+    />
+  );
+
+  const matchRow = (view: StageView, m: TournamentMatchRow) => (
+    <StageMatchRow
+      key={m.id}
+      match={m}
+      view={view}
+      heading={stagedMatchHeading(cfg, m)}
+      nameMap={nameMap}
+      isDoubles={isDoubles}
+      isLive={isLive}
+      onOpen={() => setScoreMatchId(m.id)}
+    />
+  );
 
   return (
     <>
@@ -318,64 +375,33 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
                 </p>
               )}
 
-              {view.pools.map((pool) => (
-                <div key={pool.pool} className="space-y-2">
-                  {pool.label && (
-                    <h4 className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">{pool.label}</h4>
-                  )}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    {pool.groups.map((g) => (
-                      <div
-                        key={`${g.pool}-${g.group}`}
-                        className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] overflow-hidden"
-                        role="region"
-                        aria-label={`${g.label} standings`}
-                      >
-                        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
-                          <span className="text-sm font-semibold text-[var(--text-primary)]">{g.label}</span>
-                          {g.complete && <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Played out</span>}
-                        </div>
-                        <table className="w-full" aria-label={`${g.label} standings table`}>
-                          <thead>
-                            <tr className="border-b border-[var(--border)]">
-                              <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-1.5 w-8">#</th>
-                              <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-1.5">{isDoubles ? 'Pair' : 'Player'}</th>
-                              <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">W</th>
-                              <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">L</th>
-                              <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-12">+/-</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {g.rows.map((r) => {
-                              const diff = r.pointsFor - r.pointsAgainst;
-                              return (
-                                <tr
-                                  key={r.id}
-                                  className="border-b last:border-b-0 border-[var(--border)]"
-                                  style={r.qualified
-                                    ? { backgroundColor: 'color-mix(in oklab, var(--color-success) 10%, transparent)' }
-                                    : undefined}
-                                >
-                                  <td className={`px-3 py-1.5 text-sm font-mono ${r.advancingPlace ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--text-muted)]'}`}>{r.place}</td>
-                                  <td className="px-3 py-1.5 text-sm font-medium text-[var(--text-primary)]">
-                                    {nameMap[r.id] ?? 'Unknown'}
-                                    {r.qualified && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-success)]">Through</span>}
-                                  </td>
-                                  <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-success)]">{r.wins}</td>
-                                  <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-danger)]">{r.losses}</td>
-                                  <td className={`px-2 py-1.5 text-sm text-center font-mono ${diff > 0 ? 'text-[var(--color-success)]' : diff < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
-                                    {diff > 0 ? '+' : ''}{diff}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
+              {view.stage.kind === 'groups' && view.drawn ? (
+                <GroupColumns
+                  view={view}
+                  stage={view.stage}
+                  cfg={cfg}
+                  own={own}
+                  courts={courts}
+                  activeCourts={activeCourts}
+                  isDoubles={isDoubles}
+                  nameMap={nameMap}
+                  courtCard={courtCard}
+                  matchRow={(m) => matchRow(view, m)}
+                />
+              ) : (
+                view.pools.map((pool) => (
+                  <div key={pool.pool} className="space-y-2">
+                    {pool.label && (
+                      <h4 className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">{pool.label}</h4>
+                    )}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {pool.groups.map((g) => (
+                        <GroupTable key={`${g.pool}-${g.group}`} group={g} isDoubles={isDoubles} nameMap={nameMap} />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
 
               {view.stage.kind === 'matches' && !view.drawn && view.fixtures.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -394,22 +420,18 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
                 </div>
               )}
 
-              {own.length > 0 && (
+              {view.stage.kind === 'knockout' && view.drawn && !view.complete && (() => {
+                const listed = courts ? allowedTournamentCourts(courts, view.stage.courts ?? null) ?? activeCourts : [];
+                const shown = listed.filter((c) => c.active && (
+                  !courtsInUse.has(c.id)
+                  || rows.some((r) => r.state === 'live' && r.match.court_id === c.id && r.match.stage === view.number)
+                ));
+                return shown.length > 0 && <div className={COURT_GRID} style={COURT_GRID_STYLE}>{shown.map((c) => courtCard(c))}</div>;
+              })()}
+
+              {own.length > 0 && !(view.stage.kind === 'groups' && view.drawn) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {[...own]
-                    .sort((x, y) => (x.slot ?? x.round_number) - (y.slot ?? y.round_number) || (x.match_number ?? 0) - (y.match_number ?? 0))
-                    .map((m) => (
-                      <StageMatchRow
-                        key={m.id}
-                        match={m}
-                        view={view}
-                        heading={stagedMatchHeading(cfg, m)}
-                        nameMap={nameMap}
-                        isDoubles={isDoubles}
-                        isLive={isLive}
-                        onOpen={() => setScoreMatchId(m.id)}
-                      />
-                    ))}
+                  {bySlot(own).map((m) => matchRow(view, m))}
                 </div>
               )}
             </section>
@@ -429,6 +451,134 @@ export function StagesTab({ event, matches, participants, pairs, isDoubles, canG
         />
       )}
     </>
+  );
+}
+
+// Columns side by side while they fit, one under the other on a phone.
+const COURT_GRID = 'grid gap-4';
+const COURT_GRID_STYLE = { gridTemplateColumns: 'repeat(auto-fit, minmax(min(20rem, 100%), 1fr))' };
+
+const bySlot = (ms: TournamentMatchRow[]) =>
+  [...ms].sort((x, y) => (x.slot ?? x.round_number) - (y.slot ?? y.round_number) || (x.match_number ?? 0) - (y.match_number ?? 0));
+
+const isDecided = (m: TournamentMatchRow) => m.status === 'completed' || m.status === 'walkover';
+
+/**
+ * A DRAWN GROUPS STAGE, ONE COLUMN PER GROUP (one per pool when there are
+ * several pools), each with its courts while the stage is played, then its
+ * table, then its matches folded away. A pool's own courts sit in its column;
+ * shared courts sit in one row above all the columns.
+ */
+function GroupColumns({
+  view, stage, cfg, own, courts, activeCourts, isDoubles, nameMap, courtCard, matchRow,
+}: {
+  view: StageView;
+  stage: GroupsStage;
+  cfg: FormatConfig;
+  own: TournamentMatchRow[];
+  courts: TournamentCourt[] | null;
+  activeCourts: TournamentCourt[];
+  isDoubles: boolean;
+  nameMap: Record<string, string>;
+  courtCard: (court: TournamentCourt, groupName?: string | null) => React.ReactNode;
+  matchRow: (m: TournamentMatchRow) => React.ReactNode;
+}) {
+  const columns: Array<{ key: string; title: string; pool: number; group: number | null; groups: StageViewGroup[] }> =
+    stage.pools > 1
+      ? view.pools.map((p) => ({ key: `p${p.pool}`, title: p.label || (p.groups[0]?.label ?? ''), pool: p.pool, group: null, groups: p.groups }))
+      : (view.pools[0]?.groups ?? []).map((g) => ({ key: `g${g.group}`, title: g.label, pool: g.pool, group: g.group, groups: [g] }));
+  const playing = !view.complete && !!courts && activeCourts.length > 0;
+  const perColumn = playing && stage.courts?.mode === 'per_pool' && stage.pools > 1;
+  const shared = playing && !perColumn
+    ? (allowedTournamentCourts(courts!, stageCourtLabels(cfg, { stage: view.number, pool_number: 1 })) ?? activeCourts)
+    : [];
+
+  return (
+    <div className="space-y-4">
+      {shared.length > 0 && <div className={COURT_GRID} style={COURT_GRID_STYLE}>{shared.map((c) => courtCard(c))}</div>}
+      <div className={COURT_GRID} style={COURT_GRID_STYLE}>
+        {columns.map((col) => {
+          const colCourts = perColumn && stage.courts?.mode === 'per_pool'
+            ? allowedTournamentCourts(courts!, stage.courts.pools[col.pool - 1] ?? null) ?? []
+            : [];
+          const colMatches = own.filter((m) => m.pool_number === col.pool && (col.group == null || m.group_number === col.group));
+          const played = colMatches.filter(isDecided);
+          const toPlay = colMatches.filter((m) => !isDecided(m));
+          return (
+            <div key={col.key} className="min-w-0 space-y-3" role="region" aria-label={col.title || `Pool ${col.pool}`}>
+              {col.groups.length > 1 && col.title && (
+                <h4 className="text-sm font-bold text-[var(--text-primary)]">{col.title}</h4>
+              )}
+              {colCourts.map((c) => courtCard(c, col.title || null))}
+              {col.groups.map((g) => (
+                <GroupTable key={`${g.pool}-${g.group}`} group={g} isDoubles={isDoubles} nameMap={nameMap} />
+              ))}
+              {colMatches.length > 0 && (
+                <details className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
+                  <summary className="cursor-pointer select-none px-3 py-2.5 text-sm font-medium text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded-lg">
+                    Matches: {toPlay.length} to play, {played.length} played
+                  </summary>
+                  <div className="p-2 space-y-2">
+                    {[...bySlot(toPlay), ...bySlot(played)].map(matchRow)}
+                  </div>
+                </details>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GroupTable({ group: g, isDoubles, nameMap }: { group: StageViewGroup; isDoubles: boolean; nameMap: Record<string, string> }) {
+  return (
+    <div
+      className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] overflow-hidden"
+      role="region"
+      aria-label={`${g.label} standings`}
+    >
+      <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
+        <span className="text-sm font-semibold text-[var(--text-primary)]">{g.label}</span>
+        {g.complete && <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Played out</span>}
+      </div>
+      <table className="w-full" aria-label={`${g.label} standings table`}>
+        <thead>
+          <tr className="border-b border-[var(--border)]">
+            <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-1.5 w-8">#</th>
+            <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-1.5">{isDoubles ? 'Pair' : 'Player'}</th>
+            <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">W</th>
+            <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">L</th>
+            <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-12">+/-</th>
+          </tr>
+        </thead>
+        <tbody>
+          {g.rows.map((r) => {
+            const diff = r.pointsFor - r.pointsAgainst;
+            return (
+              <tr
+                key={r.id}
+                className="border-b last:border-b-0 border-[var(--border)]"
+                style={r.qualified
+                  ? { backgroundColor: 'color-mix(in oklab, var(--color-success) 10%, transparent)' }
+                  : undefined}
+              >
+                <td className={`px-3 py-1.5 text-sm font-mono ${r.advancingPlace ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--text-muted)]'}`}>{r.place}</td>
+                <td className="px-3 py-1.5 text-sm font-medium text-[var(--text-primary)]">
+                  {nameMap[r.id] ?? 'Unknown'}
+                  {r.qualified && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-success)]">Through</span>}
+                </td>
+                <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-success)]">{r.wins}</td>
+                <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-danger)]">{r.losses}</td>
+                <td className={`px-2 py-1.5 text-sm text-center font-mono ${diff > 0 ? 'text-[var(--color-success)]' : diff < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
+                  {diff > 0 ? '+' : ''}{diff}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -476,7 +626,7 @@ function StageMatchRow({
         </div>
       </div>
       {isCompleted && Array.isArray(m.scores) && (
-        <span className="text-xs font-mono text-[var(--text-muted)] ml-2">
+        <span className="text-sm font-mono text-[var(--text-muted)] ml-2">
           {(m.scores as GameScore[]).map((g) => `${g.a}-${g.b}`).join(', ')}
         </span>
       )}

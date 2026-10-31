@@ -1,6 +1,7 @@
 import {
-  courtKey, courtLabel, eventHasDraw, eventIsPlaying, groupLabel, isPlayedMatch, nextCourtFree, poolLabel, stageGroupLabel,
-  stagedMatchName, type FormatConfig, type TournamentCourt,
+  allowedTournamentCourts, courtKey, courtLabel, courtsInOrder, eventHasDraw, eventIsPlaying, groupLabel, isPlayedMatch,
+  nextCourtFree, poolLabel, stageCourtLabels, stageGroupLabel, stagedMatchName, validateMatch,
+  type FormatConfig, type MatchRules, type TournamentCourt,
 } from '@badminton/shared';
 
 // ---------------------------------------------------------------------------
@@ -426,4 +427,130 @@ export function buildEntryMaps<E extends { id: string; seed_number: number | nul
     .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' }))
     .sort((a, b) => a.name.localeCompare(b.name));
   return { nameMap, seedMap, placeableEntries };
+}
+
+type CourtRow = { match: DeskMatch; a: { entryId: string | null }; b: { entryId: string | null }; state: DeskState };
+
+/** The entries playing right now, except in `exceptMatchId`. */
+export function liveEntrants(rows: readonly CourtRow[], exceptMatchId?: string | null): Set<string> {
+  const live = new Set<string>();
+  for (const r of rows) {
+    if (r.state !== 'live' || r.match.id === exceptMatchId) continue;
+    if (r.a.entryId) live.add(r.a.entryId);
+    if (r.b.entryId) live.add(r.b.entryId);
+  }
+  return live;
+}
+
+/**
+ * THE MATCH A FREE COURT TAKES NEXT, in the desk's order: the first callable
+ * row whose stage allows the court and whose entrants are not already on court.
+ *
+ * A groups stage with courts keeps to the court each row was drawn on, so a
+ * pool's second court never takes its first court's queue. Anywhere else a row
+ * fits its own court, or any allowed court when it has none.
+ */
+export function nextMatchForCourt<R extends CourtRow>(
+  rows: readonly R[],
+  court: TournamentCourt,
+  courts: readonly TournamentCourt[],
+  cfg: FormatConfig | null | undefined,
+  opts: { exclude?: ReadonlySet<string>; busyEntries?: ReadonlySet<string> } = {},
+): R | null {
+  if (!court.active) return null;
+  const busyEntries = opts.busyEntries ?? liveEntrants(rows);
+  for (const r of rows) {
+    if (r.state !== 'callable' || opts.exclude?.has(r.match.id)) continue;
+    if ((r.a.entryId && busyEntries.has(r.a.entryId)) || (r.b.entryId && busyEntries.has(r.b.entryId))) continue;
+    const allowed = allowedTournamentCourts(courts, stageCourtLabels(cfg, r.match));
+    if (allowed && !allowed.some((c) => c.id === court.id)) continue;
+    const onThisCourt = r.match.court_id
+      ? r.match.court_id === court.id
+      : courtLabel(r.match.court) != null && courtKey(r.match.court) === courtKey(court.label);
+    const hasCourt = !!r.match.court_id || courtLabel(r.match.court) != null;
+    const stage = r.match.stage != null ? cfg?.stages[r.match.stage - 1] : undefined;
+    if (stage?.kind === 'groups' && stage.courts) {
+      if (!onThisCourt) continue;
+    } else if (!onThisCourt && hasCourt) {
+      continue;
+    }
+    return r;
+  }
+  return null;
+}
+
+/**
+ * Which match goes on which free court, one each, never a match or an entrant
+ * twice. `preferCourtId` (the court a result just freed) is filled first.
+ */
+export function planCourtCalls<R extends CourtRow>(
+  rows: readonly R[],
+  courts: readonly TournamentCourt[],
+  busy: ReadonlySet<string>,
+  cfg: FormatConfig | null | undefined,
+  preferCourtId?: string | null,
+): Array<{ row: R; court: TournamentCourt }> {
+  const free = courtsInOrder(courts).filter((c) => c.active && !busy.has(c.id));
+  const preferred = free.findIndex((c) => c.id === preferCourtId);
+  if (preferred > 0) free.unshift(...free.splice(preferred, 1));
+  const taken = new Set<string>();
+  const busyEntries = liveEntrants(rows);
+  const plan: Array<{ row: R; court: TournamentCourt }> = [];
+  for (const court of free) {
+    const row = nextMatchForCourt(rows, court, courts, cfg, { exclude: taken, busyEntries });
+    if (!row) continue;
+    plan.push({ row, court });
+    taken.add(row.match.id);
+    if (row.a.entryId) busyEntries.add(row.a.entryId);
+    if (row.b.entryId) busyEntries.add(row.b.entryId);
+  }
+  return plan;
+}
+
+/**
+ * The court card's score as typed: the winner when it is a finished match, the
+ * reason when it is not, and nothing while no game has been filled in or one
+ * is half typed. A game still on its head start counts as not filled in.
+ */
+export function inlineScoreVerdict(
+  games: ReadonlyArray<{ a: string; b: string }>,
+  rules: MatchRules | null,
+  sideNames: { a: string; b: string },
+): { winner: 'a' | 'b' | null; error: string | null; scores: Array<{ a: number; b: number }> } {
+  const startA = rules?.startA ? String(rules.startA) : '';
+  const startB = rules?.startB ? String(rules.startB) : '';
+  const filled = games
+    .map((g) => ({ a: g.a.trim(), b: g.b.trim() }))
+    .filter((g) => !(g.a === '' && g.b === '') && !(g.a === startA && g.b === startB));
+  if (filled.length === 0 || filled.some((g) => g.a === '' || g.b === '')) return { winner: null, error: null, scores: [] };
+  if (!rules) {
+    return { winner: null, error: 'This stage\'s rules could not be read. Reload the page and try again.', scores: [] };
+  }
+  if (filled.some((g) => !/^\d+$/.test(g.a) || !/^\d+$/.test(g.b))) {
+    return { winner: null, error: 'Scores must be whole numbers.', scores: [] };
+  }
+  const scores = filled.map((g) => ({ a: Number(g.a), b: Number(g.b) }));
+  const verdict = validateMatch(scores, rules, { sideNames });
+  return verdict.ok ? { winner: verdict.winner, error: null, scores } : { winner: null, error: verdict.error, scores };
+}
+
+export type AutoCallTrigger = 'result' | 'start' | 'draw';
+
+/**
+ * What putting the next matches on court did after a result, a Start or a
+ * draw. Here rather than beside fillFreeCourts so the console can read it
+ * without pulling server code into the browser.
+ */
+export interface AutoCallReport {
+  called: Array<{ matchId: string; court: string }>;
+  failed: Array<{ court: string | null; reason: string }>;
+  off?: string;
+}
+
+/** "Next match could not be called: Court 2: reason", or null when nothing failed. */
+export function autoCallFailureText(report: AutoCallReport | undefined | null): string | null {
+  if (!report || report.failed.length === 0) return null;
+  return `Next match could not be called: ${report.failed
+    .map((f) => (f.court ? `${f.court}: ${f.reason}` : f.reason))
+    .join('; ')}`;
 }

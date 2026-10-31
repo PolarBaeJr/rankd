@@ -3,9 +3,10 @@ import {
   deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab,
   deskRowGroup, groupsInPlay, filterDeskRows, deskRoundLine, deskRowMatchesSearch,
   stagedGroupKey, stagedGroupParts, deskGroupLabel, deskGroupChipLabel, deskPools, deskCourtSuggestion,
+  liveEntrants, nextMatchForCourt, planCourtCalls, inlineScoreVerdict, autoCallFailureText,
   type DeskMatch,
 } from '../live-desk';
-import { poolsThenPlacement, type TournamentCourt } from '@badminton/shared';
+import { groupsThenTopKnockout, poolsThenPlacement, type MatchRules, type TournamentCourt } from '@badminton/shared';
 
 function match(over: Partial<DeskMatch> & { id: string }): DeskMatch {
   return {
@@ -373,5 +374,135 @@ describe('deskCourtSuggestion', () => {
   it('skips a switched-off allowed court, and null allows any', () => {
     expect(deskCourtSuggestion(row({}), courts, new Set(), [courts[2]!, courts[1]!])?.id).toBe('c2');
     expect(deskCourtSuggestion(row({}), courts, new Set(), null)?.id).toBe('c1');
+  });
+});
+
+describe('the next match for a court', () => {
+  const groups = groupsThenTopKnockout({ pools: 2, courts: [['1'], ['2']] });
+  const twoCourtPool = groupsThenTopKnockout({ pools: 2, courts: [['1', '2'], ['3']] });
+  const listedKnockout = {
+    ...groups,
+    stages: groups.stages.map((s) => (s.kind === 'knockout' ? { ...s, courts: ['3', '4'] } : s)),
+  };
+  const openKnockout = {
+    ...groups,
+    stages: groups.stages.map((s) => (s.kind === 'knockout' ? { ...s, courts: undefined } : s)),
+  };
+  const courts: TournamentCourt[] = [1, 2, 3, 4].map((n) => ({ id: `c${n}`, label: `Court ${n}`, sort_order: n, active: true }));
+  const court = (n: number) => courts[n - 1]!;
+  const group = (id: string, pool: number, courtNo: number, slot: number, a: string, b: string, over: Partial<DeskMatch> = {}) =>
+    match({
+      id, stage: 1, pool_number: pool, group_number: 1, slot, match_number: slot * 10 + pool,
+      court: `Court ${courtNo}`, court_id: `c${courtNo}`, participant_a_id: a, participant_b_id: b, ...over,
+    });
+  const knockout = (id: string, n: number, a: string | null, b: string | null, over: Partial<DeskMatch> = {}) =>
+    match({ id, stage: 2, round_number: 1, match_number: 100 + n, participant_a_id: a, participant_b_id: b, ...over });
+  const rowsOf = (ms: DeskMatch[]) => deskRows(ms, sideOf, false);
+
+  it('gives court 1 the first callable match drawn on it, and never a pool 2 match', () => {
+    const rows = rowsOf([
+      group('p2s1', 2, 2, 1, 'e', 'f'),
+      group('p1s2', 1, 1, 2, 'a', 'c'),
+      group('p1s1', 1, 1, 1, 'a', 'b'),
+    ]);
+    expect(nextMatchForCourt(rows, court(1), courts, groups)?.match.id).toBe('p1s1');
+    expect(nextMatchForCourt(rows, court(2), courts, groups)?.match.id).toBe('p2s1');
+    expect(nextMatchForCourt(rows.filter((r) => r.match.pool_number === 2), court(1), courts, groups)).toBeNull();
+  });
+
+  it('skips a match whose entrant is on court, unless that match is let off', () => {
+    const rows = rowsOf([
+      group('live', 1, 1, 1, 'a', 'b', { status: 'live' }),
+      group('next', 1, 1, 2, 'a', 'c'),
+      group('after', 1, 1, 3, 'd', 'e'),
+    ]);
+    expect(liveEntrants(rows)).toEqual(new Set(['a', 'b']));
+    expect(nextMatchForCourt(rows, court(1), courts, groups)?.match.id).toBe('after');
+    expect(nextMatchForCourt(rows, court(1), courts, groups, { busyEntries: liveEntrants(rows, 'live') })?.match.id).toBe('next');
+  });
+
+  it('keeps a pool with two courts to the court each match was drawn on', () => {
+    const rows = rowsOf([group('on1', 1, 1, 1, 'a', 'b'), group('on1b', 1, 1, 2, 'c', 'd')]);
+    expect(nextMatchForCourt(rows, court(2), courts, twoCourtPool)).toBeNull();
+    expect(nextMatchForCourt(rows, court(1), courts, twoCourtPool)?.match.id).toBe('on1');
+  });
+
+  it('puts a listed knockout on its own courts only, and an open one on any', () => {
+    const rows = rowsOf([knockout('qf1', 1, 'a', 'b')]);
+    expect(nextMatchForCourt(rows, court(1), courts, listedKnockout)).toBeNull();
+    expect(nextMatchForCourt(rows, court(3), courts, listedKnockout)?.match.id).toBe('qf1');
+    expect(nextMatchForCourt(rows, court(1), courts, openKnockout)?.match.id).toBe('qf1');
+  });
+
+  it('never returns a waiting or a live match, and gives a switched-off court nothing', () => {
+    const rows = rowsOf([
+      knockout('live', 1, 'a', 'b', { status: 'live', court: 'Court 3', court_id: 'c3' }),
+      knockout('tbd', 2, 'c', null),
+    ]);
+    expect(nextMatchForCourt(rows, court(4), courts, openKnockout)).toBeNull();
+    const ready = rowsOf([knockout('qf', 1, 'a', 'b')]);
+    expect(nextMatchForCourt(ready, { ...court(1), active: false }, courts, openKnockout)).toBeNull();
+  });
+
+  it('keeps the stage, slot and match number order', () => {
+    const rows = rowsOf([
+      knockout('ko', 1, 'x', 'y'),
+      group('s2', 1, 1, 2, 'c', 'd'),
+      group('s1b', 1, 1, 1, 'e', 'f', { match_number: 12 }),
+      group('s1a', 1, 1, 1, 'a', 'b', { match_number: 11 }),
+    ]);
+    expect(nextMatchForCourt(rows, court(1), courts, openKnockout)?.match.id).toBe('s1a');
+  });
+
+  it('plans one match per free court at Start, never a match or an entrant twice', () => {
+    const rows = rowsOf([knockout('qf1', 1, 'a', 'b'), knockout('qf2', 2, 'a', 'c'), knockout('qf3', 3, 'd', 'e')]);
+    const plan = planCourtCalls(rows, courts, new Set(), openKnockout);
+    expect(plan.map((p) => [p.row.match.id, p.court.id])).toEqual([['qf1', 'c1'], ['qf3', 'c2']]);
+  });
+
+  it('skips a busy court, fills the preferred court first, and plans nothing without courts', () => {
+    const rows = rowsOf([knockout('qf1', 1, 'a', 'b'), knockout('qf2', 2, 'c', 'd')]);
+    expect(planCourtCalls(rows, courts, new Set(['c1']), openKnockout).map((p) => p.court.id)).toEqual(['c2', 'c3']);
+    expect(planCourtCalls(rows, courts, new Set(), openKnockout, 'c4').map((p) => [p.row.match.id, p.court.id]))
+      .toEqual([['qf1', 'c4'], ['qf2', 'c1']]);
+    expect(planCourtCalls(rows, [], new Set(), openKnockout)).toEqual([]);
+  });
+});
+
+describe('inlineScoreVerdict', () => {
+  const rules: MatchRules = { bestOf: 1, target: 15, winByTwo: true, cap: 24, startA: 0, startB: 0 };
+  const names = { a: 'Ann', b: 'Bo' };
+  const one = (a: string, b: string, r: MatchRules | null = rules) => inlineScoreVerdict([{ a, b }], r, names);
+
+  it('names the winner of a finished game', () => {
+    expect(one('15', '13').winner).toBe('a');
+    expect(one('13', '15').winner).toBe('b');
+    expect(one('17', '15')).toEqual({ winner: 'a', error: null, scores: [{ a: 17, b: 15 }] });
+    expect(one('24', '23').winner).toBe('a');
+  });
+
+  it('refuses an unfinished or impossible game with the shared wording', () => {
+    for (const [a, b] of [['25', '23'], ['15', '14'], ['16', '15']] as const) {
+      const v = one(a, b);
+      expect(v.winner).toBeNull();
+      expect(v.error).toBe(`Game 1: ${a}-${b} is not a finished game.`);
+    }
+    expect(one('1e', '15').error).toBe('Scores must be whole numbers.');
+  });
+
+  it('says nothing while blank or on a head start alone', () => {
+    expect(one('', '')).toEqual({ winner: null, error: null, scores: [] });
+    expect(one('15', '')).toEqual({ winner: null, error: null, scores: [] });
+    expect(one('3', '', { ...rules, startA: 3 })).toEqual({ winner: null, error: null, scores: [] });
+    expect(one('5', '5', null).error).toBe('This stage\'s rules could not be read. Reload the page and try again.');
+  });
+});
+
+describe('autoCallFailureText', () => {
+  it('is null when nothing failed, and names the court when one did', () => {
+    expect(autoCallFailureText(undefined)).toBeNull();
+    expect(autoCallFailureText({ called: [{ matchId: 'm', court: 'Court 1' }], failed: [] })).toBeNull();
+    expect(autoCallFailureText({ called: [], failed: [{ court: 'Court 2', reason: 'boom' }, { court: null, reason: 'down' }] }))
+      .toBe('Next match could not be called: Court 2: boom; down');
   });
 });

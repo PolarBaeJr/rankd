@@ -12,6 +12,7 @@ import {
   editMatchResult, getMatchOutcomeSummary, getCurrentHeadStarts,
 } from '@/lib/tournament-actions';
 import type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from '@/lib/tournament-actions';
+import { autoCallFailureText } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
@@ -269,6 +270,8 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
       const res = await enterMatchResult(match.id, scores, autoWinner, timeExceeded);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+      const autoCallFailure = autoCallFailureText(res.data?.autoCall);
+      if (autoCallFailure) toast(autoCallFailure, 'error');
       await showSummary('Score submitted');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
