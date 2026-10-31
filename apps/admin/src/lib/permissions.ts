@@ -221,7 +221,11 @@ const SECTION_PATTERNS: { pattern: RegExp; capability: Capability }[] = [
 // /passkey-required is where the console sends someone whose 14 days without a
 // console passkey have run out (00262); it has to open for every level, or a
 // trainer would be bounced to /unauthorized instead of shown how to add one.
-const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey', '/passkey-required'];
+// /my-courts is a court helper's scoring page (00310). Who may score there is
+// data, a helper row on the match's current court, which the page and its
+// action check themselves; an officer narrowed off tournaments.page still
+// keeps score on the court they were named to.
+const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey', '/passkey-required', '/my-courts'];
 
 // Does this path sit inside this section? Segment-aware, so '/players' never
 // matches '/playersecret'. The one matching rule, shared by both maps.

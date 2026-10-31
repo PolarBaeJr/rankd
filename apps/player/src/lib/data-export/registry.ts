@@ -697,6 +697,11 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'counted',
     why: 'Team category changes you asked for or decided in a staged tournament event, as an officer. Counted rather than listed: the request is about a team\'s head start, not about you.',
   },
+  tournament_court_helpers: {
+    playerColumns: ['player_id', 'created_by'],
+    disposition: 'counted',
+    why: 'Tournament courts you were asked to keep score on, or helpers you assigned, as an officer. Counted rather than listed: the assignment is event-day operations, not a record about you.',
+  },
 
   // ---------------------------------------------------------------
   // WITHHELD -- never in the file, reason given

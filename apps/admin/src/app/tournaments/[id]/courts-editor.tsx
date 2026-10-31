@@ -2,17 +2,20 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, Loader2, MapPin } from 'lucide-react';
+import { ArrowDown, ArrowUp, Loader2, MapPin, X } from 'lucide-react';
 import { Button } from '@badminton/ui';
 import { courtLabel, parseCourtList, type TournamentCourt } from '@badminton/shared';
 import {
+  addCourtHelper,
   addTournamentCourts,
   importCourtsFromMatches,
   moveTournamentCourt,
+  removeCourtHelper,
   renameTournamentCourt,
   setTournamentCourtActive,
 } from '@/lib/tournament-actions';
 import type { ActionResult } from '@/lib/action-result';
+import type { CourtHelper, HelperCandidate } from '@/lib/court-helpers';
 
 // ---------------------------------------------------------------------------
 // A TOURNAMENT'S COURTS (00273). Once a tournament lists its courts, the desk
@@ -34,12 +37,18 @@ interface Props {
   canEdit: boolean;
   /** What to say when `courts` is null. Passed in: the reader module is server only. */
   migrationMissing: string;
+  /** Who keeps score on each court (00310); null when not read or before that migration. */
+  helpers?: CourtHelper[] | null;
+  /** Console members who may be named as helpers. */
+  helperCandidates?: HelperCandidate[];
 }
 
 const inputClass =
   'min-h-[44px] px-3 bg-[var(--bg-surface)] border border-[var(--border)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-60';
 
-export function CourtsEditor({ tournamentId, courts, usedLabels, canEdit, migrationMissing }: Props) {
+export function CourtsEditor({
+  tournamentId, courts, usedLabels, canEdit, migrationMissing, helpers = null, helperCandidates = [],
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +96,9 @@ export function CourtsEditor({ tournamentId, courts, usedLabels, canEdit, migrat
               canEdit={canEdit && editing}
               pending={pending}
               run={run}
+              helpers={helpers ? helpers.filter((h) => h.court_id === court.id) : null}
+              helperCandidates={helperCandidates}
+              canManageHelpers={canEdit && editing && helpers !== null}
             />
           ))}
         </ul>
@@ -180,6 +192,9 @@ function CourtRow({
   canEdit,
   pending,
   run,
+  helpers,
+  helperCandidates,
+  canManageHelpers,
 }: {
   court: TournamentCourt;
   first: boolean;
@@ -187,6 +202,10 @@ function CourtRow({
   canEdit: boolean;
   pending: boolean;
   run: (action: () => Promise<ActionResult<void>>, after?: () => void) => void;
+  /** This court's helpers, or null when they were not read. */
+  helpers: CourtHelper[] | null;
+  helperCandidates: HelperCandidate[];
+  canManageHelpers: boolean;
 }) {
   const [label, setLabel] = useState(court.label);
   const name = courtLabel(court.label) ?? court.label;
@@ -258,6 +277,52 @@ function CourtRow({
             {court.active ? 'Active' : 'Switched off'}
           </button>
         </>
+      )}
+      {helpers && (helpers.length > 0 || canManageHelpers) && (
+        <div className="basis-full flex flex-wrap items-center gap-2 pl-6">
+          <span className="text-xs text-[var(--text-muted)]">Helpers</span>
+          {helpers.length === 0 && <span className="text-xs text-[var(--text-muted)]">None</span>}
+          {helpers.map((h) => (
+            <span
+              key={h.player_id}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs text-[var(--text-primary)]"
+            >
+              {h.full_name}
+              {canManageHelpers && (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  disabled={pending}
+                  aria-label={`Remove ${h.full_name} from ${name}`}
+                  onClick={() => run(() => removeCourtHelper(court.id, h.player_id))}
+                >
+                  <X className="w-3 h-3" aria-hidden />
+                </button>
+              )}
+            </span>
+          ))}
+          {canManageHelpers && (
+            <label>
+              <span className="sr-only">Add a helper to {name}</span>
+              <select
+                value=""
+                disabled={pending}
+                onChange={(e) => {
+                  const playerId = e.target.value;
+                  if (playerId) run(() => addCourtHelper(court.id, playerId));
+                }}
+                className={`${inputClass} min-h-[32px] text-xs`}
+              >
+                <option value="">Add helper</option>
+                {helperCandidates
+                  .filter((c) => !helpers.some((h) => h.player_id === c.id))
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>{c.full_name}</option>
+                  ))}
+              </select>
+            </label>
+          )}
+        </div>
       )}
     </li>
   );
