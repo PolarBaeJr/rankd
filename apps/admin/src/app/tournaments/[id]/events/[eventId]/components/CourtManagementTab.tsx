@@ -750,7 +750,7 @@ function CourtPicker({
           >
             <option value="">No court</option>
             {stray && <option value="__stray" disabled>{courtLabel(stray)} (not on the list)</option>}
-            {outside && <option value={outside.id} disabled>{courtLabel(outside.label)} (not this group's court)</option>}
+            {outside && <option value={outside.id} disabled>{courtLabel(outside.label)}{' (not this group\'s court)'}</option>}
             {options.map((c) => (
               <option key={c.id} value={c.id}>
                 {courtLabel(c.label)}
