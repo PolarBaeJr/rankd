@@ -24,6 +24,9 @@ import { hasResultsTab } from '@/lib/event-tabs';
 import { laterSignup } from '@/lib/entry-sort';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { DrawCapabilities } from '@/lib/participant-controls';
+import { loadPartnerBoard } from '@/lib/partner-board';
+import { partnerAdvice } from '@/lib/partner-check';
+import type { ParticipantPartners } from './components/ParticipantsTab';
 import type { Capability } from '@/lib/permissions';
 import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../event-format-fields';
@@ -362,6 +365,34 @@ export default async function EventPage({
     signedUpAt = times;
   }
 
+  // The club event's partner check (00311), under each unpaired name. Read
+  // only for a viewer who may read the club event's sign-ups, since it carries
+  // their Form answers; nothing renders without it.
+  let partners: ParticipantPartners | null = null;
+  if (linkedClubEvent && doubles && may('events.signups.read')) {
+    const board = await loadPartnerBoard(supabase, linkedClubEvent.id);
+    const byKey = partnerAdvice(board.people, board.result, board.pool);
+    const advice: ParticipantPartners['advice'] = {};
+    const keys: ParticipantPartners['keys'] = {};
+    for (const participant of participants) {
+      const key = `member:${participant.player_id}`;
+      if (!byKey[key]) continue;
+      advice[participant.id] = byKey[key];
+      keys[participant.id] = key;
+    }
+    partners = {
+      clubEventId: linkedClubEvent.id,
+      advice,
+      keys,
+      options: board.people.map((person) => ({
+        key: person.key,
+        name: person.name,
+        guest: person.key.startsWith('guest:'),
+      })),
+      canEditPartner: may('events.signups.checkin.write') && board.choiceReady,
+    };
+  }
+
   // The waiver state each row shows, resolved on the server. It has to be:
   // eventWaiverHash uses node:crypto, so a client component could not compute
   // the comparison even if it were handed the text.
@@ -497,6 +528,7 @@ export default async function EventPage({
         categoryRequests={categoryRequests}
         imported={imported}
         signedUpAt={signedUpAt}
+        partners={partners}
         viewerId={viewer.id}
       />
     </div>

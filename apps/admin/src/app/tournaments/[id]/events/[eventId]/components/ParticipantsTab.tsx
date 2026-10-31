@@ -44,6 +44,21 @@ import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, U
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
+import type { PartnerAdvice } from '@/lib/partner-check';
+import { PartnerCheckLine } from '@/components/partner-notes/PartnerCheckLine';
+import { PartnerChoiceDialog, type PartnerOption } from '@/components/partner-notes/PartnerChoiceDialog';
+import { ContestedPartnerDialog } from '@/components/partner-notes/ContestedPartnerDialog';
+
+/** The linked club event's partner check (00311), for the Unpaired block. */
+export interface ParticipantPartners {
+  clubEventId: string;
+  /** By participant id. */
+  advice: Record<string, PartnerAdvice>;
+  /** The club event sign-up key per participant id. */
+  keys: Record<string, string>;
+  options: PartnerOption[];
+  canEditPartner: boolean;
+}
 
 interface Props {
   event: TournamentEventRow;
@@ -72,6 +87,9 @@ interface Props {
   // Sign-up time per participant or pair id, off the linked club event, for
   // the sort. null when the event runs no club event: the rows' own times.
   signedUpAt?: Record<string, string> | null;
+  // The linked club event's partner check (00311). null when the event runs
+  // no club event, or the viewer may not read its sign-ups: nothing renders.
+  partners?: ParticipantPartners | null;
 }
 
 // A small tag beside an entry a Google Form made. "Awaiting partner" is a
@@ -328,7 +346,7 @@ function CategoryCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null, lateEntry = false, signedUpAt = null }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null, lateEntry = false, signedUpAt = null, partners = null }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -351,6 +369,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [ignoreCategories, setIgnoreCategories] = useState(false);
   // The unpaired entrants ticked for pairing. Exactly two makes a team.
   const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
+  // The unpaired entrant whose partner the desk is setting or settling (00311).
+  const [choosingPartnerFor, setChoosingPartnerFor] = useState<ParticipantWithPlayer | null>(null);
+  const [resolvingPartnerFor, setResolvingPartnerFor] = useState<ParticipantWithPlayer | null>(null);
   // Its own flag rather than sharing `loading` with "Pair selected": both
   // buttons sit in the same header, and one spinner on both would say the wrong
   // one is working.
@@ -648,6 +669,21 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setSelectedUnpaired([]);
     router.refresh();
     setLoading(false);
+  }
+
+  // Two people who named each other on the club event's Form (00311). The
+  // same action as Pair selected, with the two already chosen.
+  async function handlePairMutual(p: ParticipantWithPlayer, partnerPlayerId: string, partnerName: string) {
+    setActionLoading(p.id);
+    const res = await addPairToEvent(event.id, p.player_id, partnerPlayerId);
+    setActionLoading(null);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      return;
+    }
+    toast(`${unpairedName(p)} and ${partnerName} are paired`, 'success');
+    setSelectedUnpaired([]);
+    router.refresh();
   }
 
   /**
@@ -1486,6 +1522,39 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         <span className="text-sm font-medium text-[var(--text-primary)]">{unpairedName(p)}</span>
                         <ImportedTag status={imported?.[p.id]} />
                       </div>
+                      {partners?.advice[p.id] && (
+                        <div className="mt-1 space-y-1">
+                          <PartnerCheckLine
+                            advice={partners.advice[p.id]}
+                            onResolve={controls.pair ? () => setResolvingPartnerFor(p) : undefined}
+                          />
+                          {(partners.canEditPartner || (controls.pair && partners.advice[p.id]!.mutualPair)) && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {controls.pair && partners.advice[p.id]!.mutualPair && (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  loading={actionLoading === p.id}
+                                  onClick={() =>
+                                    handlePairMutual(
+                                      p,
+                                      partners.advice[p.id]!.mutualPair!.partnerPlayerId,
+                                      partners.advice[p.id]!.mutualPair!.partnerName,
+                                    )
+                                  }
+                                >
+                                  Pair with {partners.advice[p.id]!.mutualPair!.partnerName}
+                                </Button>
+                              )}
+                              {partners.canEditPartner && partners.keys[p.id] && (
+                                <Button size="sm" variant="ghost" onClick={() => setChoosingPartnerFor(p)}>
+                                  Partner
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                     {waiverStates && (
                       <td className="px-4 py-3">
@@ -1521,6 +1590,27 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </table>
           </div>
         </div>
+      )}
+
+      {partners && choosingPartnerFor && partners.keys[choosingPartnerFor.id] && partners.advice[choosingPartnerFor.id] && (
+        <PartnerChoiceDialog
+          clubEventId={partners.clubEventId}
+          personKey={partners.keys[choosingPartnerFor.id]!}
+          name={unpairedName(choosingPartnerFor)}
+          wrote={partners.advice[choosingPartnerFor.id]!.wrote}
+          preselect={partners.advice[choosingPartnerFor.id]!.preselect}
+          options={partners.options}
+          onClose={() => setChoosingPartnerFor(null)}
+        />
+      )}
+      {partners && resolvingPartnerFor && partners.advice[resolvingPartnerFor.id] && (
+        <ContestedPartnerDialog
+          clubEventId={partners.clubEventId}
+          targetPlayerId={resolvingPartnerFor.player_id}
+          targetName={unpairedName(resolvingPartnerFor)}
+          advice={partners.advice[resolvingPartnerFor.id]!}
+          onClose={() => setResolvingPartnerFor(null)}
+        />
       )}
 
       {/*

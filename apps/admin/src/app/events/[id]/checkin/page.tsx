@@ -71,12 +71,12 @@ export default async function ClubEventCheckInPage({ params }: { params: Promise
     ]);
   let doorReady = true;
   let [members, guests] = await read(
-    'player_id, checked_in_at, no_show_at, walk_in, players(full_name)',
+    'player_id, checked_in_at, no_show_at, walk_in, players!club_event_signups_player_id_fkey(full_name)',
     'id, full_name, checked_in_at, no_show_at, walk_in',
   );
   if (members.error || guests.error) {
     doorReady = false;
-    [members, guests] = await read('player_id, checked_in_at, players(full_name)', 'id, full_name, checked_in_at');
+    [members, guests] = await read('player_id, checked_in_at, players!club_event_signups_player_id_fkey(full_name)', 'id, full_name, checked_in_at');
   }
   if (members.error) throw new Error(`Could not read the sign-ups: ${members.error.message}`);
   if (guests.error) throw new Error(`Could not read the guest sign-ups: ${guests.error.message}`);
