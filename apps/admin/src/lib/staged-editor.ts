@@ -10,6 +10,7 @@ import {
   poolsThenSemisFinal,
   groupsThenTopKnockout,
   ordinal,
+  parseCourtList,
   slotRefLabel,
   slotRefWidth,
   stagedConfigEditRefusal,
@@ -216,9 +217,9 @@ export function setPools(stage: GroupsStage, pools: number): GroupsStage {
   return { ...stage, pools, courts: { mode: 'per_pool', pools: lists } };
 }
 
-/** Court names typed as "1, 2, 3". */
+/** Court names typed as "1, 2, 3", or a range as "1-8". */
 export function parseCourts(text: string): string[] {
-  return text.split(',').map((c) => c.trim()).filter((c) => c.length > 0);
+  return parseCourtList(text);
 }
 
 export function addMatch(cfg: FormatConfig, index: number): FormatConfig {

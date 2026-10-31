@@ -11,6 +11,7 @@ import {
   type GroupsStage,
   type SlotRef,
   type StageTiebreak,
+  groupLabel,
 } from '@badminton/shared';
 import {
   STAGED_PRESETS,
@@ -446,7 +447,7 @@ function StageCard({
           <Trash2 className="w-4 h-4" />
         </button>
       </div>
-      {locked && <p className="text-xs text-[var(--text-muted)]">Drawn, so its settings are fixed. Redraw it to start again.</p>}
+      {locked && <p className="text-xs text-[var(--text-muted)]">Drawn, so its settings are fixed apart from its courts. Redraw it to start again.</p>}
 
       <div className="space-y-2">
         <p className={heading}>Scoring</p>
@@ -582,6 +583,13 @@ function StageCard({
             />
           </div>
           <Switch label="Play for third place" checked={stage.thirdPlace} disabled={locked} onChange={(v) => set({ ...stage, thirdPlace: v })} />
+          <CourtsInput
+            label="Courts"
+            value={stage.courts ?? []}
+            courtsLocked={false}
+            onChange={(next) => set({ ...stage, courts: next.length > 0 ? next : undefined })}
+          />
+          <p className="text-xs text-[var(--text-muted)]">Leave empty to use any court.</p>
         </div>
       )}
 
@@ -817,9 +825,9 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
           {stage.courts.pools.map((list, pi) => (
             <CourtsInput
               key={pi}
-              label={`G${pi + 1} courts`}
+              label={stage.groupsPerPool === 1 ? `Group ${groupLabel(pi + 1)} courts` : `Pool ${pi + 1} courts`}
               value={list}
-              disabled={locked}
+              courtsLocked={false}
               onChange={(next) => stage.courts?.mode === 'per_pool' && onChange({
                 ...stage,
                 courts: { mode: 'per_pool', pools: stage.courts.pools.map((x, j) => (j === pi ? next : x)) },
@@ -832,7 +840,7 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
         <CourtsInput
           label="Courts"
           value={stage.courts.courts}
-          disabled={locked}
+          courtsLocked={false}
           onChange={(next) => onChange({ ...stage, courts: { mode: 'shared', courts: next } })}
         />
       )}
@@ -848,14 +856,18 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
   );
 }
 
-/** Court names as typed text, parsed on blur so a half-typed "1, " is not cut short. */
-function CourtsInput({ label, value, disabled, onChange }: { label: string; value: string[]; disabled: boolean; onChange: (next: string[]) => void }) {
+/**
+ * Court names as typed text, parsed on blur so a half-typed "1, " is not cut
+ * short. Locked on its own, not with the stage: a drawn stage's courts can
+ * still change, so a court that breaks on the day can be swapped out.
+ */
+function CourtsInput({ label, value, courtsLocked, onChange }: { label: string; value: string[]; courtsLocked: boolean; onChange: (next: string[]) => void }) {
   const [text, setText] = useState(value.join(', '));
   return (
     <Input
       label={label}
       value={text}
-      disabled={disabled}
+      disabled={courtsLocked}
       placeholder="1, 2"
       onChange={(e) => setText(e.target.value)}
       onBlur={() => { const next = parseCourts(text); onChange(next); setText(next.join(', ')); }}

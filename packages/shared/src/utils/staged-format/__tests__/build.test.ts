@@ -3,6 +3,7 @@ import { isLegalCutShortGame, validateMatch } from '../../game-rules';
 import {
   buildStageRows,
   formatConfigSchema,
+  groupsThenTopKnockout,
   headStartFor,
   parseFormatConfig,
   poolsThenPlacement,
@@ -141,6 +142,18 @@ describe('buildStageRows on the organiser\'s event', () => {
     expect(stageNumber(cfg, 'groups')).toBe(1);
     expect(stageNumber(cfg, 'finals')).toBe(2);
     expect(stageNumber(cfg, 'nope')).toBeNull();
+  });
+});
+
+describe('buildStageRows with one court per group', () => {
+  it('puts every match of group p on court p', () => {
+    const cfg = groupsThenTopKnockout({ pools: 2, courts: [['1'], ['2']] });
+    const rows = buildStageRows(cfg, 'groups', TEAMS.slice(0, 10), 'g', { rng: rngFrom(3), newId: idsFrom('m') });
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.stage).toBe(1);
+      expect(r.court).toBe(String(r.pool_number));
+    }
   });
 });
 
