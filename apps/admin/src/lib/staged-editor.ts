@@ -8,6 +8,7 @@ import {
   poolsPlayoffThenPlacement,
   poolsThenPlacement,
   poolsThenSemisFinal,
+  groupsThenTopKnockout,
   slotRefLabel,
   slotRefWidth,
   stagedConfigEditRefusal,
@@ -22,9 +23,10 @@ import {
   type StageScoring,
 } from '@badminton/shared';
 
-export type StagedPresetName = 'poolsThenPlacement' | 'poolsPlayoffThenPlacement' | 'poolsThenSemisFinal';
+export type StagedPresetName = 'groupsThenTopKnockout' | 'poolsThenPlacement' | 'poolsPlayoffThenPlacement' | 'poolsThenSemisFinal';
 
 export const STAGED_PRESETS: Array<{ value: StagedPresetName; label: string }> = [
+  { value: 'groupsThenTopKnockout', label: 'Groups, then the top N to a knockout' },
   { value: 'poolsThenPlacement', label: 'Pools, then placement matches' },
   { value: 'poolsPlayoffThenPlacement', label: 'Pools, a playoff per pool, then placement matches' },
   { value: 'poolsThenSemisFinal', label: 'Four pools, then semi-finals and a final' },
@@ -37,7 +39,8 @@ export function presetConfig(
   external: boolean,
 ): { ok: true; config: FormatConfig } | { ok: false; error: string } {
   try {
-    const build = name === 'poolsThenPlacement' ? poolsThenPlacement
+    const build = name === 'groupsThenTopKnockout' ? groupsThenTopKnockout
+      : name === 'poolsThenPlacement' ? poolsThenPlacement
       : name === 'poolsPlayoffThenPlacement' ? poolsPlayoffThenPlacement
         : poolsThenSemisFinal;
     const config = build(opts);

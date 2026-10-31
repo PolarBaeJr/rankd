@@ -58,15 +58,23 @@ export function EventSettingsDialog({
   // change to a drawn one.
   const staged = event.format === 'staged';
   const external = event.external_event === true;
+  // A club event's linked tournament is made unrated (00292), and switching
+  // it to stages keeps it that way.
+  const unrated = external || (event as { rated?: boolean | null }).rated === false;
   const [storedConfig] = useState<FormatConfig | null>(() => (staged ? parseFormatConfig(event.format_config) : null));
   const [stagedConfig, setStagedConfig] = useState<FormatConfig>(() => {
     const cfg = storedConfig ?? poolsThenPlacement();
-    return external ? withEveryStageUnrated(cfg) : cfg;
+    return unrated ? withEveryStageUnrated(cfg) : cfg;
   });
   const drawn = new Set(stagesDrawn);
   const stagesOnly = staged && drawn.size > 0;
-  const stagedErrors = staged ? stagedEditorErrors(stagedConfig, storedConfig, drawn) : [];
   const pointsOnly = !staged && pointsOnlyAsked;
+  // AN UNDRAWN EVENT ON A SIMPLE FORMAT CAN BE SWITCHED TO STAGES, which is
+  // where every other shape lives: top N across groups, a playoff, placement
+  // matches. One way only: the simple formats are presets of it.
+  const [switchingToStages, setSwitchingToStages] = useState(false);
+  const editingStages = staged || switchingToStages;
+  const stagedErrors = editingStages ? stagedEditorErrors(stagedConfig, storedConfig, drawn) : [];
   const [pointsConfig, setPointsConfig] = useState<FormatPoints | null>(() => parsePointsTable(event.points_config));
   const [values, setValues] = useState<EventFormatValues>({
     matchFormat: event.match_format as TournamentMatchFormat,
@@ -184,7 +192,12 @@ export function EventSettingsDialog({
     }
     setLoading(true);
     try {
-      const res = await updateTournamentEvent(event.id, {
+      const res = await updateTournamentEvent(event.id, switchingToStages ? {
+        format: 'staged',
+        format_config: stagedConfig,
+        max_participants: maxParticipants === '' ? null : Number(maxParticipants),
+        elo_multiplier: Number(eloMultiplier),
+      } : {
         ...toFormatPayload(
           playsRoundRobin(event.format) || staged ? { ...values, seededFrom: '' } : values,
           event.format,
@@ -208,17 +221,29 @@ export function EventSettingsDialog({
   return (
     <Dialog open onClose={onClose} title="Event Settings">
       <form onSubmit={handleSave} className="space-y-4">
-        {staged && (
+        {!staged && !pointsOnly && (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
+            <Switch
+              label="Set it out in stages"
+              description={switchingToStages
+                ? 'Build the event stage by stage: groups, knockouts and one-off matches, and who goes through from each. Saving switches the format for good.'
+                : 'For any shape the format above cannot make, such as the best 8 from 3 groups, a playoff, or placement matches.'}
+              checked={switchingToStages}
+              onChange={setSwitchingToStages}
+            />
+          </div>
+        )}
+        {editingStages && (
           <StagedFormatEditor
             value={stagedConfig}
             onChange={setStagedConfig}
             drawn={drawn}
             stored={storedConfig}
-            external={external}
+            external={unrated}
           />
         )}
         {!stagesOnly && !pointsOnly && (<>
-        {!staged && <EventFormatFields
+        {!editingStages && <EventFormatFields
           value={values}
           onChange={setValues}
           siblings={seedableSiblings}
@@ -276,7 +301,7 @@ export function EventSettingsDialog({
           cannot be changed underneath a draw that has started.
         </p>
         </>)}
-        {!staged && <PointsTableEditor format={event.format} value={pointsConfig} onChange={setPointsConfig} />}
+        {!editingStages && <PointsTableEditor format={event.format} value={pointsConfig} onChange={setPointsConfig} />}
         {!external && (
           <div className="space-y-1 border-t border-[var(--border)] pt-3">
             {waitlistReady ? (
