@@ -90,6 +90,8 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   { path: '/dashboard', admin: true, exec: true, trainer: true },
   { path: '/api/passkey/register/options', admin: true, exec: true, trainer: true },
   { path: '/passkey-required', admin: true, exec: true, trainer: true },
+  // A court helper's scoring page (00310); the helper row is checked by the page.
+  { path: '/my-courts', admin: true, exec: true, trainer: true },
 
   // Exec territory. Explicitly NOT the trainer's — the club owner's list was
   // players and varsity notes, nothing else.

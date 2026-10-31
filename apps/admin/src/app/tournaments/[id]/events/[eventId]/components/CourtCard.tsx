@@ -16,13 +16,22 @@ import {
   inlineScoreVerdict,
   liveEntrants,
   nextMatchForCourt,
+  type AutoCallReport,
   type DeskRow,
 } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
+import type { ActionResult } from '@/lib/action-result';
 import type { TournamentMatchRow } from '@/lib/tournament-types';
 
 export type CourtSide = { entryId: string | null; label: string };
 export type CourtDeskRow = DeskRow<TournamentMatchRow, CourtSide>;
+
+/** Saves a score from the card. The desk's is enterMatchResult; a court helper's is passed in. */
+export type CourtScoreSave = (
+  matchId: string,
+  scores: Array<{ a: number; b: number }>,
+  winner: 'a' | 'b',
+) => Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>>;
 
 interface Props {
   court: TournamentCourt;
@@ -37,8 +46,10 @@ interface Props {
   canManageCourts: boolean;
   /** A match from another event is live on this court. */
   busyElsewhere: boolean;
-  /** Opens the full score dialog: cut short, walkover, void. */
-  onMore: (matchId: string) => void;
+  /** Opens the full score dialog: cut short, walkover, void. Without it there is no "More options". */
+  onMore?: (matchId: string) => void;
+  /** Saves the score; enterMatchResult when not given. */
+  save?: CourtScoreSave;
 }
 
 /**
@@ -47,7 +58,7 @@ interface Props {
  * result is saved (nextMatchForCourt with this match's entrants let off).
  */
 export function CourtCard({
-  court, groupName, rows, courts, cfg, isLive, canEnterResult, canManageCourts, busyElsewhere, onMore,
+  court, groupName, rows, courts, cfg, isLive, canEnterResult, canManageCourts, busyElsewhere, onMore, save,
 }: Props) {
   const onCourt = rows.find((r) => r.state === 'live' && r.match.court_id === court.id) ?? null;
   const next = nextMatchForCourt(rows, court, courts, cfg, { busyEntries: liveEntrants(rows, onCourt?.match.id) });
@@ -75,7 +86,13 @@ export function CourtCard({
             {onCourt.a.label} <span className="text-sm font-normal text-[var(--text-muted)]">vs</span> {onCourt.b.label}
           </p>
           {isLive && canEnterResult && (
-            <InlineScore key={onCourt.match.id} row={onCourt} cfg={cfg} onMore={() => onMore(onCourt.match.id)} />
+            <InlineScore
+              key={onCourt.match.id}
+              row={onCourt}
+              cfg={cfg}
+              onMore={onMore ? () => onMore(onCourt.match.id) : undefined}
+              save={save}
+            />
           )}
         </div>
       ) : (
@@ -104,7 +121,9 @@ export function CourtCard({
   );
 }
 
-function InlineScore({ row, cfg, onMore }: { row: CourtDeskRow; cfg: FormatConfig; onMore: () => void }) {
+function InlineScore({
+  row, cfg, onMore, save: saveScore,
+}: { row: CourtDeskRow; cfg: FormatConfig; onMore?: () => void; save?: CourtScoreSave }) {
   const router = useRouter();
   const { toast } = useToast();
   const { match } = row;
@@ -123,7 +142,9 @@ function InlineScore({ row, cfg, onMore }: { row: CourtDeskRow; cfg: FormatConfi
   async function save() {
     if (!verdict.winner) return;
     setSaving(true);
-    const res = await enterMatchResult(match.id, verdict.scores, verdict.winner, false);
+    const res = saveScore
+      ? await saveScore(match.id, verdict.scores, verdict.winner)
+      : await enterMatchResult(match.id, verdict.scores, verdict.winner, false);
     setSaving(false);
     if (!res.ok) { toast(res.error, 'error'); return; }
     toast('Score saved', 'success');
@@ -183,13 +204,15 @@ function InlineScore({ row, cfg, onMore }: { row: CourtDeskRow; cfg: FormatConfi
             Add game
           </Button>
         )}
-        <button
-          type="button"
-          onClick={onMore}
-          className="ml-auto text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
-        >
-          More options
-        </button>
+        {onMore && (
+          <button
+            type="button"
+            onClick={onMore}
+            className="ml-auto text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
+          >
+            More options
+          </button>
+        )}
       </div>
     </form>
   );

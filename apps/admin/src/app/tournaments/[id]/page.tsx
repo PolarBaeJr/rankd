@@ -12,6 +12,7 @@ import { TournamentStatusControls } from './tournament-status-controls';
 import { LiveTournament } from '../live-tournament';
 import { CourtsEditor } from './courts-editor';
 import { COURTS_MIGRATION_MISSING, readTournamentCourts, readUsedCourtLabels } from '@/lib/tournament-courts';
+import { readCourtHelpers, readHelperCandidates, readMyCourts, type CourtHelper, type HelperCandidate } from '@/lib/court-helpers';
 import { loadManagedForm, loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
@@ -56,11 +57,16 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
   // The tournament's courts (00273), null before that migration, and the courts
   // already typed on its matches for the editor's one-tap import.
-  const [courts, usedCourtLabels, featureFlags] = await Promise.all([
+  // Court helpers (00310) are read only for a viewer who may change them.
+  const [courts, usedCourtLabels, featureFlags, courtHelpers, helperCandidates, viewerCourts] = await Promise.all([
     readTournamentCourts(supabase, id),
     readUsedCourtLabels(supabase, id).catch(() => [] as string[]),
     readFeatureFlags(supabase),
+    canEditCourts ? readCourtHelpers(supabase, id).catch(() => null) : Promise.resolve(null as CourtHelper[] | null),
+    canEditCourts ? readHelperCandidates(supabase).catch(() => [] as HelperCandidate[]) : Promise.resolve([] as HelperCandidate[]),
+    readMyCourts(supabase, viewer.id as string).catch(() => []),
   ]);
+  const showMyCourts = accessLevelFor(viewer) === 'admin' || viewerCourts.some((c) => c.tournament_id === id);
   const formImports = canSeeImports
     ? await loadRegistrationImports(supabase, 'tournament', id, {
         guestWaiversOn: featureFlags.guest_waivers === true,
@@ -324,6 +330,14 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           <h2 className="text-lg font-semibold text-[var(--text-primary)]">
             Courts {courts && courts.length > 0 && <span className="text-[var(--text-muted)] font-normal">({courts.length})</span>}
           </h2>
+          {showMyCourts && (
+            <Link
+              href="/my-courts"
+              className="ml-auto text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded"
+            >
+              My courts
+            </Link>
+          )}
         </div>
         <CourtsEditor
           tournamentId={id}
@@ -331,6 +345,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           usedLabels={usedCourtLabels}
           canEdit={canEditCourts}
           migrationMissing={COURTS_MIGRATION_MISSING}
+          helpers={courtHelpers}
+          helperCandidates={helperCandidates}
         />
       </div>
 
