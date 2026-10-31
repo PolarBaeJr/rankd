@@ -47,6 +47,7 @@ import {
   isWaitlistMissing,
   type WaitlistFillResult,
 } from './_internal';
+import { fillFreeCourts, type AutoCallReport } from './auto-call';
 
 // ============================================================
 // Event Management
@@ -880,7 +881,10 @@ export async function deleteTournamentEvent(eventId: string) {
 // for failed with nothing to act on. 599b8a0 / 057f5b3 / 20e8bea did this for
 // the actions next door; these two were missed because they are called from a
 // component that already checks `res.ok` for the generator calls beside them.
-async function setEventStatusImpl(eventId: string, status: TournamentEventStatus) {
+async function setEventStatusImpl(
+  eventId: string,
+  status: TournamentEventStatus,
+): Promise<{ autoCall: AutoCallReport } | undefined> {
   const admin = await requireCapability('tournaments.manage.event.status.write');
   const adminClient = createAdminClient();
 
@@ -996,13 +1000,26 @@ async function setEventStatusImpl(eventId: string, status: TournamentEventStatus
     details: sweep.forfeited > 0 || sweep.unresolved > 0 ? sweep : undefined,
   });
 
+  // Starting a staged event puts the first matches on every free court. The
+  // row read above still says bracket_generated, so it is passed as live.
+  let autoCall: AutoCallReport | undefined;
+  if (status === 'live' && event.format === 'staged') {
+    try {
+      autoCall = (await fillFreeCourts(adminClient, { event: { ...event, status: 'live' }, actorId: admin.id, trigger: 'start' })) ?? undefined;
+    } catch (err) {
+      Sentry.captureException(err);
+      autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+    }
+  }
+
   revalidateEventPaths(event.tournament_id, eventId);
   scheduleManagedFormSync('tournament', event.tournament_id);
+  return autoCall ? { autoCall } : undefined;
 }
 
 export async function setEventStatus(
   eventId: string,
   status: TournamentEventStatus,
-): Promise<ActionResult<void>> {
-  return runAction(async () => { await setEventStatusImpl(eventId, status); });
+): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(() => setEventStatusImpl(eventId, status));
 }

@@ -4,7 +4,8 @@ import { useState, useTransition, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, Check, Loader2, AlertCircle, Play, Square, ArrowRight } from 'lucide-react';
 import {
-  allowedTournamentCourts, courtKey, courtLabel, courtsInOrder, parseFormatConfig, stageCourtLabels, type FormatConfig, type TournamentCourt,
+  allowedTournamentCourts, courtKey, courtLabel, courtsInOrder, eventIsPlaying, parseFormatConfig, stageCourtLabels,
+  type FormatConfig, type TournamentCourt,
 } from '@badminton/shared';
 import { SearchFilter } from '@badminton/ui';
 import { setMatchCourt, setMatchReadyForPlayer, setMatchLive } from '@/lib/tournament-actions';
@@ -208,6 +209,8 @@ export function CourtManagementTab({
 
   // The union of what the two half-tabs ask. See deskEventPlaying for why.
   const eventPlaying = deskEventPlaying(event.status, event.format as string);
+  // A staged match goes on court only once the event is started, as the server rules.
+  const startBlocked = event.format === 'staged' && !eventIsPlaying(event.status);
 
   const rows = useMemo(() => {
     const sideOf = (entryId: string | null): DeskSide =>
@@ -351,6 +354,7 @@ export function CourtManagementTab({
             onEnterScore={() => setScoreMatchId(match.id)}
             courts={courts}
             busy={busy}
+            startBlocked={startBlocked}
           />
         ))}
       </div>
@@ -409,6 +413,7 @@ function DeskRow({
   onEnterScore,
   courts,
   busy,
+  startBlocked,
 }: {
   match: TournamentMatchRow;
   group: number | null;
@@ -422,6 +427,7 @@ function DeskRow({
   onEnterScore: () => void;
   courts: TournamentCourt[] | null;
   busy: ReadonlySet<string>;
+  startBlocked: boolean;
 }) {
   // A staged match's stage courts (its pool's, in a groups stage); null is any court.
   const allowed = courts ? allowedTournamentCourts(courts, stageCourtLabels(cfg, match)) : null;
@@ -521,7 +527,21 @@ function DeskRow({
           the door and deciding who won are not the same key. */}
       <div className="flex flex-wrap gap-1.5">
         {/* Keyed on the court so a refusal for the old court clears once the desk picks another. */}
-        {state !== 'waiting' && canManageCourts && (
+        {state !== 'waiting' && canManageCourts && startBlocked && state !== 'live' && (
+          <div className="flex flex-col">
+            <button
+              type="button"
+              disabled
+              aria-describedby={`start-blocked-${match.id}`}
+              className="inline-flex items-center gap-1.5 min-h-[44px] px-3 border border-[var(--border)] text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] opacity-60"
+            >
+              <Play className="w-3.5 h-3.5" aria-hidden />
+              Send on court
+            </button>
+            <p id={`start-blocked-${match.id}`} className="mt-1 text-[11px] text-[var(--text-muted)]">Start the tournament first</p>
+          </div>
+        )}
+        {state !== 'waiting' && canManageCourts && !(startBlocked && state !== 'live') && (
           <StartStopButton key={match.court ?? ''} matchId={match.id} live={state === 'live'} />
         )}
         {state !== 'waiting' && canEnterResult && (

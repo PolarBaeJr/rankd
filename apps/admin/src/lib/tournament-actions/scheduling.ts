@@ -20,6 +20,7 @@ import {
   allowedTournamentCourts,
   courtInLabels,
   courtLabel,
+  eventIsPlaying,
   parseFormatConfig,
   resolveCourtLabels,
   stageCourtLabels,
@@ -326,19 +327,26 @@ async function setMatchLiveImpl(matchId: string, live: boolean) {
 
   const { data: match } = await adminClient
     .from('tournament_matches')
-    .select('id, status, is_bye, court, event_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id, event:tournament_events(tournament_id)')
+    .select('id, status, is_bye, court, event_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id, event:tournament_events(tournament_id, format, status)')
     .eq('id', matchId)
     .maybeSingle();
   if (!match) throw new ExpectedError('Match not found');
 
-  const event = match.event as { tournament_id?: string } | Array<{ tournament_id?: string }> | null;
-  const tournamentId = (Array.isArray(event) ? event[0]?.tournament_id : event?.tournament_id) ?? null;
+  type LiveEvent = { tournament_id?: string; format?: string | null; status?: string | null };
+  const embed = match.event as LiveEvent | LiveEvent[] | null;
+  const event = Array.isArray(embed) ? embed[0] : embed;
+  const tournamentId = event?.tournament_id ?? null;
   if (!tournamentId) throw new Error('Match is not attached to a tournament');
   await assertTournamentNotSuspended(adminClient, tournamentId);
 
   const status = match.status as string;
 
   if (live) {
+    // A staged match on court before Start could not be scored there, and would
+    // hold the court when Start fills the free ones. Taking one off stays open.
+    if (event?.format === 'staged' && !eventIsPlaying(event.status)) {
+      throw new ExpectedError('Start the tournament first. A match sent on court before then cannot be scored.');
+    }
     // A BYE IS NOT PLAYED BY ANYBODY, so it cannot go on court. Refused rather
     // than hidden, for the reason every guard in this file is doubled: the UI is
     // a courtesy and this is the boundary.

@@ -297,18 +297,21 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       )}
 
       {/* What is on court and what is next, above whichever tab is open. It
-          renders nothing unless the courts tab exists and has work in it. */}
-      <LiveStrip
-        matches={matches}
-        event={event}
-        participants={participants}
-        pairs={pairs}
-        isDoubles={isDoubles}
-        canEnterResult={drawCapabilities.enterResult}
-        courts={courts}
-        busyCourtIds={busyCourtIds}
-        onOpenCourts={() => setActiveTab('courts')}
-      />
+          renders nothing unless the courts tab exists and has work in it. A
+          staged event's Stages tab carries its own court cards, so not there. */}
+      {!(staged && activeTab === 'stages') && (
+        <LiveStrip
+          matches={matches}
+          event={event}
+          participants={participants}
+          pairs={pairs}
+          isDoubles={isDoubles}
+          canEnterResult={drawCapabilities.enterResult}
+          courts={courts}
+          busyCourtIds={busyCourtIds}
+          onOpenCourts={() => setActiveTab('courts')}
+        />
+      )}
 
       {categoryRequests && categoryRequests.length > 0 && (
         <CategoryRequestsPanel
@@ -405,6 +408,10 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             isDoubles={isDoubles}
             canGenerate={drawCapabilities.generate}
+            courts={courts}
+            busyCourtIds={busyCourtIds}
+            canManageCourts={drawCapabilities.manageCourts}
+            canEnterResult={drawCapabilities.enterResult}
           />
         )}
         {activeTab === 'bracket' && (
