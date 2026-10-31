@@ -161,3 +161,19 @@ describe('stageDrawControl', () => {
     expect(stageDrawControl(stage, { ...base, canGenerate: false }).blockedReason).toMatch(/permission/);
   });
 });
+
+describe('the top N preset saves', () => {
+  // The Save button is disabled while stagedEditorErrors has anything to say,
+  // and the server runs the same checkFormatConfig, so every shape the picker
+  // can make has to pass both.
+  it.each([
+    [3, 8], [4, 2], [1, 4], [3, 16], [4, 4], [2, 32], [8, 8],
+  ])('%i groups, %i through', (groups, advance) => {
+    for (const unrated of [false, true]) {
+      const res = presetConfig('groupsThenTopKnockout', { pools: groups, advance }, unrated);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(stagedEditorErrors(res.config, null, new Set())).toEqual([]);
+    }
+  });
+});
