@@ -3710,7 +3710,9 @@ export type Database = {
           group_number: number | null
           id: string
           pair_name: string | null
+          player1_checked_in_at: string | null
           player1_id: string | null
+          player2_checked_in_at: string | null
           player2_id: string | null
           points: number | null
           seed_number: number | null
@@ -3730,7 +3732,9 @@ export type Database = {
           group_number?: number | null
           id?: string
           pair_name?: string | null
+          player1_checked_in_at?: string | null
           player1_id?: string | null
+          player2_checked_in_at?: string | null
           player2_id?: string | null
           points?: number | null
           seed_number?: number | null
@@ -3750,7 +3754,9 @@ export type Database = {
           group_number?: number | null
           id?: string
           pair_name?: string | null
+          player1_checked_in_at?: string | null
           player1_id?: string | null
+          player2_checked_in_at?: string | null
           player2_id?: string | null
           points?: number | null
           seed_number?: number | null
@@ -5075,6 +5081,15 @@ export type Database = {
           media_consent: boolean
           media_consent_changed_at: string
         }[]
+      }
+      set_pair_member_check_in: {
+        Args: {
+          p_actor: string
+          p_here: boolean
+          p_pair_id: string
+          p_slot: number
+        }
+        Returns: Json
       }
       staged_late_entry_open: { Args: { p_event_id: string }; Returns: boolean }
       staged_source_fingerprint: {
