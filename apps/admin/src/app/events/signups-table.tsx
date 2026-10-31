@@ -1,16 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, useConfirm } from '@badminton/ui';
+import { Badge, Button, Select, useConfirm } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { removeClubEventSignup } from '@/lib/actions/club-events';
 import { undoImportedEntry } from '@/lib/actions/registration-imports';
+import { SIGNUP_SORT_KEY, SIGNUP_SORT_OPTIONS, parseSignupSort, sortEntries, type SignupSortOrder } from '@/lib/entry-sort';
 
 /**
  * One person on the list. Members and the Google Form's non-members are one
- * list, newest sign-up first: the club treats them the same way at the door.
+ * list, newest sign-up first by default, and the officer can re-sort it by
+ * time or name: the club treats them the same way at the door.
  * A guest carries the Form entry that put them here (removing them is that
  * entry's Undo) or none, for a walk-in, who is dealt with at the door.
  * `partner` is the preferred partner the Form's answer named (00299), as typed.
@@ -59,6 +61,18 @@ export function ClubEventSignupsTable({
   const { toast } = useToast();
   const confirm = useConfirm();
   const [removing, setRemoving] = useState<string | null>(null);
+  // Remembered per device, read after mount so the server render matches.
+  const [order, setOrder] = useState<SignupSortOrder>('newest');
+  useEffect(() => {
+    try {
+      const saved = parseSignupSort(window.localStorage.getItem(SIGNUP_SORT_KEY));
+      if (saved) setOrder(saved);
+    } catch { /* no storage: newest first */ }
+  }, []);
+  function pickSort(next: SignupSortOrder) {
+    setOrder(next);
+    try { window.localStorage.setItem(SIGNUP_SORT_KEY, next); } catch { /* not remembered */ }
+  }
 
   async function handleRemove(row: ClubEventSignupRow) {
     const ok = await confirm(
@@ -98,48 +112,62 @@ export function ClubEventSignupsTable({
     return <p className="px-5 pb-5 text-sm text-[var(--mute)]">Nobody has signed up yet.</p>;
   }
   return (
-    <ul className="divide-y divide-[var(--line)]">
-      {rows.map((row) => (
-        <li key={row.key} className="flex items-center justify-between gap-3 px-5 py-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-sm text-[var(--ink)]">{row.name}</span>
-              {row.kind === 'guest' && (
-                <Badge variant="neutral">{row.walkIn ? 'Walk-in' : 'Non-member'}</Badge>
+    <>
+      {rows.length > 1 && (
+        <div className="flex justify-end px-5 pb-3">
+          <Select
+            variant="bare"
+            aria-label="Sort sign-ups"
+            value={order}
+            onChange={(e) => pickSort(e.target.value as SignupSortOrder)}
+            options={SIGNUP_SORT_OPTIONS}
+            className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-xs text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+          />
+        </div>
+      )}
+      <ul className="divide-y divide-[var(--line)]">
+        {sortEntries(rows, order, { id: (r) => r.key, signedUpAt: (r) => r.created_at, name: (r) => r.name }).map((row) => (
+          <li key={row.key} className="flex items-center justify-between gap-3 px-5 py-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="truncate text-sm text-[var(--ink)]">{row.name}</span>
+                {row.kind === 'guest' && (
+                  <Badge variant="neutral">{row.walkIn ? 'Walk-in' : 'Non-member'}</Badge>
+                )}
+                {row.kind === 'member' && row.guest && <Badge variant="neutral">Guest</Badge>}
+              </div>
+              {row.kind === 'guest' && row.email && (
+                <div className="truncate text-xs text-[var(--ink-2)]">{row.email}</div>
               )}
-              {row.kind === 'member' && row.guest && <Badge variant="neutral">Guest</Badge>}
+              {row.partner && <div className="truncate text-xs text-[var(--mute)]">Partner: {row.partner}</div>}
+              {row.kind === 'member' &&
+                row.answers &&
+                Object.entries(row.answers).map(([question, answer]) => (
+                  <div key={question} className="text-xs text-[var(--mute)]">
+                    {question}: <span className="text-[var(--ink-2)]">{answer}</span>
+                  </div>
+                ))}
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--mute)]">
+                {row.kind === 'guest' && !row.walkIn ? 'Google Form' : 'Signed up'} {formatDateTime(row.created_at)}
+                {row.kind === 'guest' && row.waiverSigned !== null && (
+                  <> · Waiver {row.waiverSigned ? 'signed' : 'not signed'}</>
+                )}
+                {row.fee && (
+                  <>
+                    {' '}
+                    · {money(row.fee.amountCents)} {row.fee.paid ? 'paid' : 'unpaid'}
+                  </>
+                )}
+              </div>
             </div>
-            {row.kind === 'guest' && row.email && (
-              <div className="truncate text-xs text-[var(--ink-2)]">{row.email}</div>
+            {canRemove && (row.kind === 'member' || row.entryId) && (
+              <Button variant="secondary" size="sm" onClick={() => handleRemove(row)} loading={removing === row.key}>
+                Remove
+              </Button>
             )}
-            {row.partner && <div className="truncate text-xs text-[var(--mute)]">Partner: {row.partner}</div>}
-            {row.kind === 'member' &&
-              row.answers &&
-              Object.entries(row.answers).map(([question, answer]) => (
-                <div key={question} className="text-xs text-[var(--mute)]">
-                  {question}: <span className="text-[var(--ink-2)]">{answer}</span>
-                </div>
-              ))}
-            <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--mute)]">
-              {row.kind === 'guest' && !row.walkIn ? 'Google Form' : 'Signed up'} {formatDateTime(row.created_at)}
-              {row.kind === 'guest' && row.waiverSigned !== null && (
-                <> · Waiver {row.waiverSigned ? 'signed' : 'not signed'}</>
-              )}
-              {row.fee && (
-                <>
-                  {' '}
-                  · {money(row.fee.amountCents)} {row.fee.paid ? 'paid' : 'unpaid'}
-                </>
-              )}
-            </div>
-          </div>
-          {canRemove && (row.kind === 'member' || row.entryId) && (
-            <Button variant="secondary" size="sm" onClick={() => handleRemove(row)} loading={removing === row.key}>
-              Remove
-            </Button>
-          )}
-        </li>
-      ))}
-    </ul>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
