@@ -3119,6 +3119,62 @@ export type Database = {
           },
         ]
       }
+      tournament_court_helpers: {
+        Row: {
+          court_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          player_id: string
+          tournament_id: string
+        }
+        Insert: {
+          court_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          player_id: string
+          tournament_id: string
+        }
+        Update: {
+          court_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          player_id?: string
+          tournament_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_court_helpers_court_fkey"
+            columns: ["court_id", "tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_courts"
+            referencedColumns: ["id", "tournament_id"]
+          },
+          {
+            foreignKeyName: "tournament_court_helpers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_court_helpers_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_court_helpers_tournament_id_fkey"
+            columns: ["tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_courts: {
         Row: {
           active: boolean

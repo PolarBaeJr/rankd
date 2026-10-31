@@ -1,6 +1,7 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
+import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 // Void / no-show / restore reasons are exec-only free text and no longer live
@@ -21,6 +22,7 @@ import {
   parseFormatConfig,
   stagedMatchRules,
   validateMatch,
+  deriveWinnerSide,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -51,6 +53,9 @@ import {
   type MatchRoute,
 } from './_internal';
 import { fillFreeCourts, type AutoCallEvent, type AutoCallReport } from './auto-call';
+import { requireConsoleUser } from '../court-helper-gate';
+import { courtHelperDecision, hasHelperRow } from '../court-helpers';
+import { permits } from '../permissions';
 
 // ============================================================
 // Score Entry & Advancement
@@ -443,13 +448,23 @@ function assertStagedScoreline(
   assertWinnerMatchesScores(scores, winnerSide);
 }
 
+/**
+ * Who is saving a result. The desk holds the results capability; a court
+ * helper (00310) holds a helper row on the court the match is on, which is
+ * checked against the row read here and pinned into the result's UPDATE.
+ */
+type ResultGate = { kind: 'desk' } | { kind: 'helper'; actorId: string };
+
 async function enterMatchResultImpl(
   matchId: string,
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b',
-  timeExceeded: boolean
+  timeExceeded: boolean,
+  gate: ResultGate = { kind: 'desk' },
 ): Promise<{ autoCall: AutoCallReport } | undefined> {
-  const admin = await requireCapability('tournaments.results.enter.write');
+  const actorId = gate.kind === 'desk'
+    ? (await requireCapability('tournaments.results.enter.write')).id
+    : gate.actorId;
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -464,6 +479,24 @@ async function enterMatchResultImpl(
 
   const event = match.event as Record<string, unknown>;
   await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
+
+  // A court helper scores only the match live on their own court. The court
+  // read here is pinned into the UPDATE below, so a match moved off the court
+  // between this read and the write is refused rather than saved.
+  let pinnedCourtId: string | null = null;
+  if (gate.kind === 'helper') {
+    const courtId = (match.court_id as string | null) ?? null;
+    const decision = courtHelperDecision({
+      canDesk: false,
+      match: { status: match.status as string, stage: (match.stage as number | null) ?? null, court_id: courtId },
+      eventFormat: event.format as string | null,
+      hasHelperRow: courtId ? await hasHelperRow(adminClient, courtId, gate.actorId) : false,
+    });
+    if (decision.kind === 'refuse') throw new ExpectedError(decision.reason);
+    if (decision.kind !== 'helper') throw new ExpectedError('You are not helping on this match\'s court.');
+    pinnedCourtId = decision.courtId;
+  }
+
   // The event must actually be under way. match.status alone does not say so:
   // a match is created 'pending' the moment the bracket is generated, which is
   // one step BEFORE the event goes live (registration -> checkin ->
@@ -532,7 +565,7 @@ async function enterMatchResultImpl(
     [winnerIdField]: winnerId,
     [loserIdField]: loserId,
     status: 'completed',
-    result_entered_by: admin.id,
+    result_entered_by: actorId,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }, { count: 'exact' })
@@ -545,7 +578,11 @@ async function enterMatchResultImpl(
     // The bracket then holds one pair of names and the result holds another, and
     // finalizeEvent trusts the result fields without ever reading the slots.
     ;
-  const { error, count } = await matchSlotFilter(update, match, doubles);
+  const { error, count } = await matchSlotFilter(
+    pinnedCourtId ? update.eq('court_id', pinnedCourtId) : update,
+    match,
+    doubles,
+  );
 
   if (error) {
     Sentry.captureException(error);
@@ -553,6 +590,7 @@ async function enterMatchResultImpl(
   }
 
   if (count === 0) {
+    if (pinnedCourtId) throw new ExpectedError('This match has left your court. Reload to see your courts.');
     throw new ExpectedError(
       'This match changed while you were entering the result — most likely another desk got there first. Reload and check before entering it again.',
     );
@@ -578,19 +616,21 @@ async function enterMatchResultImpl(
   // Advance winner to next match (single elimination only). Advancing can also
   // settle that match outright — the opponent waiting there may have withdrawn
   // since the draw was published.
-  await advanceWinner(adminClient, match, doubles, winnerId, admin.id);
+  await advanceWinner(adminClient, match, doubles, winnerId, actorId);
 
   // ...and the loser into the third-place playoff, if this is a semi-final in an
   // event that has one. A no-op everywhere else — loser_to_match_id is null.
-  await advanceLoser(adminClient, match, doubles, loserId, admin.id);
+  await advanceLoser(adminClient, match, doubles, loserId, actorId);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
     event_id: match.event_id,
     match_id: matchId,
     action: 'result_entered',
-    performed_by: admin.id,
-    details: { scores, winner_side: winnerSide, time_exceeded: timeExceeded },
+    performed_by: actorId,
+    details: pinnedCourtId
+      ? { scores, winner_side: winnerSide, time_exceeded: timeExceeded, via: 'court_helper', court_id: pinnedCourtId }
+      : { scores, winner_side: winnerSide, time_exceeded: timeExceeded },
   });
 
   // Notify both players of match result
@@ -628,7 +668,7 @@ async function enterMatchResultImpl(
     try {
       autoCall = (await fillFreeCourts(adminClient, {
         event: event as unknown as AutoCallEvent,
-        actorId: admin.id,
+        actorId,
         trigger: 'result',
         preferCourtId: (match.court_id as string | null) ?? null,
       })) ?? undefined;
@@ -639,6 +679,7 @@ async function enterMatchResultImpl(
   }
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  revalidatePath('/my-courts');
   return autoCall ? { autoCall } : undefined;
 }
 
@@ -1887,6 +1928,35 @@ export async function enterMatchResult(
   timeExceeded = false,
 ): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
   return runAction(() => enterMatchResultImpl(matchId, scores, winnerSide, timeExceeded));
+}
+
+/**
+ * A COURT HELPER'S SAVE (00310), from /my-courts. The games only: the winner is
+ * derived here with the console's own rule, and the clock is never called, so
+ * a helper cannot record a winner the score contradicts. Someone who holds the
+ * results capability saves as the desk; anyone else needs a helper row on the
+ * court the match is on, which enterMatchResultImpl checks.
+ */
+export async function enterCourtHelperResult(
+  matchId: string,
+  scores: Array<{ a: number; b: number }>,
+): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(async () => {
+    const legal = Array.isArray(scores) && scores.length >= 1 && scores.length <= 7
+      && scores.every((g) => g !== null && typeof g === 'object'
+        && Number.isInteger(g.a) && Number.isInteger(g.b)
+        && g.a >= 0 && g.a <= 99 && g.b >= 0 && g.b <= 99);
+    if (!legal) throw new ExpectedError('Enter one to seven games, each score a whole number from 0 to 99.');
+    const games = scores.map((g) => ({ a: g.a, b: g.b }));
+    const winner = deriveWinnerSide(games.map((g) => ({ side_a_score: g.a, side_b_score: g.b })));
+    if (!winner) throw new ExpectedError('No game winner');
+
+    const { viewer, level, permissions } = await requireConsoleUser();
+    if (permits(level, permissions, 'tournaments.results.enter.write')) {
+      return enterMatchResultImpl(matchId, games, winner, false);
+    }
+    return enterMatchResultImpl(matchId, games, winner, false, { kind: 'helper', actorId: viewer.id as string });
+  });
 }
 
 export async function enterWalkover(
