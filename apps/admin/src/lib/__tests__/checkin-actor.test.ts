@@ -25,12 +25,12 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-/** Every set_field_entry_status call's argument object, comments stripped. */
-function calls(dir: string): Array<{ file: string; args: string }> {
+/** Every call's argument object for one RPC (set_field_entry_status by default), comments stripped. */
+function calls(dir: string, rpc = 'set_field_entry_status'): Array<{ file: string; args: string }> {
   const out: Array<{ file: string; args: string }> = [];
   for (const file of sourceFiles(dir)) {
     const source = readFileSync(file, 'utf8');
-    const marker = ".rpc('set_field_entry_status', {";
+    const marker = `.rpc('${rpc}', {`;
     let at = source.indexOf(marker);
     while (at !== -1) {
       const start = at + marker.length;
@@ -78,5 +78,22 @@ describe('who set_field_entry_status thinks is checking in', () => {
       expect(field(c.args, 'p_actor'), c.file).toBe('null');
       expect(field(c.args, 'p_new_status'), c.file).toBe("'checked_in'");
     }
+  });
+});
+
+// 00309's per-person check-in copies the same window gate on p_actor IS NULL,
+// so the desk must always name the officer there too.
+describe('who set_pair_member_check_in thinks is checking in', () => {
+  it('admin: every call names the officer', () => {
+    const admin = calls(ADMIN_SRC, 'set_pair_member_check_in');
+    expect(admin.length).toBeGreaterThan(0);
+    for (const c of admin) {
+      expect(field(c.args, 'p_actor'), c.file).not.toBe('null');
+      expect(field(c.args, 'p_actor'), c.file).toBeDefined();
+    }
+  });
+
+  it('player: never calls it, so a member checks in as a whole team', () => {
+    expect(calls(PLAYER_SRC, 'set_pair_member_check_in')).toEqual([]);
   });
 });
