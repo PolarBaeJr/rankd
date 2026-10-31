@@ -111,11 +111,13 @@ interface Props {
   categoryRequests: CategoryRequest[] | null;
   /** Entries a Google Form made (00283), by participant or pair id. */
   imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
+  /** Sign-up time per participant or pair id, off the linked club event. Null when unlinked. */
+  signedUpAt?: Record<string, string> | null;
   // Who is looking, so the panel offers Cancel on their own requests only.
   viewerId: string;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, viewerId }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, viewerId }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -361,6 +363,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waitlist={waitlist}
             categoryRequests={categoryRequests}
             imported={imported}
+            signedUpAt={signedUpAt}
             lateEntry={lateEntry}
           />
         )}
