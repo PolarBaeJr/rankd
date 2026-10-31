@@ -363,19 +363,25 @@ export function deskRowMatchesSearch(
  * across all its events. A court taken in ANOTHER event does not refresh this
  * desk live (it watches this event's matches only), so the suggestion can be
  * stale; the one-live-per-court index is the real guard, and Start says so.
+ *
+ * `allowed` is the match's stage courts (allowedTournamentCourts), null for
+ * any court. With it, only those courts are suggested, and a current court
+ * outside them is never fine.
  */
 export function deskCourtSuggestion(
   row: { match: Pick<DeskMatch, 'court' | 'court_id'> },
   courts: readonly TournamentCourt[] | null | undefined,
   busy: ReadonlySet<string>,
+  allowed?: readonly TournamentCourt[] | null,
 ): TournamentCourt | null {
   if (!courts?.length) return null;
   const { court, court_id } = row.match;
   const current = court_id
     ? courts.find((c) => c.id === court_id)
     : courts.find((c) => courtLabel(court) != null && courtKey(c.label) === courtKey(court));
-  if (current && current.active && !busy.has(current.id)) return null;
-  return nextCourtFree(courts, busy);
+  const usable = allowed ? allowed.filter((c) => c.active) : courts;
+  if (current && current.active && !busy.has(current.id) && usable.some((c) => c.id === current.id)) return null;
+  return nextCourtFree(usable, busy);
 }
 
 export function deskCounts(

@@ -72,6 +72,7 @@ export * from './utils/season';
 export * from './utils/standings';
 export * from './utils/draw-order';
 export * from './utils/external-team';
+export * from './utils/pair-check-in';
 export * from './utils/tournament-phases';
 export * from './utils/bracket-layout';
 export * from './utils/draw-rounds';

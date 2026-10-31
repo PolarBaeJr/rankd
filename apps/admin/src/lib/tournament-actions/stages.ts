@@ -19,6 +19,7 @@ import {
   isDoublesEvent,
   parseFormatConfig,
   reseededEntrants,
+  resolveCourtLabels,
   resolveSlots,
   shuffleWithRng,
   sourceStages,
@@ -380,6 +381,11 @@ async function drawStageImpl(eventId: string, stageKey: string, mode: 'draw' | '
   const courts = await readTournamentCourts(adminClient, event.tournament_id);
   const { courtIds, unknown: unknownCourts } = resolveStageCourts(courts, rows);
   if (unknownCourts.length > 0) throw new ExpectedError(unknownStageCourtsMessage(unknownCourts));
+  // A knockout's rows carry no court, so its list is checked on its own.
+  if (stage.kind === 'knockout' && stage.courts && courts && courts.length > 0) {
+    const unknownKnockout = resolveCourtLabels(courts, stage.courts).unknown;
+    if (unknownKnockout.length > 0) throw new ExpectedError(unknownStageCourtsMessage(unknownKnockout));
+  }
 
   const { data: torn, error: tearError } = await adminClient.rpc('delete_stage_matches', { p_event_id: eventId, p_stage: k });
   if (tearError) {

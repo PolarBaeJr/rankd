@@ -46,6 +46,8 @@ export {
   withdrawPairMember,
   swapPairMember,
   checkInPair,
+  checkInPairMember,
+  undoPairMemberCheckIn,
   markPairNoShow,
   undoCheckIn,
   undoNoShow,

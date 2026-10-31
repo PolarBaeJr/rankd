@@ -122,6 +122,7 @@ vi.mock('../audit', () => ({
   },
 }));
 
+import { groupsThenTopKnockout } from '@badminton/shared';
 import { setMatchLive, setMatchCourt } from '../tournament-actions/scheduling';
 
 const TOURNAMENT = 'tourn-1';
@@ -395,5 +396,80 @@ describe('courts of the tournament', () => {
     expect(res.error).toBe('Court 3 already has a match on it. Finish or take that match off court first.');
     expect(match().status).toBe('ready');
     expect(auditRows()).toHaveLength(0);
+  });
+});
+
+// A STAGED MATCH STAYS ON ITS STAGE'S COURTS after the draw: group A on court 1,
+// group B on court 2, the knockout on its own list.
+describe('the courts of a staged match\'s stage', () => {
+  const groups = groupsThenTopKnockout({ pools: 2, courts: [['1'], ['2']] });
+  const withKnockout = {
+    ...groups,
+    stages: groups.stages.map((s) => (s.kind === 'knockout' ? { ...s, courts: ['3', '4'] } : s)),
+  };
+  const stagedEvent = (cfg: unknown) => ({ tournament_id: TOURNAMENT, format: 'staged', format_config: cfg });
+
+  function seedCourts() {
+    store.db.tournament_courts = [1, 2, 3, 4].map((n) => (
+      { id: `court-${n}`, tournament_id: TOURNAMENT, label: `Court ${n}`, sort_order: n, active: true, notes: null }
+    ));
+  }
+
+  it('refuses a group 1 match on court 2, writing nothing, and takes court 1', async () => {
+    seedCourts();
+    seedMatch({ stage: 1, pool_number: 1, event: stagedEvent(groups) });
+
+    const refused = await setMatchCourt(MATCH, '2');
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('unreachable');
+    expect(refused.error).toBe("Court 2 is not one of this group's courts. Use Court 1.");
+    expect(match().court).toBeNull();
+    expect(auditRows()).toHaveLength(0);
+
+    const res = await setMatchCourt(MATCH, '1');
+    expect(res.ok).toBe(true);
+    expect(match().court).toBe('Court 1');
+    expect(match().court_id).toBe('court-1');
+  });
+
+  it('keeps a knockout match to its listed courts', async () => {
+    seedCourts();
+    seedMatch({ stage: 2, pool_number: null, event: stagedEvent(withKnockout) });
+
+    const refused = await setMatchCourt(MATCH, '1');
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('unreachable');
+    expect(refused.error).toBe("Court 1 is not one of this stage's courts. Use Courts 3, 4.");
+
+    expect((await setMatchCourt(MATCH, '4')).ok).toBe(true);
+    expect(match().court_id).toBe('court-4');
+  });
+
+  it('lets a knockout with no list take any court', async () => {
+    seedCourts();
+    seedMatch({ stage: 2, pool_number: null, event: stagedEvent(groups) });
+
+    expect((await setMatchCourt(MATCH, '2')).ok).toBe(true);
+  });
+
+  it('always allows clearing the court', async () => {
+    seedCourts();
+    seedMatch({ stage: 1, pool_number: 1, court: 'Court 2', court_id: 'court-2', event: stagedEvent(groups) });
+
+    const res = await setMatchCourt(MATCH, '');
+    expect(res.ok).toBe(true);
+    expect(match().court).toBeNull();
+  });
+
+  it('holds a free-text tournament to the same rule', async () => {
+    seedMatch({ stage: 1, pool_number: 2, event: stagedEvent(groups) });
+
+    const refused = await setMatchCourt(MATCH, 'Court 1');
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('unreachable');
+    expect(refused.error).toBe("Court 1 is not one of this group's courts. Use Court 2.");
+
+    expect((await setMatchCourt(MATCH, 'court 2')).ok).toBe(true);
+    expect(match().court).toBe('court 2');
   });
 });

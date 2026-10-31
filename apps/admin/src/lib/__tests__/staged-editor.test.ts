@@ -16,6 +16,7 @@ import {
   slotOptionsFor,
   slotValue,
   stagedEditorErrors,
+  editorSlotLabel,
 } from '../staged-editor';
 import { lateEntrantConfirmMessage, lateEntryWindow, stageDrawControl, stageExtendControl } from '../stage-controls';
 
@@ -85,7 +86,7 @@ describe('slot options', () => {
     const labels = slotOptions(cfg, 1, false).map((o) => o.label);
     expect(labels).toContain('G2 winner');
     expect(labels).toContain('G3 Group B 2nd');
-    expect(labels).toContain('1st best 1st place');
+    expect(labels).toContain("Every group's 1st place");
   });
 
   it('offers the seeds of a reseeding stage on a match side, and match results from earlier named matches', () => {
@@ -241,5 +242,19 @@ describe('the top N preset saves', () => {
       if (!res.ok) return;
       expect(stagedEditorErrors(res.config, null, new Set())).toEqual([]);
     }
+  });
+});
+
+describe('editorSlotLabel', () => {
+  it('names a best-of-place pick as a whole', () => {
+    const res = presetConfig('groupsThenTopKnockout', { pools: 3, advance: 8 }, false);
+    if (!res.ok) throw new Error(res.error);
+    const knockout = res.config.stages[1]!;
+    if (knockout.entrants.from !== 'slots') throw new Error('expected slots');
+    expect(knockout.entrants.slots.map((ref) => editorSlotLabel(ref, res.config))).toEqual([
+      "Every group's 1st place",
+      "Every group's 2nd place",
+      'The best 2 of the 3rd places',
+    ]);
   });
 });

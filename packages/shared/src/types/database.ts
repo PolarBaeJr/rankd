@@ -808,6 +808,9 @@ export interface TournamentPair {
   status: TournamentParticipantStatus;
   checked_in_at: string | null;
   checked_in_by: string | null;
+  // When each slot's person was marked here (00309). Absent before 00309.
+  player1_checked_in_at?: string | null;
+  player2_checked_in_at?: string | null;
   final_position: number | null;
   combined_elo: number | null;
   points: number;

@@ -14,7 +14,16 @@
 // ---------------------------------------------------------------------------
 
 import * as Sentry from '@sentry/nextjs';
-import { ExpectedError, courtLabel, resolveCourtLabels } from '@badminton/shared';
+import {
+  ExpectedError,
+  allowedCourtsSentence,
+  allowedTournamentCourts,
+  courtInLabels,
+  courtLabel,
+  parseFormatConfig,
+  resolveCourtLabels,
+  stageCourtLabels,
+} from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { readTournamentCourts } from '../tournament-courts';
@@ -93,13 +102,15 @@ async function setMatchCourtImpl(matchId: string, court: string) {
 
   const { data: match } = await adminClient
     .from('tournament_matches')
-    .select('id, court, event_id, event:tournament_events(tournament_id)')
+    .select('id, court, event_id, stage, pool_number, event:tournament_events(tournament_id, format, format_config)')
     .eq('id', matchId)
     .maybeSingle();
   if (!match) throw new ExpectedError('Match not found');
 
-  const event = match.event as { tournament_id?: string } | Array<{ tournament_id?: string }> | null;
-  const tournamentId = (Array.isArray(event) ? event[0]?.tournament_id : event?.tournament_id) ?? null;
+  type MatchEvent = { tournament_id?: string; format?: string | null; format_config?: unknown };
+  const embed = match.event as MatchEvent | MatchEvent[] | null;
+  const event = (Array.isArray(embed) ? embed[0] : embed) ?? null;
+  const tournamentId = event?.tournament_id ?? null;
   if (!tournamentId) throw new Error('Match is not attached to a tournament');
 
   // A suspended tournament is not being played, so nobody should be directed
@@ -114,16 +125,31 @@ async function setMatchCourtImpl(matchId: string, court: string) {
   const courts = await readTournamentCourts(adminClient, tournamentId);
   const managed = !!courts && courts.length > 0;
 
+  // A STAGED MATCH stays on its stage's courts (its pool's, for a groups
+  // stage) after the draw too. Clearing is always allowed.
+  const cfg = event?.format === 'staged' ? parseFormatConfig(event.format_config) : null;
+  const stageMatch = { stage: match.stage as number | null, pool_number: match.pool_number as number | null };
+  const stageLabels = trimmed === '' ? null : stageCourtLabels(cfg, stageMatch);
+  const stageRefusal = (label: string, labels: readonly string[]) => {
+    const whose = cfg?.stages[(stageMatch.stage ?? 1) - 1]?.kind === 'groups' ? "group's" : "stage's";
+    return new ExpectedError(`${courtLabel(label)} is not one of this ${whose} courts. Use ${allowedCourtsSentence(labels)}.`);
+  };
+
   const previous = (match.court as string | null) ?? null;
   let next = trimmed === '' ? null : trimmed;
   let nextCourtId: string | null = null;
   let previousCourtId: string | null = null;
+  if (!managed && next !== null && stageLabels && !courtInLabels(next, stageLabels)) {
+    throw stageRefusal(next, stageLabels);
+  }
   if (managed) {
     if (next !== null) {
       const court = resolveCourtLabels(courts, [next]).byLabel.get(next);
       if (!court) {
         throw new ExpectedError(`${courtLabel(next)} is not one of this tournament's courts. Add it on the tournament page.`);
       }
+      const allowed = allowedTournamentCourts(courts, stageLabels);
+      if (allowed && !allowed.some((c) => c.id === court.id)) throw stageRefusal(next, stageLabels!);
       next = court.label;
       nextCourtId = court.id;
     }
