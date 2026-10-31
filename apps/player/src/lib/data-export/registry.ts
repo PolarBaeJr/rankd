@@ -294,9 +294,13 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     why: 'Every session you said you were going to, and the reminder we sent or tried to send you for it.',
   },
   club_event_signups: {
-    playerColumns: ['player_id'],
+    playerColumns: ['player_id', 'preferred_partner_player_id'],
     disposition: 'export',
-    why: 'Every club event you signed up for, and when, with the partner you named on its Google Form if you named one.',
+    // The desk's pick of the member's partner (00311) names somebody else, a
+    // member or a non-member, so both references are dropped; the partner as
+    // the member typed it stays.
+    withheldColumns: ['preferred_partner_player_id', 'preferred_partner_external_id'],
+    why: 'Every club event you signed up for, and when, with the partner you named on its Google Form if you named one, and when the desk set your partner. Who the desk picked is withheld: it names somebody else.',
   },
   waiver_acceptances: {
     playerColumns: ['player_id'],
@@ -724,6 +728,13 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     withheldColumns: ['token'],
     why: 'Check-in tokens are issued per session and not per member, so they are not your personal information at all. Holding the token IS the proof of being at the door, so it is never exported.',
   },
+  club_event_external_signups: {
+    // Non-members a form signed up for a club event (00284). Since 00311 the
+    // desk can record a member as the partner a non-member asked for.
+    playerColumns: ['preferred_partner_player_id'],
+    disposition: 'withheld',
+    why: 'A non-member\'s sign-up that names you as the partner they asked for; it is theirs.',
+  },
   tournament_checkin_tokens: {
     playerColumns: [],
     disposition: 'withheld',
@@ -956,8 +967,7 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
     'Waiver signings by guests who are not members and have no account. There is no member column; it holds non-members\' names and emails, which a member export cannot reach.',
   guest_waiver_invites:
     'Waiver emails owed to non-members a form entered (00283). No member column; it holds non-members\' emails, which a member export cannot reach.',
-  club_event_external_signups:
-    'Non-members a form signed up for a club event (00284). No member column; it holds non-members\' names and emails.',  club_event_activity:
+  club_event_activity:
     'When each club event\'s sign-ups last changed, so the console page updates live (00301). An event id and a time; no person.',
 };
 

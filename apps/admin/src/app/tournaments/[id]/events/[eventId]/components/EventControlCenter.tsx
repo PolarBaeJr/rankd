@@ -35,7 +35,7 @@ import { participantControls, type DrawCapabilities } from '@/lib/participant-co
 import { lateEntryWindow } from '@/lib/stage-controls';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
-import { ParticipantsTab } from './ParticipantsTab';
+import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
@@ -113,11 +113,13 @@ interface Props {
   imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
   /** Sign-up time per participant or pair id, off the linked club event. Null when unlinked. */
   signedUpAt?: Record<string, string> | null;
+  /** The linked club event's partner check (00311). Null when unlinked or not readable. */
+  partners?: ParticipantPartners | null;
   // Who is looking, so the panel offers Cancel on their own requests only.
   viewerId: string;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, viewerId }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -364,6 +366,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             categoryRequests={categoryRequests}
             imported={imported}
             signedUpAt={signedUpAt}
+            partners={partners}
             lateEntry={lateEntry}
           />
         )}

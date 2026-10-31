@@ -14,10 +14,14 @@ import { join } from 'node:path';
 const MIGRATIONS_DIR = join(__dirname, '../../../../supabase/migrations');
 const migrationFiles = () => readdirSync(MIGRATIONS_DIR).filter((f) => /^\d+_.*\.sql$/.test(f)).sort();
 
-/** The latest CREATE of a function across the directory, body bounded by its own dollar tag. */
-function latestBody(name: string): { file: string; body: string } | null {
+/**
+ * The latest CREATE of a function up to and including a version, body bounded
+ * by its own dollar tag. Bounded because a later migration (00311) restates
+ * merge_players_disposable, and this file pins what 00310 shipped.
+ */
+function latestBody(name: string, throughVersion: string): { file: string; body: string } | null {
   let found: { file: string; body: string } | null = null;
-  for (const file of migrationFiles()) {
+  for (const file of migrationFiles().filter((f) => f.slice(0, 5) <= throughVersion)) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     const head = new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:public\\.)?${name}\\s*\\(`, 'gi');
     let match: RegExpExecArray | null;
@@ -76,7 +80,7 @@ describe('00310: tournament_court_helpers', () => {
 });
 
 describe('00310: merges', () => {
-  const latest = latestBody('merge_players_disposable');
+  const latest = latestBody('merge_players_disposable', '00310');
 
   it('restates merge_players_disposable with both helper columns', () => {
     expect(latest?.file).toMatch(/^00310_/);
