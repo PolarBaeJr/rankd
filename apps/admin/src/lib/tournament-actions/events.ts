@@ -409,6 +409,11 @@ async function updateTournamentEventImpl(
     format_config?: unknown;
     /** A legacy event's points table (00275). Sent on its own once the event is drawn. */
     points_config?: unknown;
+    /**
+     * Switch an undrawn event to stages, sent with its format_config. The only
+     * format change offered: the three simple formats are each a preset of it.
+     */
+    format?: 'staged';
   }
 ) {
   const admin = await requireCapability('tournaments.manage.event.update.write');
@@ -488,9 +493,37 @@ async function updateTournamentEventImpl(
   delete patch.waitlist_enabled;
   delete patch.waitlist_auto_promote;
 
+  // SWITCHING TO STAGES. The gate above already refused a drawn event (the
+  // update has more than one key, and the event is not staged yet). The
+  // simple format's own columns are cleared so nothing reads a leftover
+  // pool_to_bracket shape later, and the event keeps the rating it was made
+  // with: a club event's linked tournament is created unrated, while a stage
+  // is rated unless it says otherwise.
+  const switchingToStages = 'format' in updates;
+  if (switchingToStages) {
+    if (updates.format !== 'staged') throw new ExpectedError('An event can only be switched to stages.');
+    if (event.format === 'staged') throw new ExpectedError('This event is already played in stages.');
+    if (updates.format_config == null) throw new ExpectedError('Set out the stages before switching.');
+    const simpleOnly = ['group_count', 'qualifiers_per_group', 'seed_skip_count', 'seeded_from_event_id', 'seed_by', 'points_config'] as const;
+    if (simpleOnly.some((k) => k in updates)) {
+      throw new ExpectedError('Switching to stages replaces the group and bracket settings, so send only the stages.');
+    }
+    Object.assign(patch, {
+      format: 'staged',
+      group_count: null,
+      qualifiers_per_group: null,
+      seed_skip_count: 0,
+      seed_by: null,
+      seeded_from_event_id: null,
+      points_config: null,
+    });
+  }
+  const targetFormat = switchingToStages ? 'staged' : event.format;
+  const keepsUnrated = event.external_event === true || (event as { rated?: boolean | null }).rated === false;
+
   if ('format_config' in updates) {
-    if (event.format !== 'staged') throw new ExpectedError('Only an event played in stages has stage settings.');
-    const cfg = normalizeFormatConfig(updates.format_config, event.external_event === true);
+    if (targetFormat !== 'staged') throw new ExpectedError('Only an event played in stages has stage settings.');
+    const cfg = normalizeFormatConfig(updates.format_config, keepsUnrated);
     const { data: drawnRows, error: drawnError } = await adminClient.from('tournament_matches')
       .select('stage')
       .eq('event_id', eventId)

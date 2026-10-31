@@ -75,7 +75,7 @@ export function StagedFormatEditor({
   drawn: ReadonlySet<number>;
   /** The config as saved, which a drawn stage must still match. null when creating. */
   stored: FormatConfig | null;
-  /** An external event moves nobody's rating, so no stage may be rated. */
+  /** An unrated event (external, or a club event's) moves nobody's rating, so no stage may be rated. */
   external: boolean;
 }) {
   const locked = drawn.size > 0;
@@ -145,7 +145,9 @@ export function StagedFormatEditor({
 }
 
 function PresetPicker({ external, onPick }: { external: boolean; onPick: (cfg: FormatConfig) => void }) {
-  const [name, setName] = useState<StagedPresetName>('poolsThenPlacement');
+  const [name, setName] = useState<StagedPresetName>('groupsThenTopKnockout');
+  const [advance, setAdvance] = useState('4');
+  const topN = name === 'groupsThenTopKnockout';
   const [pools, setPoolsText] = useState('4');
   const [groupsPerPool, setGroupsPerPool] = useState('2');
   const [groupSize, setGroupSize] = useState('4');
@@ -169,6 +171,7 @@ function PresetPicker({ external, onPick }: { external: boolean; onPick: (cfg: F
       groupTarget: num(groupTarget),
       finalsTarget: num(finalsTarget),
       bronze,
+      advance: num(advance),
     }, external);
     if (!res.ok) { setError(res.error); return; }
     setError(null);
@@ -185,14 +188,29 @@ function PresetPicker({ external, onPick }: { external: boolean; onPick: (cfg: F
         options={STAGED_PRESETS}
       />
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <Input label="Pools" type="number" min={1} max={32} value={pools} onChange={(e) => setPoolsText(e.target.value)} />
-        <Input label="Groups per pool" type="number" min={1} max={8} value={groupsPerPool} onChange={(e) => setGroupsPerPool(e.target.value)} />
-        <Input label="Teams per group" type="number" min={2} max={16} value={groupSize} onChange={(e) => setGroupSize(e.target.value)} />
-        <Input label="Courts per pool" type="number" min={0} max={16} value={courtsPerPool} onChange={(e) => setCourtsPerPool(e.target.value)} />
+        <Input label={topN ? 'Groups' : 'Pools'} type="number" min={1} max={32} value={pools} onChange={(e) => setPoolsText(e.target.value)} />
+        {topN ? (
+          <Select
+            label="How many go through"
+            value={advance}
+            onChange={(e) => setAdvance(e.target.value)}
+            options={[2, 4, 8, 16, 32].map((n) => ({ value: String(n), label: n === 2 ? '2 (a final)' : `${n}` }))}
+          />
+        ) : (<>
+          <Input label="Groups per pool" type="number" min={1} max={8} value={groupsPerPool} onChange={(e) => setGroupsPerPool(e.target.value)} />
+          <Input label="Teams per group" type="number" min={2} max={16} value={groupSize} onChange={(e) => setGroupSize(e.target.value)} />
+        </>)}
+        <Input label={topN ? 'Courts per group' : 'Courts per pool'} type="number" min={0} max={16} value={courtsPerPool} onChange={(e) => setCourtsPerPool(e.target.value)} />
         <Input label="Group games to" type="number" min={5} max={30} value={groupTarget} onChange={(e) => setGroupTarget(e.target.value)} />
         <Input label="Finals to" type="number" min={5} max={30} value={finalsTarget} onChange={(e) => setFinalsTarget(e.target.value)} />
       </div>
-      {name === 'poolsThenSemisFinal' && (
+      {topN && (
+        <p className="text-xs text-[var(--text-muted)]">
+          Every group winner goes through first, then the best runners-up across the groups, then the best thirds,
+          until {advance} are in. The groups fill evenly from whoever turns up.
+        </p>
+      )}
+      {(name === 'poolsThenSemisFinal' || (topN && num(advance) >= 4)) && (
         <Switch label="Play for third place" checked={bronze} onChange={setBronze} />
       )}
       {error && <p className="text-xs text-[var(--color-danger)]" role="alert">{error}</p>}
@@ -501,7 +519,7 @@ function StageCard({
           <Switch label="Head starts" checked={s.handicap} disabled={locked} onChange={(v) => set(setScoring(stage, { handicap: v }))} />
           <Switch
             label="Rated"
-            description={external ? 'An external event moves nobody’s rating.' : s.handicap ? 'A stage with head starts is never rated.' : undefined}
+            description={external ? 'This event moves nobody’s rating.' : s.handicap ? 'A stage with head starts is never rated.' : undefined}
             checked={stage.rated && !external && !s.handicap}
             disabled={locked || external || s.handicap}
             onChange={(v) => set({ ...stage, rated: v })}
