@@ -323,6 +323,7 @@ describe('the waitlist', () => {
     ['already_registered', { entry_status: 'registered' }, /^Already registered$/],
     ['tournament_suspended', { suspension_reason: 'gym flooded' }, /suspended: gym flooded/],
     ['already_in_pair', {}, /already in a pair/],
+    ['waitlist_full', { limit: 3 }, /^The waitlist is full\.$/],
   ];
   for (const [reason, extra, sentence] of CASES) {
     it(`a join refused with ${reason} is its own sentence`, async () => {

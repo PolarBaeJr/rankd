@@ -39,6 +39,8 @@ const REFUSALS: Record<string, string> = {
   already_waiting: 'You are already on the waitlist.',
   not_waiting: 'You are not on the waitlist.',
   not_full: 'A place is free. Sign up instead.',
+  // 00312: as many members are waiting as the event's limit allows.
+  waitlist_full: 'The waitlist is full.',
 };
 
 // A PAID EVENT TAKES THE E-TRANSFER SCREENSHOT WITH THE SIGN-UP (owner,

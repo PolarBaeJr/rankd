@@ -43,6 +43,8 @@ const REFUSALS = [
   'An external event has no waitlist: its teams are entered by name.',
   'The waitlist can only be changed while the event is taking entries or checking in.',
   'People are still waiting. Promote or remove them before switching the waitlist off.',
+  // 00312: the waitlist limit.
+  'The waitlist limit must be a whole number of at least 1, or blank for no limit.',
   // 00279: a category change after play is a request.
   'A category change for this team is waiting for approval. Cancel or decide it first.',
   'Give a reason for the change.',
@@ -92,6 +94,12 @@ describe('tournament-actions refusal classification', () => {
       expect(ALL, name).toMatch(new RegExp(`throw new ExpectedError\\(${escaped}\\)`));
       expect(ALL, name).not.toMatch(new RegExp(`throw new Error\\(${escaped}\\)`));
     }
+  });
+
+  it('marks the 00312 waitlist limit refusal before the migration, which is named by constant', () => {
+    expect(ALL).toContain("const WAITLIST_LIMIT_MIGRATION_MISSING = 'Run migration 00312 first';");
+    expect(ALL).toMatch(/throw new ExpectedError\(WAITLIST_LIMIT_MIGRATION_MISSING\)/);
+    expect(ALL).not.toMatch(/throw new Error\(WAITLIST_LIMIT_MIGRATION_MISSING\)/);
   });
 
   it.each(REFUSALS)('is thrown as an ExpectedError: %s', (message) => {

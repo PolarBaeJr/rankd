@@ -350,6 +350,9 @@ async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): P
         throw new ExpectedError('You are already on the waitlist for this event.');
       case 'event_has_room':
         throw new ExpectedError('This event has room, so you can enter it now.');
+      // 00312: as many members are waiting as the event's limit allows.
+      case 'waitlist_full':
+        throw new ExpectedError('The waitlist is full.');
       case 'already_registered':
         throw new ExpectedError(
           joined.entry_status === 'withdrawn' || joined.entry_status === 'disqualified'

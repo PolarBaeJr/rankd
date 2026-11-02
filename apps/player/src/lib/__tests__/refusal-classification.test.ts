@@ -46,6 +46,9 @@ const REFUSALS = [
   'You are not on the waitlist for this event.',
   // 00307: a tournament run for a club event is entered from the club event.
   'This tournament is run for a club event. Sign up on the club event page to be entered.',
+  // 00312: the waitlist limit.
+  'The waitlist is full.',
+  'This event is full, and so is its waitlist.',
 ];
 
 // Faults, and each one has a specific reason to stay loud.

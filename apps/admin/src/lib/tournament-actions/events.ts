@@ -493,6 +493,7 @@ async function updateTournamentEventImpl(
   // The waitlist has its own action, which takes the field lock (00278).
   delete patch.waitlist_enabled;
   delete patch.waitlist_auto_promote;
+  delete patch.waitlist_limit;
 
   // SWITCHING TO STAGES. The gate above already refused a drawn event (the
   // update has more than one key, and the event is not staged yet). The
@@ -845,6 +846,74 @@ export async function setEventWaitlist(
   settings: Parameters<typeof setEventWaitlistImpl>[1],
 ): Promise<ActionResult<{ promoted: number }>> {
   return runAction(() => setEventWaitlistImpl(eventId, settings));
+}
+
+const WAITLIST_LIMIT_MIGRATION_MISSING = 'Run migration 00312 first';
+
+/**
+ * How many members may wait at once (00312). Null is no limit. Lowering it
+ * removes nobody; it only stops new joins.
+ */
+async function setEventWaitlistLimitImpl(eventId: string, limit: number | null) {
+  const admin = await requireCapability('tournaments.manage.event.update.write');
+  const adminClient = createAdminClient();
+
+  if (!(limit === null || (Number.isInteger(limit) && limit >= 1))) {
+    throw new ExpectedError('The waitlist limit must be a whole number of at least 1, or blank for no limit.');
+  }
+
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError || !event) throw new Error(eventError?.message ?? 'Event not found');
+  if (!('waitlist_limit' in event)) throw new ExpectedError(WAITLIST_LIMIT_MIGRATION_MISSING);
+  if (event.external_event === true) {
+    throw new ExpectedError('An external event has no waitlist: its teams are entered by name.');
+  }
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('The waitlist can only be changed while the event is taking entries or checking in.');
+  }
+
+  // Not in the generated types until 00312 reaches production.
+  const { data, error } = await adminClient.rpc('set_event_waitlist_limit' as never, {
+    p_event_id: eventId,
+    p_limit: limit,
+    p_actor: admin.id,
+  } as never);
+  if (error) {
+    if (isWaitlistMissing(error)) throw new ExpectedError(WAITLIST_LIMIT_MIGRATION_MISSING);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as { ok: boolean; reason?: string; limit?: number | null; previous_limit?: number | null } | null;
+  if (!result?.ok) {
+    switch (result?.reason) {
+      case 'invalid_limit':
+        throw new ExpectedError('The waitlist limit must be a whole number of at least 1, or blank for no limit.');
+      case 'external_event':
+        throw new ExpectedError('An external event has no waitlist: its teams are entered by name.');
+      case 'event_status':
+        throw new ExpectedError('The waitlist can only be changed while the event is taking entries or checking in.');
+      default:
+        throw new ExpectedError('The waitlist could not be changed. Reload the page and try again.');
+    }
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'event_waitlist_updated',
+    performed_by: admin.id,
+    details: { limit, previous_limit: result.previous_limit ?? null },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+}
+
+export async function setEventWaitlistLimit(
+  eventId: string,
+  limit: number | null,
+): Promise<ActionResult<void>> {
+  return runAction(() => setEventWaitlistLimitImpl(eventId, limit));
 }
 
 export async function deleteTournamentEvent(eventId: string) {

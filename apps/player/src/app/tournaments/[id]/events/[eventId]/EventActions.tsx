@@ -286,6 +286,10 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
       // A full event, or one with people already queueing: the way in is the
       // waitlist, because enter_tournament_event refuses a queue jump.
       const joinWaitlist = Boolean(waitlist?.enabled && (waitlist.full || waitlist.waitingCount > 0));
+      // 00312: the queue is at the event's limit, so there is no way in at all.
+      if (joinWaitlist && waitlist!.waitlistLimitReached) {
+        return <p className="text-xs text-[var(--text-secondary)]" role="status">This event is full, and so is its waitlist.</p>;
+      }
       if (joinWaitlist && !needsDialog) {
         return (
           <div className="space-y-1">

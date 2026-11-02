@@ -368,6 +368,8 @@ export const clubEventSchema = z
     signup_opens_at: optionalClubWallClock,
     signup_closes_at: optionalClubWallClock,
     capacity: z.number().int().min(1).nullable(),
+    // 00312. Optional: a payload without it (the bot's /event) leaves it alone.
+    waitlist_limit: z.number().int().min(1, 'The waitlist limit is at least 1').nullable().optional(),
     cost_dollars: z.number().min(0).max(1000).nullable(),
     publish: z.boolean(),
   })

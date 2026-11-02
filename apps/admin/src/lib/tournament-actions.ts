@@ -28,6 +28,7 @@ export {
   setEventStatus,
   setEventWindows,
   setEventWaitlist,
+  setEventWaitlistLimit,
 } from './tournament-actions/events';
 
 export {
