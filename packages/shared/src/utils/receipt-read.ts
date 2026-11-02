@@ -177,9 +177,10 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
     payeeEmail: null,
   };
   if (typeof text !== 'string' || !text.trim()) return none;
+  // The read can put a space either side of an address's "@" ("lsa139 @sfu.ca").
   const lines = text
     .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .map((l) => l.replace(/\s+/g, ' ').replace(/(\w) ?@ ?(\w)/g, '$1@$2').trim())
     .filter((l) => l.length > 0);
   const tidy = lines.join('\n');
   const collapsed = lines.join(' ');
