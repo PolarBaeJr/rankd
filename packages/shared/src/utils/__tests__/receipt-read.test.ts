@@ -174,6 +174,55 @@ describe('decideAutoConfirm', () => {
     expect(parseReceiptText('Interac e-transfer\nAmount Date\nOct 22, 2026')).toMatchObject({ amountCents: null });
   });
 
+  it('reads a bank\'s own "sent" screens that never print Interac as text', () => {
+    const ctx = { ...etransfer, amountCents: 500, clubEmail: 'llsa1@example.org', clubPayeeName: null };
+    // Scotiabank, dark: the "To" heading lost, a balance alone above the amount.
+    const scotia = [
+      'Confirmation x',
+      'New account balance',
+      'Chequing (1234)',
+      '$1,234.56',
+      'Ilsa1@example.org',
+      'Contact method',
+      'Email',
+      'Amount Date',
+      '$5.00 Oct 29, 2026',
+      'Make another transfer',
+    ].join('\n');
+    expect(parseReceiptText(scotia)).toMatchObject({ kind: 'e_transfer', amountCents: 500 });
+    expect(decideAutoConfirm(parseReceiptText(scotia), ctx)).toMatchObject({ confirm: true });
+    // A balance alone on its line is never the amount.
+    expect(parseReceiptText(scotia.replace('$5.00 Oct 29, 2026', 'Oct 29, 2026'))).toMatchObject({ amountCents: null });
+    // TD: the sender's own address first, the recipient's under "Recipient".
+    const td = [
+      'Confirmation',
+      'Money sent',
+      'Sender',
+      'SAM PAYER',
+      'sam.payer@example.com',
+      'Amount',
+      '$5.00',
+      'Recipient',
+      'Riverside Smash',
+      'Ilsal@example.org',
+      'Send another transfer',
+    ].join('\n');
+    expect(parseReceiptText(td)).toMatchObject({ kind: 'e_transfer', payeeName: 'Riverside Smash', payeeEmail: 'llsal@example.org' });
+    // "lsal" for "lsa1": an l and a 1 are one stroke apart.
+    expect(decideAutoConfirm(parseReceiptText(td), ctx)).toMatchObject({ confirm: true });
+    // The recipient cut off the screenshot: the sender's address is never taken for it.
+    const cut = td.split('\n').slice(0, -2).join('\n');
+    expect(parseReceiptText(cut).payeeEmail).toBeNull();
+    expect(decideAutoConfirm(parseReceiptText(cut), ctx)).toMatchObject({ confirm: false });
+  });
+
+  it('holds an address that is not the club\'s, whatever the name beside it says', () => {
+    const sent = 'Your transfer has been sent!\nAmount\n$5.00\nTo\nRiverside Smash Club\nilsa1@example.org';
+    const ctx = { ...etransfer, amountCents: 500, clubEmail: 'llsa1@example.org', clubPayeeName: 'Riverside Smash Club' };
+    expect(decideAutoConfirm(parseReceiptText(sent), ctx)).toMatchObject({ confirm: false, flag: 'payee_mismatch' });
+    expect(decideAutoConfirm(parseReceiptText(sent.replace('ilsa1', 'llsa1')), ctx)).toMatchObject({ confirm: true });
+  });
+
   it('reads a bank\'s deposited notice, and matches one of several payee names', () => {
     const notice =
       'Hi Sam,\n\nYour transfer to ALEX CHEN was\nsuccessfully deposited.\n\nThe $5.00 (CAD) you sent to ALEX CHEN has been successfully\ndeposited.\n';

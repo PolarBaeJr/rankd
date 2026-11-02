@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { PSM } from 'tesseract.js';
 import type { OcrRead, ReceiptOcr } from '@badminton/shared/src/utils/receipt-check';
+import { parseReceiptText } from '@badminton/shared/src/utils/receipt-read';
 import { heicToJpeg, isHeicBytes } from './heic';
 
 // READING A RECEIPT'S SCREENSHOT ON THE SERVER (00297), for the automatic
@@ -40,9 +41,15 @@ const MONEY_SEEN = /\d\.\d{2}\b/;
 const SMALLER_SCALES = [0.5, 0.3];
 const AUTO_LAYOUT_MAX_WIDTH = 800;
 
+// Whether the parser takes an amount from a read. Money text alone is not
+// enough: an account balance beside an "Amount" label the read skipped is
+// money the parser rightly refuses.
+const amountFound = (text: string) => parseReceiptText(text).amountCents != null;
+
 async function readSmaller(
   worker: { recognize(image: Buffer): Promise<{ data: { text: string } }> },
   bytes: Uint8Array,
+  usable: (lines: string) => boolean,
 ): Promise<string | null> {
   const { default: sharp } = await import('sharp');
   const width = (await sharp(Buffer.from(bytes)).metadata()).width;
@@ -53,7 +60,8 @@ async function readSmaller(
     // Only the lines with the amount: the rest of a shrunken read is worse
     // than the full-size one, and a garbled second copy of the payee's
     // address would make the address look ambiguous.
-    if (MONEY_SEEN.test(data.text)) return data.text.split('\n').filter((line) => MONEY_SEEN.test(line)).join('\n');
+    const lines = data.text.split('\n').filter((line) => MONEY_SEEN.test(line)).join('\n');
+    if (lines && usable(lines)) return lines;
   }
   return null;
 }
@@ -70,6 +78,7 @@ async function readAutoLayout(
   },
   bytes: Uint8Array,
   mode: PSM,
+  usable: (lines: string) => boolean,
 ): Promise<string | null> {
   const { default: sharp } = await import('sharp');
   const width = (await sharp(Buffer.from(bytes)).metadata()).width;
@@ -77,8 +86,8 @@ async function readAutoLayout(
   const copy = await sharp(Buffer.from(bytes)).resize(Math.min(width, AUTO_LAYOUT_MAX_WIDTH)).png().toBuffer();
   await worker.setParameters({ tessedit_pageseg_mode: mode });
   const { data } = await worker.recognize(copy);
-  const lines = data.text.split('\n').filter((line) => MONEY_SEEN.test(line));
-  return lines.length ? lines.join('\n') : null;
+  const lines = data.text.split('\n').filter((line) => MONEY_SEEN.test(line)).join('\n');
+  return lines && usable(lines) ? lines : null;
 }
 
 let busy = false;
@@ -124,12 +133,14 @@ async function read(bytes: Uint8Array): Promise<OcrRead> {
       }
       worker = created;
       const { data } = await created.recognize(Buffer.from(image));
-      if (MONEY_SEEN.test(data.text)) return { text: data.text };
+      if (amountFound(data.text)) return { text: data.text };
       // A banking app's big centred amount ("5.00") is skipped at full size
-      // and read once the glyphs are smaller, so a read with no money in it
-      // tries shrunken copies and adds the first that finds one. Neither
-      // finding one, the automatic layout has a last go (readAutoLayout).
-      const extra = (await readSmaller(created, image)) ?? (await readAutoLayout(created, image, PSM.AUTO));
+      // and read once the glyphs are smaller, so a read the parser takes no
+      // amount from tries shrunken copies and adds the first whose money
+      // lines give it one. Neither doing so, the automatic layout has a last
+      // go (readAutoLayout).
+      const usable = (lines: string) => amountFound(`${data.text}\n${lines}`);
+      const extra = (await readSmaller(created, image, usable)) ?? (await readAutoLayout(created, image, PSM.AUTO, usable));
       return { text: extra ? `${data.text}\n${extra}` : data.text };
     })();
     // A late failure after the timeout has already answered is not an error.

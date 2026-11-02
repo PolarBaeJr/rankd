@@ -87,20 +87,31 @@ function receiptKind(text: string, collapsed: string): ReceiptMethod | null {
   if (SFU_REC_ORDER_ALONE.test(text) && PURCHASE_WORDS.test(collapsed)) return 'sfu_rec';
   // A bank's "your transfer ... was successfully deposited" notice.
   if (DEPOSITED_NOTICE.test(collapsed) && /\$\s?\d/.test(collapsed)) return 'e_transfer';
+  // A bank's own "sent" screen that never prints Interac or e-Transfer as
+  // text (the logo is a picture): Scotiabank's dark confirmation ("Contact
+  // method", "Make another transfer"), TD's "Money sent", "Your transfer has
+  // been sent!" or "was accepted!", a "Transfer details" page. Its wording only counts beside an
+  // address and an amount, so the decision still sees both.
+  if (SENT_SCREEN.test(collapsed) && HAS_EMAIL.test(collapsed) && new RegExp(MONEY).test(collapsed)) {
+    return 'e_transfer';
+  }
   return null;
 }
+
+const SENT_SCREEN =
+  /\bmoney sent\b|\byou sent\b|\btransfer (?:has been|was) (?:sent|accepted)\b|\btransfer details\b|\bcontact method\b|\b(?:make|send) another transfer\b/i;
 
 const EMAIL = /[^\s@:;,()<>]+@[^\s@:;,()<>]+\.[A-Za-z]{2,}/g;
 const HAS_EMAIL = /[^\s@:;,()<>]+@[^\s@:;,()<>]+\.[A-Za-z]{2,}/;
 
-/** Who an e-transfer went to: "sent to X with", "To X", or a "Sent to" label above the name. */
+/** Who an e-transfer went to: "sent to X with", "To X", or a "Sent to" or "Recipient" label above the name. */
 function payeeName(lines: string[], collapsed: string): string | null {
   const sentence =
     /\bsent to\s+(.+?)\s+with\b/i.exec(collapsed) ??
     /\b(?:transfer|sent) to\s+(.+?)\s+(?:was|has been)\b/i.exec(collapsed);
   if (sentence) return sentence[1]!.trim();
   for (let i = 0; i < lines.length; i += 1) {
-    const match = /^(?:sent\s+)?to\b\s*:?\s*(.*)$/i.exec(lines[i]!);
+    const match = /^(?:(?:sent\s+)?to|recipient)\b\s*:?\s*(.*)$/i.exec(lines[i]!);
     if (!match) continue;
     const value = (match[1] ?? '').trim() || (lines[i + 1] ?? '').trim();
     if (value && !HAS_EMAIL.test(value)) return value;
@@ -108,20 +119,50 @@ function payeeName(lines: string[], collapsed: string): string | null {
   return null;
 }
 
-// A capital I in an email address is a lower case l the OCR misread: the two
-// are the same shape in most banking fonts, and banks show an address in lower
-// case. A real "i" reads as a lower case i, so an address that differs by an i
-// for an l still never matches.
-const emailText = (address: string) => address.replace(/I/g, 'l').toLowerCase();
+// A capital I or a bar in an email address is a lower case l the OCR misread:
+// they are the same shape in most banking fonts, and banks show an address in
+// lower case. A real "i" reads as a lower case i, so an address that differs
+// by an i for an l still never matches: members have sent the fee to
+// "isa139" for "lsa139", which no bank delivers to the club.
+const emailText = (address: string) => address.replace(/[I|]/g, 'l').toLowerCase();
+
+// The labels a bank puts over the recipient, and over the member's own
+// details. TD shows both addresses, the sender's first.
+const RECIPIENT_LABEL = /^(?:recipient|(?:sent\s+)?to|contact)\b/i;
+const SENDER_LABEL = /^(?:sender|from)\b/i;
+const LABEL_REACH = 3;
 
 function payeeEmail(lines: string[], text: string): string | null {
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!RECIPIENT_LABEL.test(lines[i]!)) continue;
+    const found = lines.slice(i, i + 1 + LABEL_REACH).join(' ').match(EMAIL);
+    if (found) return emailText(found[0]!);
+  }
   for (let i = 0; i < lines.length; i += 1) {
     if (!/^e-?mail\b/i.test(lines[i]!)) continue;
     const found = `${lines[i]} ${lines[i + 1] ?? ''}`.match(EMAIL);
     if (found) return emailText(found[0]!);
   }
-  const all = [...new Set((text.match(EMAIL) ?? []).map(emailText))];
+  const senders = new Set<string>();
+  lines.forEach((line, i) => {
+    if (!SENDER_LABEL.test(line)) return;
+    for (const address of lines.slice(i, i + 1 + LABEL_REACH).join(' ').match(EMAIL) ?? []) {
+      senders.add(emailText(address));
+    }
+  });
+  const all = [...new Set((text.match(EMAIL) ?? []).map(emailText))].filter((a) => !senders.has(a));
   return all.length === 1 ? all[0]! : null;
+}
+
+/** A line holding only an amount, unless a line just above names it a balance. */
+function amountAlone(lines: string[]): number | null {
+  const alone = new RegExp(String.raw`^\$?\s?${MONEY}(?:\s*CAD)?$`, 'i');
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = alone.exec(lines[i]!);
+    // "New account balance" sits over the account's name, then the figure.
+    if (match && !/balance/i.test(lines.slice(Math.max(0, i - 2), i).join(' '))) return cents(match[1]!, match[2]!);
+  }
+  return null;
 }
 
 /** What the decision needs from a receipt's OCR text. Never throws. */
@@ -170,11 +211,13 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
         amountAfter(collapsed, new RegExp(String.raw`\$\s?${MONEY}\s*\(?\s*CAD`, 'i')) ??
         amountAfter(collapsed, new RegExp(String.raw`\bamount\s*:?\s*\$?\s?${MONEY}`, 'i')) ??
         amountAfter(collapsed, new RegExp(String.raw`\bsent\s*:?\s*\$?\s?${MONEY}\b`, 'i')) ??
-        amountAfter(tidy, new RegExp(String.raw`^\$?\s?${MONEY}(?:\s*CAD)?$`, 'im')) ??
         // RBC sets "Amount" and "Date" side by side, so the read comes out as
         // "Amount Date" over "$5.00 Oct 22, 2026": the figure opens the line
         // under the label line.
-        amountAfter(tidy, new RegExp(String.raw`^amount\b[^\n]*\n\$\s?${MONEY}\b`, 'im')),
+        amountAfter(tidy, new RegExp(String.raw`^amount\b[^\n]*\n\$\s?${MONEY}\b`, 'im')) ??
+        // Scotiabank prints the new balance alone on its line above the
+        // amount, so a balance is never taken for it.
+        amountAlone(lines),
       payeeName: payeeName(lines, collapsed),
       payeeEmail: payeeEmail(lines, tidy),
     };
@@ -232,6 +275,13 @@ export function namesMatch(read: string, member: string): boolean {
 const sameText = (a: string, b: string) =>
   a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
 
+// An l and a 1 are one stroke apart in most banking fonts ("lsal39" for
+// "lsa139"); an i keeps its dot and stays distinct.
+const sameEmail = (a: string, b: string) => {
+  const key = (address: string) => emailText(address.trim()).replace(/1/g, 'l');
+  return key(a) === key(b);
+};
+
 
 const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
 
@@ -283,11 +333,17 @@ export function decideAutoConfirm(read: ReceiptReadout, ctx: AutoConfirmContext)
   if (read.amountCents !== ctx.amountCents) {
     return hold('amount_mismatch', `Receipt shows ${dollars(read.amountCents)}, the fee is ${dollars(ctx.amountCents)}`);
   }
-  const emailMatches = !!read.payeeEmail && !!ctx.clubEmail && sameText(read.payeeEmail, ctx.clubEmail);
+  const emailMatches = !!read.payeeEmail && !!ctx.clubEmail && sameEmail(read.payeeEmail, ctx.clubEmail);
   // Several names, comma separated: a bank may show the club's name or the
   // account holder's ("Sfu Badminton, Linhui Sun").
   const clubNames = (ctx.clubPayeeName ?? '').split(/[,;\n]/).filter((n) => n.trim());
   const nameMatches = !!read.payeeName && clubNames.some((n) => sameText(read.payeeName!, n));
+  // An address is the member's own typing and the bank delivers by it; the
+  // name beside it is often the member's own label for the contact. So an
+  // address that is not the club's holds the receipt whatever the name says.
+  if (read.payeeEmail && ctx.clubEmail && !emailMatches) {
+    return hold('payee_mismatch', 'The receipt was sent to a different email address than the club\'s');
+  }
   if (!emailMatches && !nameMatches) {
     if (!read.payeeEmail && !read.payeeName) return hold('payee_unreadable');
     return hold('payee_mismatch', 'The receipt does not show the club as the recipient');
