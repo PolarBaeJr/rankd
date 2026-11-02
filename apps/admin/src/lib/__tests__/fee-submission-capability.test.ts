@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readReceiptAmountCents, submissionCapability } from '../fee-submissions';
+import { isHeicPath, isReadableScreenshot, readReceiptAmountCents, submissionCapability } from '../fee-submissions';
 
 // Who may settle an e-transfer receipt is decided from the fee it points at
 // (00248), never from anything the browser sends. Dues and club events are
@@ -36,5 +36,31 @@ describe('readReceiptAmountCents', () => {
     expect(readReceiptAmountCents('amount_mismatch', null)).toBeNull();
     expect(readReceiptAmountCents('amount_mismatch', 'The amount on the receipt is not the fee.')).toBeNull();
     expect(readReceiptAmountCents(null, null)).toBeNull();
+  });
+});
+
+// The console shows and reads a JPEG, PNG or WebP as is, and a HEIC or HEIF
+// converted by the proof routes; only a PDF is opened as a file.
+describe('isReadableScreenshot', () => {
+  it.each(['p/a.jpg', 'p/a.PNG', 'p/a.webp', 'p/a.heic', 'p/a.HEIF'])('reads %s', (path) => {
+    expect(isReadableScreenshot(path)).toBe(true);
+  });
+
+  it.each(['p/a.pdf', null, ''])('does not read %s', (path) => {
+    expect(isReadableScreenshot(path)).toBe(false);
+  });
+});
+
+describe('isHeicPath', () => {
+  it('knows a HEIC or HEIF by its extension, in any case', () => {
+    expect(isHeicPath('forms/b/i/x.heic')).toBe(true);
+    expect(isHeicPath('forms/b/i/x.HEIF')).toBe(true);
+  });
+
+  it('refuses anything else, and a name that only contains heic', () => {
+    expect(isHeicPath('p/a.jpg')).toBe(false);
+    expect(isHeicPath('p/a.pdf')).toBe(false);
+    expect(isHeicPath('p/heic.png')).toBe(false);
+    expect(isHeicPath('p/a.heic.png')).toBe(false);
   });
 });

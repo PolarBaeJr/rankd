@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { browserReachableSignedUrl } from '@/lib/signed-url';
-import { inlineProof, submissionCapability } from '@/lib/fee-submissions';
+import { inlineProof, isHeicPath, submissionCapability } from '@/lib/fee-submissions';
 
 /**
  * Open the screenshot a member sent with an e-transfer receipt (00248).
@@ -14,7 +14,9 @@ import { inlineProof, submissionCapability } from '@/lib/fee-submissions';
  * (which also has its own route under /tournaments/[id]/fees/proof).
  *
  * `?inline=1` answers the image itself instead, under the same check, for the
- * console's OCR of a form receipt (00288, inlineProof).
+ * console's OCR of a form receipt (00288, inlineProof). A HEIC or HEIF is
+ * answered as a converted JPEG instead of the 302, because Chrome downloads a
+ * HEIC it cannot show.
  */
 
 const PROOF_URL_TTL_SECONDS = 60;
@@ -44,7 +46,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return new NextResponse('Not found', { status: 404 });
   }
 
-  if (new URL(request.url).searchParams.get('inline') === '1') return inlineProof(adminClient, sub.screenshot_path);
+  const inline = new URL(request.url).searchParams.get('inline');
+  if (inline === '1' || isHeicPath(sub.screenshot_path)) return inlineProof(adminClient, sub.screenshot_path);
 
   const { data, error } = await adminClient.storage
     .from('fee-proofs')

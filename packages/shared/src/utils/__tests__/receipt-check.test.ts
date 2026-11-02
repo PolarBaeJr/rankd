@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkSubmission, sweepReceiptChecks, type OcrRead, type ReceiptOcr } from '../receipt-check';
@@ -115,6 +116,15 @@ describe('checkSubmission', () => {
     expect(await checkSubmission(admin, 'sub-1', fakeOcr(read))).toBe('unreadable_format');
     expect(read).not.toHaveBeenCalled();
     expect(calls.find((c) => c.fn === 'flag_fee_submission_ocr')!.args.p_image_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('reads a HEIC as filed', async () => {
+    const read = vi.fn(async (): Promise<OcrRead> => ({ text: TEXT }));
+    const { admin, calls } = fakeAdmin([row({ screenshot_path: 'forms/b/i/x.heic' })]);
+    expect(await checkSubmission(admin, 'sub-1', { withSlot: async (work) => work(), read })).toBe('ok');
+    expect(read).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
+    const confirm = calls.find((c) => c.fn === 'auto_confirm_fee_submission')!;
+    expect(confirm.args.p_image_sha256).toBe(createHash('sha256').update(new Uint8Array([1, 2, 3])).digest('hex'));
   });
 
   it('leaves a receipt whose screenshot will not download for the next claim', async () => {

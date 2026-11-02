@@ -61,7 +61,7 @@ export function SubmissionActions({
   feeType: string;
   /** Sent through a Google Form's upload question. */
   fromForm?: boolean;
-  /** A JPEG, PNG or WebP the browser can read; a PDF or HEIC is not. */
+  /** A JPEG, PNG, WebP or HEIC (served converted) the browser can show; a PDF is not. */
   readableScreenshot?: boolean;
 }) {
   const [reviewing, setReviewing] = useState(false);
@@ -213,7 +213,7 @@ export function SubmissionActions({
                 rel="noopener noreferrer"
                 className="text-sm text-[var(--color-accent)] font-medium"
               >
-                Open the screenshot (a PDF or HEIC opens in a new tab)
+                Open the screenshot (a PDF opens in a new tab)
               </a>
             )
           ) : (

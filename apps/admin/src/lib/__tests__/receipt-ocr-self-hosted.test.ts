@@ -65,7 +65,22 @@ describe.each(['admin', 'player'])('the %s server OCR is self-hosted', (app) => 
 
   it('keeps tesseract external and traces all of it into the build', () => {
     const config = readFileSync(join(root, 'next.config.js'), 'utf8');
-    expect(config).toContain("serverExternalPackages: ['tesseract.js', 'tesseract.js-core']");
+    expect(config).toMatch(/serverExternalPackages: \[[^\]]*'tesseract\.js', 'tesseract\.js-core'/);
     expect(config).toContain("'../../node_modules/tesseract.js-core/**'");
+  });
+
+  it('tries the automatic page layout on a narrowed copy last', () => {
+    expect(server).toContain('PSM.AUTO');
+    expect(server).toContain('AUTO_LAYOUT_MAX_WIDTH = 800');
+  });
+});
+
+// Only the console converts a HEIC (src/lib/heic.ts), so only its build keeps
+// the decoder external and traces its WASM bundle in.
+describe('the admin build carries the HEIC decoder', () => {
+  it('keeps heic-decode and libheif-js external and traces libheif-js', () => {
+    const config = readFileSync(join(APP, 'next.config.js'), 'utf8');
+    expect(config).toMatch(/serverExternalPackages: \[[^\]]*'heic-decode', 'libheif-js'/);
+    expect(config).toContain("'../../node_modules/libheif-js/**'");
   });
 });
