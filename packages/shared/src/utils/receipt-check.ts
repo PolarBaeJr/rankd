@@ -45,7 +45,10 @@ type Claimed = {
 };
 
 const BUCKET = 'fee-proofs';
-const READABLE = /\.(jpe?g|png|webp)$/i;
+// A HEIC or HEIF is passed to the app's read as filed, and the console's read
+// converts it (only the console's sweep claims a form receipt; the player app
+// files jpg, png and webp only). A PDF is still held as unreadable_format.
+const READABLE = /\.(jpe?g|png|webp|heic|heif)$/i;
 
 async function claim(admin: SupabaseClient, submissionId: string | null): Promise<Claimed | null> {
   const { data, error } = await admin.rpc('claim_fee_submission_ocr', {

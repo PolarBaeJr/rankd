@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import type { PSM } from 'tesseract.js';
 import type { OcrRead, ReceiptOcr } from '@badminton/shared/src/utils/receipt-check';
 
 // READING A RECEIPT'S SCREENSHOT ON THE SERVER (00297), for the automatic
@@ -35,6 +36,7 @@ function langPath(): string {
 // Any amount with cents, with or without a "$".
 const MONEY_SEEN = /\d\.\d{2}\b/;
 const SMALLER_SCALES = [0.5, 0.3];
+const AUTO_LAYOUT_MAX_WIDTH = 800;
 
 async function readSmaller(
   worker: { recognize(image: Buffer): Promise<{ data: { text: string } }> },
@@ -52,6 +54,29 @@ async function readSmaller(
     if (MONEY_SEEN.test(data.text)) return data.text.split('\n').filter((line) => MONEY_SEEN.test(line)).join('\n');
   }
   return null;
+}
+
+// The default page segmentation reads the page as one block, which can run a
+// banking screen's separate amount box into its neighbours and miss it; the
+// automatic layout, on a copy no wider than 800, finds it. Only the money
+// lines are added, as readSmaller does. The mode is never set back: the
+// worker is terminated after every read.
+async function readAutoLayout(
+  worker: {
+    recognize(image: Buffer): Promise<{ data: { text: string } }>;
+    setParameters(params: { tessedit_pageseg_mode: PSM }): Promise<unknown>;
+  },
+  bytes: Uint8Array,
+  mode: PSM,
+): Promise<string | null> {
+  const { default: sharp } = await import('sharp');
+  const width = (await sharp(Buffer.from(bytes)).metadata()).width;
+  if (!width) return null;
+  const copy = await sharp(Buffer.from(bytes)).resize(Math.min(width, AUTO_LAYOUT_MAX_WIDTH)).png().toBuffer();
+  await worker.setParameters({ tessedit_pageseg_mode: mode });
+  const { data } = await worker.recognize(copy);
+  const lines = data.text.split('\n').filter((line) => MONEY_SEEN.test(line));
+  return lines.length ? lines.join('\n') : null;
 }
 
 let busy = false;
@@ -82,7 +107,7 @@ async function read(bytes: Uint8Array): Promise<OcrRead> {
     worker = null;
   };
   try {
-    const { createWorker, OEM } = await import('tesseract.js');
+    const { createWorker, OEM, PSM } = await import('tesseract.js');
     const work = (async (): Promise<OcrRead> => {
       const created = await createWorker('eng', OEM.LSTM_ONLY, {
         langPath: langPath(),
@@ -98,8 +123,9 @@ async function read(bytes: Uint8Array): Promise<OcrRead> {
       if (MONEY_SEEN.test(data.text)) return { text: data.text };
       // A banking app's big centred amount ("5.00") is skipped at full size
       // and read once the glyphs are smaller, so a read with no money in it
-      // tries shrunken copies and adds the first that finds one.
-      const extra = await readSmaller(created, bytes);
+      // tries shrunken copies and adds the first that finds one. Neither
+      // finding one, the automatic layout has a last go (readAutoLayout).
+      const extra = (await readSmaller(created, bytes)) ?? (await readAutoLayout(created, bytes, PSM.AUTO));
       return { text: extra ? `${data.text}\n${extra}` : data.text };
     })();
     // A late failure after the timeout has already answered is not an error.

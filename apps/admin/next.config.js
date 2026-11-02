@@ -20,7 +20,9 @@ const path = require('path');
 // is required by name inside that worker, so a bundler sees neither: kept
 // external, and traced in by hand for the routes that read a receipt. Missing
 // any of it, the build is clean and the read fails in the container only
-// (safely: the receipt is held for an exec as 'ocr_failed').
+// (safely: the receipt is held for an exec as 'ocr_failed'). The HEIC decoder
+// (src/lib/heic.ts) is the same: kept external, traced in for the routes that
+// read or show a HEIC, and a container missing it holds the receipt the same way.
 // ALL of tesseract.js-core, not only its LSTM builds: tesseract.js 7 hands its
 // core picker a boolean where it compares an OEM number, so whatever the OEM it
 // loads the full core (worker-script/node/getCore.js).
@@ -39,6 +41,12 @@ const TESSERACT_FILES = [
   '../../node_modules/idb-keyval/**',
 ];
 
+// heic-decode's index.js requires libheif-js/wasm-bundle.js (and hands it to
+// lib.js), which requires libheif-wasm/libheif-bundle.js with the wasm inlined
+// as base64, so nothing is fetched or read by path at runtime. Both packages
+// whole, as for tesseract.
+const HEIC_FILES = ['../../node_modules/heic-decode/**', '../../node_modules/libheif-js/**'];
+
 const nextConfig = {
   output: 'standalone',
   // Pin the tracing root to the workspace. Left to infer it, Next walks up
@@ -47,9 +55,11 @@ const nextConfig = {
   // standalone bundle the container runs.
   outputFileTracingRoot: path.join(__dirname, '../..'),
   outputFileTracingIncludes: {
-    '/api/cron/registration-form-poll': TESSERACT_FILES,
+    '/api/cron/registration-form-poll': [...TESSERACT_FILES, ...HEIC_FILES],
+    '/fees/proof/*': HEIC_FILES,
+    '/tournaments/*/fees/proof/*': HEIC_FILES,
   },
-  serverExternalPackages: ['tesseract.js', 'tesseract.js-core'],
+  serverExternalPackages: ['tesseract.js', 'tesseract.js-core', 'heic-decode', 'libheif-js'],
   // Inlined at build time, so the standalone server needs nothing at runtime.
   env: { NEXT_PUBLIC_APP_VERSION: appVersion },
   // The console is served at sfubadminton.com/admin — the player app's own

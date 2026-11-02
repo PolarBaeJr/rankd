@@ -34,18 +34,37 @@ export function submissionCapability(feeType: string | null | undefined): Capabi
   return null;
 }
 
-/** A screenshot the console can read in the browser (receipt-ocr.ts). HEIC and PDF are typed by the exec. */
+/**
+ * A screenshot the console can show and read in the browser (receipt-ocr.ts).
+ * A HEIC is served converted (inlineProof), so only a PDF is opened as a file
+ * and typed by the exec.
+ */
 export function isReadableScreenshot(path: string | null | undefined): boolean {
-  return !!path && /\.(jpe?g|png|webp)$/i.test(path);
+  return !!path && /\.(jpe?g|png|webp|heic|heif)$/i.test(path);
 }
 
-const INLINE_TYPES: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+/** A HEIC or HEIF by its stored extension, which the proof routes answer converted. */
+export function isHeicPath(path: string): boolean {
+  return /\.(heic|heif)$/i.test(path);
+}
+
+const INLINE_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/jpeg',
+  heif: 'image/jpeg',
+};
 
 /**
- * A proof route's `?inline=1`: the screenshot's bytes, same origin, for the
- * console's own OCR (receipt-ocr.ts) to read. The caller has already gated it.
- * Images only, typed by the stored extension, never sniffed by the browser,
- * and an attachment if navigated to, so the response cannot run as a page.
+ * A proof route's `?inline=1`, and any HEIC: the screenshot's bytes, same
+ * origin, for the console's own OCR (receipt-ocr.ts) to read and for a preview
+ * opened in a new tab. The caller has already gated it. Images only, from a
+ * fixed allowlist of raster types, typed by the stored extension and never
+ * sniffed by the browser, so the response cannot run as a page and inline is
+ * safe: a preview shows instead of downloading. A HEIC or HEIF is converted to
+ * a JPEG (heic.ts), because no desktop browser but Safari renders HEIC.
  */
 export async function inlineProof(admin: AdminClient, path: string): Promise<Response> {
   const contentType = INLINE_TYPES[path.split('.').pop()?.toLowerCase() ?? ''];
@@ -57,10 +76,22 @@ export async function inlineProof(admin: AdminClient, path: string): Promise<Res
     console.error('[fees] could not read a payment screenshot:', error?.message);
     return new Response('Could not open that screenshot', { status: 502 });
   }
-  return new Response(data, {
+  let body: BodyInit = data;
+  if (isHeicPath(path)) {
+    // Imported here, not at the top: heic.ts is server-only, and the tests
+    // that load this module for its pure helpers do not mock that.
+    const { heicToJpeg } = await import('./heic');
+    try {
+      body = new Uint8Array(await heicToJpeg(new Uint8Array(await data.arrayBuffer())));
+    } catch (err) {
+      console.error('[fees] could not convert a HEIC screenshot:', err instanceof Error ? err.name : typeof err);
+      return new Response('Could not open that screenshot', { status: 502 });
+    }
+  }
+  return new Response(body, {
     headers: {
       'Content-Type': contentType,
-      'Content-Disposition': 'attachment',
+      'Content-Disposition': 'inline',
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, no-store',
     },
@@ -80,7 +111,7 @@ export const RECEIPT_FLAG_SENTENCES: Record<ReceiptFlag, string> = {
   program_mismatch: 'The receipt is for another program.',
   not_a_receipt: 'The screenshot does not look like a receipt.',
   wrong_method: 'That receipt cannot pay this fee.',
-  unreadable_format: 'The screenshot is a PDF or HEIC, which the server cannot read.',
+  unreadable_format: 'The screenshot is a PDF, which the server cannot read.',
   ocr_failed: 'The screenshot could not be read.',
   ocr_timeout: 'Reading the screenshot took too long.',
   fee_not_payable: 'The fee was settled or had no amount when the receipt was read.',
