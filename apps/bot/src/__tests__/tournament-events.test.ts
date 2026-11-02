@@ -201,6 +201,17 @@ describe('tournament events', () => {
 
     const payload = createScheduledEvent.mock.calls[0]?.[1] as { location: string };
     expect(payload.location.length).toBeGreaterThan(0);
+    // RECORDED AS NULL, the app's value: recording the fallback would read as
+    // a changed location on every tick (00304).
+    expect(recordTournamentEvent).toHaveBeenCalledWith(expect.objectContaining({ location: null }));
+  });
+
+  it("records the app's location with the mapping", async () => {
+    const { runTournamentEvents } = await import('../tournament-events.js');
+    await runTournamentEvents();
+    expect(recordTournamentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ location: CREATE.location })
+    );
   });
 
   it('one guild failing does not stop the others', async () => {

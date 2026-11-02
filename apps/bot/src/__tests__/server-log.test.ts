@@ -60,24 +60,36 @@ describe('MessageCache', () => {
 });
 
 describe('describeDispatch', () => {
-  it('logs a deleted message with its author, and its text only with the content scope', () => {
+  it('logs a deleted message naming nobody, with its text only with the content scope', () => {
+    // Discord does not say who deleted it; a moderator is named later from
+    // the audit log, and somebody deleting their own stays just the message.
     const withText = context(['messages', 'content']);
     describeDispatch('MESSAGE_CREATE', created('m1'), withText);
     const entry = describeDispatch('MESSAGE_DELETE', { id: 'm1', guild_id: 'g', channel_id: 'general' }, withText);
     expect(entry?.key).toBe('delete:m1');
-    expect(entry?.embed.description).toContain('<@spammer>');
-    expect(entry?.embed.description).toContain('> buy crypto now');
+    expect(entry?.embed.description).not.toContain('<@spammer>');
+    expect(entry?.embed.description).toContain('<#general>');
+    expect(entry?.embed.description).toContain('buy crypto now');
+    expect(entry?.actorId).toBeUndefined();
+    expect(entry?.deleted?.authorId).toBe('spammer');
+    expect(entry?.embed.footer?.text).toBe('Message ID: m1');
 
     const noText = context(['messages']);
     describeDispatch('MESSAGE_CREATE', created('m2'), noText);
     const bare = describeDispatch('MESSAGE_DELETE', { id: 'm2', guild_id: 'g', channel_id: 'general' }, noText);
-    expect(bare?.embed.description).toContain('<@spammer>');
     expect(bare?.embed.description).not.toContain('crypto');
   });
 
-  it('skips uncached deletes, bots, DMs and the log channel itself', () => {
+  it('still logs a delete it has no copy of, saying where and that the rest is unknown', () => {
     const ctx = context(['messages', 'content']);
-    expect(describeDispatch('MESSAGE_DELETE', { id: 'x', guild_id: 'g', channel_id: 'general' }, ctx)).toBeNull();
+    const entry = describeDispatch('MESSAGE_DELETE', { id: 'x', guild_id: 'g', channel_id: 'general' }, ctx);
+    expect(entry?.embed.title).toBe('Message deleted');
+    expect(entry?.embed.description).toContain('<#general>');
+    expect(entry?.embed.description).toContain('before I last restarted');
+  });
+
+  it("skips a bot's own deletes, DMs and the log channel itself", () => {
+    const ctx = context(['messages', 'content']);
 
     describeDispatch('MESSAGE_CREATE', created('b1', 'beep', { author: { id: 'bot', bot: true } }), ctx);
     expect(describeDispatch('MESSAGE_DELETE', { id: 'b1', guild_id: 'g', channel_id: 'general' }, ctx)).toBeNull();
@@ -99,8 +111,11 @@ describe('describeDispatch', () => {
       { ...created('e1', 'goodbye'), edited_timestamp: '2026-10-20T18:01:00Z' },
       ctx
     );
-    expect(entry?.embed.description).toContain('> hello');
-    expect(entry?.embed.description).toContain('> goodbye');
+    expect(entry?.embed.fields?.map((f) => [f.name, f.value])).toEqual([
+      ['Before', 'hello'],
+      ['After', 'goodbye'],
+    ]);
+    expect(entry?.embed.description).toContain('**From:** <@spammer>');
   });
 
   it('counts a bulk delete by author', () => {
@@ -135,15 +150,54 @@ describe('describeDispatch', () => {
         action_type: 22,
         user_id: 'mod',
         target_id: 'spammer',
-        reason: encodeURIComponent('Soft ban by mod: spam'),
+        reason: encodeURIComponent('spam'),
       },
       context(['moderation'])
     );
     expect(entry?.key).toBe('audit:a1');
     expect(entry?.embed.title).toBe('Member banned');
-    expect(entry?.embed.description).toContain('By <@mod>');
-    expect(entry?.embed.description).toContain('On <@spammer>');
-    expect(entry?.embed.fields?.[0]?.value).toBe('Soft ban by mod: spam');
+    expect(entry?.embed.description).toContain('**By:** <@mod>');
+    expect(entry?.actorId).toBe('mod');
+    expect(entry?.embed.description).toContain('**On:** <@spammer>');
+    expect(entry?.embed.fields?.[0]?.value).toBe('spam');
+  });
+
+  it('shows a /softban as softbanned by the moderator, not banned by the bot', () => {
+    const entry = describeDispatch(
+      'GUILD_AUDIT_LOG_ENTRY_CREATE',
+      {
+        id: 'a1',
+        guild_id: 'g',
+        action_type: 22,
+        user_id: 'bot',
+        target_id: 'spammer',
+        reason: encodeURIComponent('Soft ban by 307750254281883650: spam / scam'),
+      },
+      context(['moderation'])
+    );
+    expect(entry?.embed.title).toBe('Member softbanned');
+    expect(entry?.embed.description).toContain('**By:** <@307750254281883650>');
+    expect(entry?.actorId).toBe('307750254281883650');
+    expect(entry?.embed.fields?.[0]?.value).toBe('spam / scam');
+  });
+
+  it('shows an auto mod soft ban as by auto mod, and drops the unbans that lift soft bans', () => {
+    const auto = describeDispatch(
+      'GUILD_AUDIT_LOG_ENTRY_CREATE',
+      { id: 'a2', guild_id: 'g', action_type: 22, user_id: 'bot', target_id: 's',
+        reason: encodeURIComponent('Auto soft-ban (auto mod): scam link') },
+      context(['moderation'])
+    );
+    expect(auto?.embed.title).toBe('Member softbanned');
+    expect(auto?.embed.description).toContain('**By:** auto mod');
+    expect(auto?.embed.fields?.[0]?.value).toBe('scam link');
+    for (const reason of ['Soft ban: lifting it (307750254281883650)', 'Auto soft-ban (auto mod): lifting it']) {
+      expect(describeDispatch(
+        'GUILD_AUDIT_LOG_ENTRY_CREATE',
+        { id: 'a3', guild_id: 'g', action_type: 23, user_id: 'bot', target_id: 's', reason: encodeURIComponent(reason) },
+        context(['moderation'])
+      )).toBeNull();
+    }
   });
 
   it('renders role changes and timeouts readably', () => {
@@ -159,7 +213,31 @@ describe('describeDispatch', () => {
       },
       context(['moderation'])
     );
-    expect(roles?.embed.description).toContain('added <@&r1>');
+    expect(roles?.embed.description).toBe('<@m> **was given the** `Exec` **role**');
+    expect(roles?.embed.title).toBeUndefined();
+    expect(roles?.actorId).toBe('mod');
+    expect(roles?.embed.footer?.text).toBe('ID: m');
+
+    const nick = describeDispatch(
+      'GUILD_AUDIT_LOG_ENTRY_CREATE',
+      {
+        id: 'a4',
+        guild_id: 'g',
+        action_type: 24,
+        user_id: 'mod',
+        target_id: 'm',
+        changes: [
+          { key: 'nick', new_value: 'Starfish' },
+          { key: '$remove', new_value: [{ id: 'r2', name: 'Land Crab' }] },
+        ],
+      },
+      context(['moderation'])
+    );
+    expect(nick?.embed.description).toBe('<@m> **was removed from the** `Land Crab` **role**\n<@m> **nickname changed**');
+    expect(nick?.embed.fields?.map((f) => [f.name, f.value])).toEqual([
+      ['Before', 'None'],
+      ['After', 'Starfish'],
+    ]);
 
     const timeout = describeDispatch(
       'GUILD_AUDIT_LOG_ENTRY_CREATE',
@@ -209,6 +287,58 @@ describe('createServerLog', () => {
     );
   });
 
+  it("posts each server's events in that server's own channel, and nothing for a server with none", async () => {
+    const createMessage = vi.fn(async () => true);
+    const channels: Record<string, string> = { b: 'b-log' };
+    const serverLog = createServerLog({
+      api: { createMessage },
+      scopes: new Set<ServerLogScope>(['moderation']),
+      resolveChannel: async (guildId) => channels[guildId] ?? null,
+      log: () => {},
+      now: () => NOW,
+    });
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', { id: 'a1', guild_id: 'a', action_type: 22 });
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', { id: 'b1', guild_id: 'b', action_type: 22 });
+    serverLog.post('a', { key: 'scam-a', embed: { title: 'Scam spray caught', color: 0 } });
+    serverLog.post('b', { key: 'scam-b', embed: { title: 'Scam spray caught', color: 0 } });
+    await serverLog.drain();
+    const posted = createMessage.mock.calls.map((call) => (call as unknown[])[0]);
+    expect(posted).toEqual(['b-log', 'b-log']);
+  });
+
+  it('writes each person\'s name beside the mention, looked up once', async () => {
+    const createMessage = vi.fn(async () => true);
+    const getUserName = vi.fn(async (id: string) => (id === '397613147483144192' ? 'Matt_*' : null));
+    const serverLog = createServerLog({
+      api: { createMessage, getUserName },
+      scopes: new Set<ServerLogScope>(['moderation']),
+      resolveChannel: async () => 'log',
+      log: () => {},
+      now: () => NOW,
+    });
+    // A ban: the person who did it heads the entry; anyone else in it is
+    // named beside their mention.
+    const ban = { id: 'a9', guild_id: 'g', action_type: 22, user_id: '111111111111111111', target_id: '397613147483144192' };
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', ban);
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', {
+      ...ban,
+      id: 'a10',
+      user_id: '397613147483144192',
+      target_id: '111111111111111111',
+    });
+    await serverLog.drain();
+    type Posted = { embeds: { description: string; author?: { name: string }; timestamp?: string }[] };
+    const first = (createMessage.mock.calls[0] as unknown[])[1] as Posted;
+    expect(first.embeds[0]?.description).toContain('**On:** **Matt\\_\\*** (<@397613147483144192>)');
+    // Unknown to Discord: no header, and the bare mention stays.
+    expect(first.embeds[0]?.author).toBeUndefined();
+    const second = (createMessage.mock.calls[1] as unknown[])[1] as Posted;
+    expect(second.embeds[0]?.author?.name).toBe('Matt_*');
+    expect(second.embeds[0]?.description).toContain('**By:** <@397613147483144192>');
+    expect(second.embeds[0]?.timestamp).toBeTruthy();
+    expect(getUserName).toHaveBeenCalledTimes(2);
+  });
+
   it('drops past the queue limit and says how many', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -232,5 +362,143 @@ describe('createServerLog', () => {
     await serverLog.drain();
     const contents = createMessage.mock.calls.map((call) => (call as unknown[])[1] as { content?: string });
     expect(contents.some((c) => c.content?.startsWith('3 server log entries were dropped'))).toBe(true);
+  });
+});
+
+describe('who deleted a message', () => {
+  const recent = () => String((BigInt(Date.now() - 1420070400000) << 22n));
+
+  async function deleteWith(audits: unknown) {
+    const createMessage = vi.fn(async () => true);
+    const listMessageDeleteAudits = vi.fn(async () => audits as never);
+    const getUserName = vi.fn(async (id: string) => (id === 'mod' ? 'Mod' : 'Spammer'));
+    const serverLog = createServerLog({
+      api: { createMessage, getUserName, listMessageDeleteAudits },
+      scopes: new Set<ServerLogScope>(['messages', 'content', 'moderation']),
+      resolveChannel: async () => 'log',
+      log: () => {},
+      now: () => NOW,
+      auditDelayMs: 0,
+    });
+    serverLog.onDispatch('MESSAGE_CREATE', created('d1', 'rude'));
+    serverLog.onDispatch('MESSAGE_DELETE', { id: 'd1', guild_id: 'g', channel_id: 'general' });
+    await serverLog.drain();
+    const posted = (createMessage.mock.calls[0] as unknown[])[1] as {
+      embeds: { description: string; author?: { name: string } }[];
+    };
+    return posted.embeds[0];
+  }
+
+  it("names the moderator who deleted somebody's message, from a fresh audit entry", async () => {
+    const embed = await deleteWith([
+      { id: recent(), userId: 'mod', targetId: 'spammer', channelId: 'general', count: 1 },
+    ]);
+    expect(embed?.author?.name).toBe('Mod');
+    expect(embed?.description).toContain('**Deleted by:** <@mod>');
+    expect(embed?.description).toContain('rude');
+  });
+
+  it('names nobody when there is no fresh entry (they deleted their own)', async () => {
+    // An old entry for the same person and channel is somebody's earlier delete.
+    const embed = await deleteWith([{ id: '1000', userId: 'mod', targetId: 'spammer', channelId: 'general', count: 1 }]);
+    expect(embed?.author).toBeUndefined();
+    expect(embed?.description).not.toContain('<@spammer>');
+    expect(embed?.description).not.toContain('Deleted by');
+  });
+
+  it('still posts when the audit log cannot be read', async () => {
+    const embed = await deleteWith(null);
+    expect(embed?.description).toContain('rude');
+  });
+});
+
+describe('role changes, stacked', () => {
+  const roleChange = (id: string, target: string, changes: unknown[], user = 'mod') => ({
+    id,
+    guild_id: 'g',
+    action_type: 25,
+    user_id: user,
+    target_id: target,
+    changes,
+  });
+  const add = (...names: string[]) => ({ key: '$add', new_value: names.map((name) => ({ id: name, name })) });
+  const remove = (...names: string[]) => ({ key: '$remove', new_value: names.map((name) => ({ id: name, name })) });
+
+  function stacker() {
+    const createMessage = vi.fn(async () => true);
+    const postMessage = vi.fn(async () => 'posted');
+    const editMessage = vi.fn(async () => ({ ok: true }) as never);
+    const serverLog = createServerLog({
+      api: { createMessage, postMessage, editMessage },
+      scopes: new Set<ServerLogScope>(['moderation']),
+      resolveChannel: async () => 'log',
+      log: () => {},
+      now: () => NOW,
+      stackMs: 60_000,
+    });
+    // What the channel shows: the post, as last edited.
+    const posted = () => {
+      const embedOf = (call: unknown[], at: number) => (call[at] as { embeds: { description: string }[] }).embeds[0];
+      const last = editMessage.mock.calls.at(-1) as unknown[] | undefined;
+      return [last ? embedOf(last, 2) : embedOf(postMessage.mock.calls[0] as unknown[], 1)];
+    };
+    return { serverLog, posted, postMessage, editMessage, createMessage };
+  }
+
+  it('posts at the first change, then edits that post to the whole burst at the end', async () => {
+    const { serverLog, postMessage, editMessage, createMessage } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'm', [add('Exec')]));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(((postMessage.mock.calls[0] as unknown[])[1] as { embeds: { description: string }[] }).embeds[0]?.description).toBe(
+      '<@m> **roles changed**\n**Added:** `Exec`'
+    );
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'm', [remove('Land Crab')]));
+    await serverLog.drain();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(editMessage).toHaveBeenCalledWith('log', 'posted', expect.objectContaining({ embeds: [expect.objectContaining({
+      description: '<@m> **roles changed**\n**Added:** `Exec`\n**Removed:** `Land Crab`',
+    })] }));
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not edit when nothing came after the first post', async () => {
+    const { serverLog, editMessage } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'm', [add('Exec')]));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await serverLog.drain();
+    expect(editMessage).not.toHaveBeenCalled();
+  });
+
+  it("puts one member's changes in a burst into one entry, Added and Removed", async () => {
+    const { serverLog, posted } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'm', [add('Exec')]));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'm', [add('Coach'), remove('Land Crab')]));
+    await serverLog.drain();
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.description).toBe('<@m> **roles changed**\n**Added:** `Exec`, `Coach`\n**Removed:** `Land Crab`');
+  });
+
+  it('turns a mass removal into one entry listing the members', async () => {
+    const { serverLog, posted } = stacker();
+    for (const member of ['a', 'b', 'c']) {
+      serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange(`r${member}`, member, [remove('Land Crab')]));
+    }
+    await serverLog.drain();
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.description).toBe(
+      "**3 members' roles changed**\n**Removed:** `Land Crab`\n\n**Members:** <@a>, <@b>, <@c>"
+    );
+  });
+
+  it('lists each member when their changes differ, keeps separate people apart, and drops an undone change', async () => {
+    const { serverLog, posted } = stacker();
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('1', 'a', [add('Exec')]));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('2', 'b', [remove('Coach')]));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('3', 'c', [add('Exec')], 'other-mod'));
+    serverLog.onDispatch('GUILD_AUDIT_LOG_ENTRY_CREATE', roleChange('4', 'c', [remove('Exec')], 'other-mod'));
+    await serverLog.drain();
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.description).toBe("**2 members' roles changed**\n\n<@a>: added `Exec`\n<@b>: removed `Coach`");
   });
 });

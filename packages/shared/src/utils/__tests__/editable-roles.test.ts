@@ -12,6 +12,7 @@ import {
   EDITOR_OFFERABLE,
   EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  EXEC_READS,
   TRAINER_BASELINE,
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
@@ -58,6 +59,11 @@ import {
 // do", and that is the constant the assertions follow. Left pointing at the
 // twelve, every one of them would have been a different and much weaker claim:
 // "the ceiling adds 66 things" instead of "the ceiling adds five, named".
+
+// The five areas no officer reads and nobody can be given (2026-10-23), written
+// out here rather than imported so the tests below check the constant against
+// the owner's rule and not against itself.
+const ADMIN_ONLY = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
 
 const MIGRATION = readFileSync(
   join(__dirname, '../../../../../supabase/migrations/00104_editable_builtin_roles.sql'),
@@ -108,7 +114,7 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   // and "this list never grows" could not both be kept, and the owner chose.
   //
   // WHAT DID NOT CHANGE IS THE THING THE OWNER'S RULE WAS ABOUT: EXEC_BASELINE,
-  // the read-only floor, is still twelve. Nobody gained anything by being an
+  // the floor, was still twelve reads then. Nobody gained anything by being an
   // exec; one named job gained one capability by being given it. Asserting
   // `EXEC_BASELINE.length === 12` HERE would have pinned the floor while
   // claiming to guard the transcription, which is the substitution the next
@@ -134,8 +140,13 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   // AND THE FLOOR, WHICH IS THE THING THAT DID MOVE, pinned next to it so the
   // two are read together. Nobody should be able to change one and have the
   // other's assertion cover for them.
-  it('leaves the exec baseline a floor of thirteen holding one named write', () => {
-    expect(EXEC_BASELINE.length).toBe(13);
+  //
+  // SINCE 2026-10-23 THE FLOOR IS DERIVED: every read and page outside the
+  // admin areas (EXEC_READS) plus that one write. So its size is asserted
+  // against the derivation, not as a number somebody bumps.
+  it('leaves the exec baseline the derived reads holding one named write', () => {
+    expect(EXEC_BASELINE.length).toBe(EXEC_READS.length + 1);
+    expect([...EXEC_BASELINE].sort()).toEqual(['fees.expenses.add.write', ...EXEC_READS].sort());
     // Read-only until 2026-09-19. The owner asked for the expense write to
     // reach every officer rather than only the ones somebody remembered to
     // assign a baseline to, so the floor now carries exactly one write. Naming
@@ -152,117 +163,103 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
     }
   });
 
-  // THE WIDENING, NAMED. Four reads on /fees — the club's books, which is what
-  // the owner asked Finance to be able to see — and one write since 00105. If
-  // this list grows, this assertion is the diff somebody has to read.
-  //
-  // `announcements.discord.write` WAS BRIEFLY HERE and is not any more: 00223
-  // shipped it admin-only, above the assignable set, and 00224 moved it into VP
-  // External at the owner's request, which put it INSIDE that set. A capability
-  // in both lists would be a duplicate in EDITOR_OFFERABLE, since the ceiling
-  // is their union.
-  //
-  // THE SEVEN `page.access.*` KEYS JOINED IT, one per club feature switch: the
-  // owner's "permission node for access to a restricted page". Here and not in
-  // EXEC_ASSIGNABLE because they were never exec work, and that list is the
-  // historic transcription the four VP roles partition exactly. They are spread
-  // from the feature registry, and they are written out literally below anyway:
-  // this list is what makes a new feature's key a diff somebody reads rather
-  // than a ceiling that grew on its own. None of them is a write, so the
-  // assertion further down that names the one added write did not move.
-  it('adds exactly the four finance reads, the one admin-only write and the switched-off page keys', () => {
+  // THE WIDENING, AS A RULE. It used to be named entry by entry: four reads on
+  // /fees, the console-access write and the `page.access.*` keys. On 2026-10-23
+  // the owner asked for "read to everything, but write follow the roles and i
+  // can add additional stuff", and the ceiling became every capability outside
+  // the five admin areas, derived so that a capability added later can be
+  // handed out on the deploy that adds it. A literal list here would be the
+  // hand-kept list the owner asked to be rid of, so the gap is re-derived from
+  // CAPABILITIES instead, independently of the constant.
+  it('adds everything outside the admin areas that was not already assignable', () => {
     // AGAINST EXEC_ASSIGNABLE, because "added" means "beyond what an exec could
-    // already do". Measured against the narrowed floor instead, this list would
-    // be 66 entries long and would stop being the reviewable diff it exists to
-    // be — the six below would be lost among sixty-one writes that are not
-    // widenings at all, merely capabilities that now arrive by assignment.
+    // already be given".
     const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const added = [...EDITOR_OFFERABLE].filter((capability) => !exec.has(capability));
-    expect(added.sort()).toEqual([
-      'fees.clubfees.read',
-      'fees.netposition.read',
-      'fees.otherincome.read',
-      'fees.reinstatements.read',
-      'page.access.announcements',
-      'page.access.challenges',
+    expect(added.sort()).toEqual(
+      CAPABILITIES.filter(
+        (capability) => !ADMIN_ONLY.includes(capability.split('.')[0] ?? '') && !exec.has(capability),
+      ).sort(),
+    );
+    // The cases that made the owner ask, named so the derivation cannot come
+    // out empty: club events' writes, and the keys to switched-off pages.
+    for (const capability of [
+      'events.manage.create.write',
+      'events.signups.checkin.write',
       'page.access.events',
-      'page.access.fees',
-      'page.access.guest_waivers',
-      'page.access.leaderboard',
-      'page.access.membership',
-      'page.access.my_stats',
-      'page.access.predictions',
-      'page.access.sessions',
-      'page.access.socials',
-      'page.access.tournaments',
       'players.consoleaccess.write',
-    ]);
-  });
-
-  // THE MONEY WIDENING IS STILL READ-ONLY, which is the claim that assertion
-  // used to make about the whole list and can no longer make about the whole
-  // list. Seeing the books is not moving the money, and every `fees.*.write`
-  // stayed out — so it is asserted where it is actually true, over the `fees`
-  // half, rather than weakened into nothing.
-  it('adds no fees WRITE, so seeing the books is not moving the money', () => {
-    // EXEC_ASSIGNABLE for the same reason as above: `fees.expenses.add.write` is
-    // historic exec work, not a widening, and against the floor it would fail
-    // this assertion while nothing had actually been opened up.
-    const exec = new Set<Capability>(EXEC_ASSIGNABLE);
-    for (const capability of EDITOR_OFFERABLE) {
-      if (exec.has(capability)) continue;
-      if (!capability.startsWith('fees.')) continue;
-      expect(capability.endsWith('.read'), capability).toBe(true);
+    ] as Capability[]) {
+      expect(added, capability).toContain(capability);
     }
   });
 
-  // THE ONE WRITE, NAMED. The ceiling is what bounds an ADMIN, whom grant
-  // closure cannot bound, so every write on this list is a thing an admin may
-  // hand to somebody who is not one — which is why a second arriving here has
-  // to be a diff somebody reads rather than a number that moved.
-  //
-  //   - players.consoleaccess.write (00105) — "also make role change a
-  //     permission". It hands out a LEVEL, bounded by closure inside
-  //     setConsoleAccess and refused outright for admin.
-  it('adds exactly one write, and names it', () => {
-    // EXEC_ASSIGNABLE: "one write" counts writes the CEILING added, and every
-    // write an exec used to hold by default is still inside it.
+  // MONEY IS NOW OFFERABLE, AND STILL NOBODY HOLDS IT BY BEING AN OFFICER. The
+  // assertion here used to be that the ceiling added no `fees.*` write; the
+  // owner's 2026-10-23 rule opened them to roles and grants on purpose. What
+  // must stay true is the other half: seeing the books is not moving the money,
+  // so no fees write beyond the one expense filing reaches the floor.
+  it('offers the fees writes, and keeps every one but the filing off the floor', () => {
+    const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+    const floor = new Set<Capability>(EXEC_BASELINE);
+    const feesWrites = CAPABILITIES.filter(
+      (capability) => capability.startsWith('fees.') && capability.endsWith('.write'),
+    );
+    expect(feesWrites.length).toBeGreaterThan(1);
+    for (const capability of feesWrites) {
+      expect(offerable.has(capability), capability).toBe(true);
+      if (capability === 'fees.expenses.add.write') continue;
+      expect(floor.has(capability), `${capability} reached the floor`).toBe(false);
+    }
+  });
+
+  // THE WRITES THE CEILING ADDED, AS A RULE. The ceiling is what bounds an
+  // ADMIN, whom grant closure cannot bound, so every write on this list is a
+  // thing an admin may hand to somebody who is not one. Since 2026-10-23 that
+  // is every write outside the admin areas; the four writes inside them are the
+  // ones that stay out, named.
+  it('adds every write outside the admin areas, and none inside them', () => {
     const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const writes = [...EDITOR_OFFERABLE].filter(
       (capability) => !exec.has(capability) && capability.endsWith('.write'),
     );
-    expect(writes.sort()).toEqual(['players.consoleaccess.write']);
+    expect(writes.sort()).toEqual(
+      CAPABILITIES.filter(
+        (capability) =>
+          capability.endsWith('.write') &&
+          !exec.has(capability) &&
+          !ADMIN_ONLY.includes(capability.split('.')[0] ?? ''),
+      ).sort(),
+    );
+    for (const capability of [
+      'permissions.write',
+      'accounts.apikey.mint.write',
+      'accounts.apikey.revoke.write',
+      'platform.settings.write',
+    ] as Capability[]) {
+      expect(writes, capability).not.toContain(capability);
+    }
   });
 
   // THE ONES THAT STAY OUT, each named so opening it is deliberate. These are
-  // the reason the ceiling was not simply deleted when it got in the way.
-  it('still withholds permissions.write and the edge of the hard floor', () => {
+  // the reason the ceiling was not simply deleted when it got in the way, and
+  // since 2026-10-23 they are exactly the five admin areas.
+  it('still withholds permissions.write and the rest of the admin areas', () => {
     const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+    // Every capability in the five areas, derived, so one added there later is
+    // withheld without an edit here.
+    for (const capability of CAPABILITIES) {
+      if (!ADMIN_ONLY.includes(capability.split('.')[0] ?? '')) continue;
+      expect(offerable.has(capability), `${capability} became offerable`).toBe(false);
+    }
     for (const capability of [
       // Editing a role to contain this would make "pick Finance from a
       // dropdown" hand over the ability to hand out permissions.
       'permissions.write',
       'permissions.page',
-      // The grantable EDGE of the hard floor. The floor itself is unreachable
-      // by construction; this is the nearest thing and stays per-person.
-      'players.privilegedfields.write',
-      // Destructive or identity-altering roster work.
-      'players.remove.write',
-      'players.merge.write',
-      'players.discordlink.write',
-      'players.deletion.cancel.write',
-      'players.reliability.write',
-      // Setting or moving money, as opposed to seeing it.
-      'seasons.fees.write',
-      'fees.clubfees.markpaid.write',
-      'fees.clubfees.waive.write',
-      'fees.otherincome.add.write',
-      'fees.reinstatements.write',
-      'fees.playerflags.write',
-      'tournaments.fees.read',
-      'tournaments.fees.markpaid.write',
-      // Everything else that was admin work and was not asked for.
+      // The audit trail, with its sign-ins and export.
       'audit.page',
+      'audit.export.read',
+      'audit.signins.read',
       'ratings.page',
       'accounts.page',
       // The data API's keys, withheld with the page they are minted from.
@@ -271,23 +268,44 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'accounts.apikey.revoke.write',
       'platform.page',
       'platform.settings.write',
+    ] as Capability[]) {
+      expect(offerable.has(capability), `${capability} became offerable`).toBe(false);
+    }
+  });
+
+  // WHAT THE 2026-10-23 RULE OPENED, and what it did not open with it. These
+  // were all withheld until then: destructive roster work, the edge of the hard
+  // floor, money, the ladder's adjudication and club events. Each is now a
+  // thing an admin may hand out, and each WRITE still arrives only by a role or
+  // a grant, never by being an officer.
+  it('offers what used to be withheld, without putting a write of it in the floor', () => {
+    const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+    const floor = new Set<Capability>(EXEC_BASELINE);
+    for (const capability of [
+      'players.privilegedfields.write',
+      'players.remove.write',
+      'players.merge.write',
+      'players.discordlink.write',
+      'players.deletion.cancel.write',
+      'players.reliability.write',
+      'seasons.fees.write',
+      'fees.clubfees.markpaid.write',
+      'fees.playerflags.write',
+      'tournaments.fees.read',
+      'tournaments.fees.markpaid.write',
       'legal.documents.write',
       'legal.waivertemplate.write',
       'challenges.page',
       'walkovers.page',
       'disputes.page',
-      // Club events (00244): admin-only by level until the owner decides
-      // otherwise, which would be a ROLE_DEFAULTS re-seed.
       'events.page',
       'events.signups.read',
-      'events.signups.remove.write',
-      'events.signups.checkin.write',
-      'events.manage.create.write',
-      'events.manage.update.write',
-      'events.manage.cancel.write',
       'events.manage.delete.write',
     ] as Capability[]) {
-      expect(offerable.has(capability), `${capability} became offerable`).toBe(false);
+      expect(offerable.has(capability), `${capability} is not offerable`).toBe(true);
+      if (capability.endsWith('.write')) {
+        expect(floor.has(capability), `${capability} reached the floor`).toBe(false);
+      }
     }
   });
 
@@ -617,10 +635,12 @@ describe('ROLE_DEFAULTS is a frozen seed, so its invariants still hold literally
   // reached through the same function every write path calls.
   it('bounds an EDIT the way the constant used to bound a deploy', () => {
     const held = new Set<Capability>(CAPABILITIES);
-    // An admin editing Finance to reach beyond the ceiling: refused.
+    // An admin editing Finance to reach beyond the ceiling: refused. Since
+    // 2026-10-23 the ceiling is everything outside the admin areas, so the
+    // example reaching past it is from one of those.
     expect(
       baselineCapabilityRefusal(
-        ['fees.page', 'fees.expenses.read', 'fees.playerflags.write'],
+        ['fees.page', 'fees.expenses.read', 'permissions.page', 'permissions.write'],
         held,
       ),
     ).toMatch(/admin-only/);

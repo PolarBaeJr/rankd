@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button, Dialog, Input, PlayerPicker, AvatarChip, Select, useConfirm } from '@badminton/ui';
 import {
   addParticipantsToEvent,
@@ -27,6 +27,10 @@ import {
   removeFromWaitlist,
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
+import {
+  ENTRY_SORT_KEY, ENTRY_SORT_OPTIONS, parseEntrySort, sortEntries, pairSignedUpAt, pairDisplayName,
+  type EntrySortOrder,
+} from '@/lib/entry-sort';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
 import {
   nextPowerOf2, pickOne, isOutOfEvent, eventIsPlaying, categoryRequiredBy, groupLabel,
@@ -40,6 +44,21 @@ import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, U
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
+import type { PartnerAdvice } from '@/lib/partner-check';
+import { PartnerCheckLine } from '@/components/partner-notes/PartnerCheckLine';
+import { PartnerChoiceDialog, type PartnerOption } from '@/components/partner-notes/PartnerChoiceDialog';
+import { ContestedPartnerDialog } from '@/components/partner-notes/ContestedPartnerDialog';
+
+/** The linked club event's partner check (00311), for the Unpaired block. */
+export interface ParticipantPartners {
+  clubEventId: string;
+  /** By participant id. */
+  advice: Record<string, PartnerAdvice>;
+  /** The club event sign-up key per participant id. */
+  keys: Record<string, string>;
+  options: PartnerOption[];
+  canEditPartner: boolean;
+}
 
 interface Props {
   event: TournamentEventRow;
@@ -62,6 +81,15 @@ interface Props {
   // Entries a Google Form made (00283), by participant or pair id, with the
   // import's status. Empty or absent: no badges.
   imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
+  // A staged event still taking a late entry after its first stage's draw
+  // (00308, lateEntryWindow). Opens Add only.
+  lateEntry?: boolean;
+  // Sign-up time per participant or pair id, off the linked club event, for
+  // the sort. null when the event runs no club event: the rows' own times.
+  signedUpAt?: Record<string, string> | null;
+  // The linked club event's partner check (00311). null when the event runs
+  // no club event, or the viewer may not read its sign-ups: nothing renders.
+  partners?: ParticipantPartners | null;
 }
 
 // A small tag beside an entry a Google Form made. "Awaiting partner" is a
@@ -318,7 +346,7 @@ function CategoryCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null, imported = null, lateEntry = false, signedUpAt = null, partners = null }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -341,6 +369,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [ignoreCategories, setIgnoreCategories] = useState(false);
   // The unpaired entrants ticked for pairing. Exactly two makes a team.
   const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
+  // The unpaired entrant whose partner the desk is setting or settling (00311).
+  const [choosingPartnerFor, setChoosingPartnerFor] = useState<ParticipantWithPlayer | null>(null);
+  const [resolvingPartnerFor, setResolvingPartnerFor] = useState<ParticipantWithPlayer | null>(null);
   // Its own flag rather than sharing `loading` with "Pair selected": both
   // buttons sit in the same header, and one spinner on both would say the wrong
   // one is working.
@@ -373,6 +404,20 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const router = useRouter();
   const confirm = useConfirm();
 
+  // How the lists are shown, remembered per device, read after mount so the
+  // server render matches.
+  const [sortOrder, setSortOrder] = useState<EntrySortOrder>('newest');
+  useEffect(() => {
+    try {
+      const saved = parseEntrySort(window.localStorage.getItem(ENTRY_SORT_KEY));
+      if (saved) setSortOrder(saved);
+    } catch { /* no storage: newest first */ }
+  }, []);
+  function pickSort(next: EntrySortOrder) {
+    setSortOrder(next);
+    try { window.localStorage.setItem(ENTRY_SORT_KEY, next); } catch { /* not remembered */ }
+  }
+
   // THE DRAW IS PAIRS AND ONLY PAIRS, in a doubles event. `entries` feeds the
   // bracket-size preview and the seed cells, and an unpaired entrant is not an
   // entry in the draw — they are a person waiting to become half of one. The
@@ -384,6 +429,22 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // this list is empty.
   const unpaired = isDoubles ? participants : [];
   const activeUnpaired = unpaired.filter((p) => !isOutOfEvent(p.status));
+  // Render order only. Counts, seeds and pickers keep reading the lists above.
+  const participantSortKeys = {
+    id: (p: ParticipantWithPlayer) => p.id,
+    signedUpAt: (p: ParticipantWithPlayer) => signedUpAt?.[p.id] ?? p.created_at ?? null,
+    seed: (p: ParticipantWithPlayer) => p.seed_number,
+    name: (p: ParticipantWithPlayer) => p.player?.full_name ?? 'Unknown',
+  };
+  const shownEntries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles
+    ? sortEntries(activeEntries as PairWithPlayers[], sortOrder, {
+        id: (pair) => pair.id,
+        signedUpAt: (pair) => pairSignedUpAt(pair, signedUpAt),
+        seed: (pair) => pair.seed_number,
+        name: pairDisplayName,
+      })
+    : sortEntries(activeEntries as ParticipantWithPlayer[], sortOrder, participantSortKeys);
+  const shownUnpaired = sortEntries(activeUnpaired, sortOrder, participantSortKeys);
 
   // WITHDRAWN ENTRIES LEAVE THE LIVE LISTS AND GO TO THEIR OWN BLOCK.
   //
@@ -430,7 +491,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // moment the player themselves is no longer allowed to do it. That rule has
   // not moved; it now has to be held by somebody who may actually perform it.
   const controls = participantControls(
-    { status: event.status as string, drawLocked, staged: event.format === 'staged' },
+    { status: event.status as string, drawLocked, staged: event.format === 'staged', lateEntry },
     capabilities,
   );
   const pendingCategory = (pairId: string) => {
@@ -608,6 +669,21 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setSelectedUnpaired([]);
     router.refresh();
     setLoading(false);
+  }
+
+  // Two people who named each other on the club event's Form (00311). The
+  // same action as Pair selected, with the two already chosen.
+  async function handlePairMutual(p: ParticipantWithPlayer, partnerPlayerId: string, partnerName: string) {
+    setActionLoading(p.id);
+    const res = await addPairToEvent(event.id, p.player_id, partnerPlayerId);
+    setActionLoading(null);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      return;
+    }
+    toast(`${unpairedName(p)} and ${partnerName} are paired`, 'success');
+    setSelectedUnpaired([]);
+    router.refresh();
   }
 
   /**
@@ -1039,6 +1115,16 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               Draw Locked
             </span>
           )}
+          {activeEntries.length + activeUnpaired.length > 1 && (
+            <Select
+              variant="bare"
+              aria-label="Sort entries"
+              value={sortOrder}
+              onChange={(e) => pickSort(e.target.value as EntrySortOrder)}
+              options={ENTRY_SORT_OPTIONS}
+              className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-xs text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+            />
+          )}
         </div>
         {/* Three buttons, three separate capabilities — a seeding desk without
             the roster is a real shape the club can hand out, so these are not
@@ -1148,7 +1234,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </thead>
           <tbody>
             {isDoubles ? (
-              (activeEntries as PairWithPlayers[]).map((pair) => (
+              (shownEntries as PairWithPlayers[]).map((pair) => (
                 <tr key={pair.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                   <td className="px-4 py-3">
                     <SeedCell
@@ -1230,7 +1316,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 </tr>
               ))
             ) : (
-              (activeEntries as ParticipantWithPlayer[]).map((p) => {
+              (shownEntries as ParticipantWithPlayer[]).map((p) => {
                 const player = p.player;
                 const ratings = pickOne(player?.ratings);
                 const elo = ratings?.singles_elo ?? p.elo_before ?? '-';
@@ -1407,7 +1493,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               </tr>
             </thead>
             <tbody>
-              {activeUnpaired.map((p) => {
+              {shownUnpaired.map((p) => {
                 const ratings = pickOne(p.player?.ratings);
                 // doubles_elo, because this is a doubles event — the same number
                 // elo_before was stamped with when they entered.
@@ -1436,6 +1522,39 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         <span className="text-sm font-medium text-[var(--text-primary)]">{unpairedName(p)}</span>
                         <ImportedTag status={imported?.[p.id]} />
                       </div>
+                      {partners?.advice[p.id] && (
+                        <div className="mt-1 space-y-1">
+                          <PartnerCheckLine
+                            advice={partners.advice[p.id]}
+                            onResolve={controls.pair ? () => setResolvingPartnerFor(p) : undefined}
+                          />
+                          {(partners.canEditPartner || (controls.pair && partners.advice[p.id]!.mutualPair)) && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {controls.pair && partners.advice[p.id]!.mutualPair && (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  loading={actionLoading === p.id}
+                                  onClick={() =>
+                                    handlePairMutual(
+                                      p,
+                                      partners.advice[p.id]!.mutualPair!.partnerPlayerId,
+                                      partners.advice[p.id]!.mutualPair!.partnerName,
+                                    )
+                                  }
+                                >
+                                  Pair with {partners.advice[p.id]!.mutualPair!.partnerName}
+                                </Button>
+                              )}
+                              {partners.canEditPartner && partners.keys[p.id] && (
+                                <Button size="sm" variant="ghost" onClick={() => setChoosingPartnerFor(p)}>
+                                  Partner
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                     {waiverStates && (
                       <td className="px-4 py-3">
@@ -1471,6 +1590,27 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </table>
           </div>
         </div>
+      )}
+
+      {partners && choosingPartnerFor && partners.keys[choosingPartnerFor.id] && partners.advice[choosingPartnerFor.id] && (
+        <PartnerChoiceDialog
+          clubEventId={partners.clubEventId}
+          personKey={partners.keys[choosingPartnerFor.id]!}
+          name={unpairedName(choosingPartnerFor)}
+          wrote={partners.advice[choosingPartnerFor.id]!.wrote}
+          preselect={partners.advice[choosingPartnerFor.id]!.preselect}
+          options={partners.options}
+          onClose={() => setChoosingPartnerFor(null)}
+        />
+      )}
+      {partners && resolvingPartnerFor && partners.advice[resolvingPartnerFor.id] && (
+        <ContestedPartnerDialog
+          clubEventId={partners.clubEventId}
+          targetPlayerId={resolvingPartnerFor.player_id}
+          targetName={unpairedName(resolvingPartnerFor)}
+          advice={partners.advice[resolvingPartnerFor.id]!}
+          onClose={() => setResolvingPartnerFor(null)}
+        />
       )}
 
       {/*

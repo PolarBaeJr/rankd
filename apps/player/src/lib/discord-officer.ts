@@ -1,4 +1,6 @@
 import { consoleAccessLevelFor, permissionsOf, permits } from '@badminton/shared';
+
+type Capability = Parameters<typeof permits>[2];
 import type { createServiceRoleClient } from '@/lib/supabase-server';
 
 // Gate 2 for the officer-facing Discord routes, in one place.
@@ -66,7 +68,10 @@ export type OfficerCheck =
  */
 export async function resolveDiscordOfficer(
   supabase: ServiceClient,
-  discordUserId: string
+  discordUserId: string,
+  // The console capability the action needs. Linking is the default; /setup
+  // and /config ask for the settings capability (discord-manager.ts).
+  capability: Capability = 'players.discordlink.write'
 ): Promise<OfficerCheck> {
   // The permission triple is selected WHOLE: permissionsOf() throws on a row
   // that carries permission_role without both delta columns, rather than
@@ -108,7 +113,7 @@ export async function resolveDiscordOfficer(
   // the same reason they cannot open the panel.
   const level = consoleAccessLevelFor(player);
   if (!level) return { ok: false, refusal: 'not_permitted' };
-  if (!permits(level, permissionsOf(level, player), 'players.discordlink.write')) {
+  if (!permits(level, permissionsOf(level, player), capability)) {
     return { ok: false, refusal: 'not_permitted' };
   }
 

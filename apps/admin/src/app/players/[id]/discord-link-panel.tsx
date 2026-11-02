@@ -31,15 +31,21 @@ import { AlertTriangle } from 'lucide-react';
 export function DiscordLinkPanel({
   playerId,
   playerName,
+  linked,
 }: {
   playerId: string;
   playerName: string;
+  /** Whether a Discord account is linked now, which only changes the button's words. */
+  linked: boolean;
 }) {
   const [discordUserId, setDiscordUserId] = useState('');
   const [reason, setReason] = useState('');
   const [preview, setPreview] = useState<DiscordForceLinkPreview | null>(null);
   const [checking, setChecking] = useState(false);
   const [linking, setLinking] = useState(false);
+  // The boxes stay hidden until the officer asks to link, like every other
+  // section's Edit.
+  const [choosing, setChoosing] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -66,13 +72,31 @@ export function DiscordLinkPanel({
     setDiscordUserId('');
     setReason('');
     setPreview(null);
+    setChoosing(false);
     router.refresh();
+  }
+
+  function handleCancel() {
+    setDiscordUserId('');
+    setReason('');
+    setPreview(null);
+    setChoosing(false);
   }
 
   // A conflict is not something the officer can confirm through. The other
   // member has to be unlinked first, and the UNIQUE index would refuse this
   // anyway, so the button stays disabled rather than offering a doomed write.
   const conflict = Boolean(preview?.conflictPlayerId);
+
+  if (!choosing) {
+    return (
+      <div className="pt-4">
+        <Button variant="secondary" onClick={() => setChoosing(true)}>
+          {linked ? 'Link a different account' : 'Link a Discord account'}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 pt-4">
@@ -125,6 +149,9 @@ export function DiscordLinkPanel({
       )}
 
       <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={handleCancel} disabled={linking}>
+          Cancel
+        </Button>
         {preview === null ? (
           <Button onClick={handleCheck} disabled={!discordUserId.trim() || checking}>
             {checking ? 'Checking…' : 'Check'}

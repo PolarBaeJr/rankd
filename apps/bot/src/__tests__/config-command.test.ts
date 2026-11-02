@@ -12,7 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // vi.hoisted, not bare consts: this file imports COMMANDS statically so the
 // mock factories run during hoisting, before a plain `const` would have been
 // initialised.
-const { fetchDiscordSettings, writeDiscordSettings, createMessage } = vi.hoisted(() => ({
+const { fetchDiscordSettings, writeDiscordSettings, createMessage, checkDiscordManager } = vi.hoisted(() => ({
+  checkDiscordManager: vi.fn(),
   fetchDiscordSettings: vi.fn(),
   writeDiscordSettings: vi.fn(),
   createMessage: vi.fn(),
@@ -22,6 +23,14 @@ vi.mock('../api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api.js')>()),
   fetchDiscordSettings,
   writeDiscordSettings,
+  checkDiscordManager,
+  fetchServerSettings: async () => ({ servers: [] }),
+}));
+
+// g1 is one of the club's servers, where the club's relays are configured.
+vi.mock('../config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../config.js')>()),
+  loadConfig: async () => ({ registry: new Map([['g1', {}]]), auditChannelId: undefined }),
 }));
 
 vi.mock('../discord-api.js', async (importOriginal) => ({
@@ -35,6 +44,8 @@ import { COMMAND_DEFINITIONS, DEFERRED_COMMANDS, dispatch } from '../commands.js
 import { CHANNEL_SETTINGS, VALUE_SETTINGS, ALL_SETTINGS } from '../settings.js';
 
 const CTX = { discordUserId: '42', guildId: 'g1' };
+// Who the app is asked about, and what every write carries.
+const MANAGER = { discordUserId: '42', guildId: 'g1' };
 const CHANNEL = '123456789012345678';
 
 interface Reply {
@@ -60,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'token';
   fetchDiscordSettings.mockResolvedValue({ settings: {} });
+  checkDiscordManager.mockResolvedValue(null);
   writeDiscordSettings.mockResolvedValue({ ok: true, written: 1, cleared: 0 });
   createMessage.mockResolvedValue(true);
 });
@@ -112,7 +124,7 @@ describe('/config channels', () => {
     expect(createMessage).toHaveBeenCalledWith(CHANNEL, expect.objectContaining({
       content: expect.stringContaining('Announcements'),
     }));
-    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL });
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL }, MANAGER);
   });
 
   it('SAVES NOTHING for a channel it cannot post in', async () => {
@@ -141,7 +153,7 @@ describe('/config channels', () => {
       { name: 'match_results', type: 7, value: '999999999999999999' },
     ]);
 
-    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL });
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: CHANNEL }, MANAGER);
     expect(reply.data.content).toContain('Match results');
   });
 
@@ -165,50 +177,35 @@ describe('/config channels', () => {
   });
 });
 
-describe('/config tournament', () => {
-  it('refuses a time it cannot parse, before the app sees it', async () => {
-    const reply = await run('tournament', [{ name: 'start_time', type: 3, value: '9am' }]);
+describe('/config ping_lead', () => {
+  it('saves the lead time', async () => {
+    const reply = await run('ping_lead', [{ name: 'ping_lead_minutes', type: 4, value: 90 }]);
 
-    expect(writeDiscordSettings).not.toHaveBeenCalled();
-    expect(reply.data.content).toContain('24-hour');
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ session_ping_lead_minutes: '90' }, MANAGER);
+    expect(reply.data.content).toContain('90');
   });
 
-  it('refuses an end at or before the start', async () => {
-    // Discord rejects an event that ends before it begins, and the relay's own
-    // guard skips it as `end_before_start` — into a log nobody reads. Answering
-    // here is the difference between one wrong answer now and every tournament
-    // silently not being announced.
-    const reply = await run('tournament', [
-      { name: 'start_time', type: 3, value: '18:00' },
-      { name: 'end_time', type: 3, value: '09:00' },
-    ]);
+  it('refuses a lead time the ping job cannot hit, before the app sees it', async () => {
+    const reply = await run('ping_lead', [{ name: 'ping_lead_minutes', type: 4, value: 2 }]);
 
     expect(writeDiscordSettings).not.toHaveBeenCalled();
-    expect(reply.data.content).toContain('cannot end');
+    expect(reply.data.content).toContain('between 5 and 1440');
   });
+});
 
-  it('checks a new start against the end ALREADY SAVED', async () => {
-    // Half a change is the case that actually happens: somebody moves the
-    // start later next season and leaves the end where it was. Validating only
-    // what arrived in this call would let that through.
-    fetchDiscordSettings.mockResolvedValue({ settings: { tournament_event_end_time: '12:00' } });
+describe('/config no longer sets tournament times', () => {
+  it('has no tournament subcommand, and /config show does not list those settings', async () => {
+    // Each tournament keeps its own times and location since 00304. Listing a
+    // club-wide "not set, so events start at 09:00" here would be wrong.
+    const config = COMMAND_DEFINITIONS.find((c) => c.name === 'config');
+    const names = (config?.options as { name: string }[]).map((o) => o.name);
+    expect(names).not.toContain('tournament');
 
-    const reply = await run('tournament', [{ name: 'start_time', type: 3, value: '20:00' }]);
-
-    expect(writeDiscordSettings).not.toHaveBeenCalled();
-    expect(reply.data.content).toContain('cannot end');
-  });
-
-  it('saves a location and a lead time', async () => {
-    await run('tournament', [
-      { name: 'location', type: 3, value: 'Example Campus, West Gym' },
-      { name: 'ping_lead_minutes', type: 4, value: 90 },
-    ]);
-
-    expect(writeDiscordSettings).toHaveBeenCalledWith({
-      tournament_event_location: 'Example Campus, West Gym',
-      session_ping_lead_minutes: '90',
-    });
+    const reply = await run('show');
+    const text = description(reply);
+    expect(text).not.toContain('Tournament start time');
+    expect(text).not.toContain('events start at 09:00');
+    expect(reply.data.embeds?.[0]?.footer?.text).toContain('/tourney details');
   });
 });
 
@@ -218,7 +215,7 @@ describe('/config clear', () => {
     // relay routes use, and they would post to a channel id of ''.
     await run('clear', [{ name: 'setting', type: 3, value: 'announcements' }]);
 
-    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: null });
+    expect(writeDiscordSettings).toHaveBeenCalledWith({ announcement_channel_id: null }, MANAGER);
   });
 
   it('says what stops happening, not that something was cleared', async () => {
@@ -236,7 +233,7 @@ describe('/config ping_roles', () => {
       session_ping_all_role_id: '1547801288119558234',
       session_ping_competitive_role_id: '1547801288119558234',
       session_ping_recreational_role_id: '1547801288119558234',
-    });
+    }, MANAGER);
   });
 
   it('lets a specific group override every_session', async () => {
@@ -248,7 +245,7 @@ describe('/config ping_roles', () => {
       session_ping_all_role_id: '11111111111111111',
       session_ping_competitive_role_id: '22222222222222222',
       session_ping_recreational_role_id: '11111111111111111',
-    });
+    }, MANAGER);
   });
 
   it('writes nothing when no role was picked', async () => {
@@ -288,7 +285,7 @@ describe('the command definition', () => {
     }
   });
 
-  it('names the tournament options exactly as the specs do', async () => {
+  it('names the ping_lead options exactly as the specs do', async () => {
     // THE DRIFT THIS DESIGN IS EXPOSED TO. These options are typed out rather
     // than generated (they have per-option types and bounds), while the handler
     // reads them back by spec.option. A rename on one side and not the other is
@@ -296,10 +293,10 @@ describe('the command definition', () => {
     // `default: return null` waves the unknown option through, so the app's 400
     // reaches the member as "couldn't reach the club app".
     const config = COMMAND_DEFINITIONS.find((c) => c.name === 'config');
-    const tournament = (config?.options as { name: string; options?: unknown[] }[]).find(
-      (o) => o.name === 'tournament'
+    const pingLead = (config?.options as { name: string; options?: unknown[] }[]).find(
+      (o) => o.name === 'ping_lead'
     );
-    const opts = tournament?.options as { name: string }[];
+    const opts = pingLead?.options as { name: string }[];
 
     expect(opts.map((o) => o.name)).toEqual(VALUE_SETTINGS.map((s) => s.option));
   });
@@ -319,5 +316,24 @@ describe('the command definition', () => {
     // writes to the app. Three seconds is not enough, and the failure is
     // Discord telling the member the application did not respond.
     expect(DEFERRED_COMMANDS.has('config')).toBe(true);
+  });
+});
+
+describe('/config answers to the club, not to Discord admin rights', () => {
+  it('asks the app about the caller and the server before anything else', async () => {
+    await run('show');
+    expect(checkDiscordManager).toHaveBeenCalledWith(MANAGER);
+  });
+
+  it.each([
+    ['not_linked', '/link'],
+    ['not_permitted', 'Only club execs'],
+    ['server_not_connected', 'not connected to the club'],
+  ])('refuses %s and changes nothing', async (refusal, words) => {
+    checkDiscordManager.mockResolvedValue(refusal);
+    const reply = await run('channels', [{ name: 'announcements', type: 7, value: CHANNEL }]);
+    expect(reply.data.content).toContain(words);
+    expect(writeDiscordSettings).not.toHaveBeenCalled();
+    expect(fetchDiscordSettings).not.toHaveBeenCalled();
   });
 });

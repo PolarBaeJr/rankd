@@ -6,6 +6,7 @@ import { logAudit } from '../audit';
 // The withdrawal/DQ reason is exec-only free text and no longer lives on the
 // entry row — 00118. See lib/private-notes.ts.
 import { PAIR_NOTES, PARTICIPANT_NOTES, writePrivateNote } from '../private-notes';
+import { lateEntryWindow } from '../stage-controls';
 import {
   calculateTeamRating,
   ensureEntryFees,
@@ -66,6 +67,28 @@ import {
 // every member entry path too; these refusals only make the message readable.
 const EXTERNAL_EVENT_REFUSAL = 'This is an external event: add teams by name with Add external team.';
 const EXTERNAL_PAIR_SPLIT_REFUSAL = 'An external team cannot be split or changed. Remove it, or withdraw it once the draw exists.';
+
+// THE LATE-ENTRY WINDOW (00308). A staged event whose first stage is drawn
+// groups still takes an entry until a later stage is drawn; the console then
+// places it in a group (placeLateEntrant). Read only when the status alone
+// would refuse, so registration and check-in pay nothing for it. The entry
+// functions ask staged_late_entry_open again under the field lock.
+async function lateEntryOpen(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: { id: string; format: string | null; status: string; draw_locked: boolean | null; format_config: unknown },
+): Promise<boolean> {
+  if (event.format !== 'staged' || (event.status !== 'bracket_generated' && event.status !== 'live')) return false;
+  const { data, error } = await adminClient.from('tournament_matches')
+    .select('stage')
+    .eq('event_id', event.id)
+    .not('stage', 'is', null);
+  if (error) throw new Error(`Could not read the event's matches: ${error.message}`);
+  return lateEntryWindow(event, (data ?? []).map((m) => m.stage));
+}
+
+// A doubles draw places teams, so a late entry there has to arrive as a pair:
+// a loose player cannot be paired once check-in is over.
+const LATE_SOLO_REFUSAL = 'The draw has been made, so add a late entry as a pair.';
 
 // ---------------------------------------------------------------------------
 // THE FIELD FENCE (00199)
@@ -359,7 +382,8 @@ export async function addParticipantToEvent(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  const late = event.status !== 'registration' && event.status !== 'checkin' && await lateEntryOpen(adminClient, event);
+  if (event.status !== 'registration' && event.status !== 'checkin' && !late) {
     throw new ExpectedError('Cannot add participants in current status');
   }
   if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
@@ -370,6 +394,7 @@ export async function addParticipantToEvent(
   // What it must not take is the same person twice, and the second way to be in
   // a doubles event is as half of a team.
   const doubles = isDoublesEvent(event.event_type);
+  if (late && doubles) throw new ExpectedError(LATE_SOLO_REFUSAL);
   if (doubles) {
     const paired = await playersAlreadyPaired(adminClient, eventId, [playerId]);
     if (paired.has(playerId)) {
@@ -544,7 +569,8 @@ export async function addParticipantsToEvent(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  const late = event.status !== 'registration' && event.status !== 'checkin' && await lateEntryOpen(adminClient, event);
+  if (event.status !== 'registration' && event.status !== 'checkin' && !late) {
     throw new ExpectedError('Cannot add participants in current status');
   }
   if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
@@ -553,6 +579,7 @@ export async function addParticipantsToEvent(
 
   // Solo entry into a doubles event, same as the per-player path above.
   const doubles = isDoublesEvent(event.event_type);
+  if (late && doubles) throw new ExpectedError(LATE_SOLO_REFUSAL);
 
   const failures: BatchAddFailure[] = [];
 
@@ -1243,7 +1270,7 @@ async function addPairToEventImpl(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  if (event.status !== 'registration' && event.status !== 'checkin' && !(await lateEntryOpen(adminClient, event))) {
     throw new ExpectedError('Cannot add pairs in current status');
   }
   if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
@@ -1500,7 +1527,7 @@ async function addExternalPairToEventImpl(
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).maybeSingle();
   if (!event) throw new Error('Event not found');
   if (event.external_event !== true) throw new ExpectedError('External teams can only be entered in an external event.');
-  if (event.status !== 'registration' && event.status !== 'checkin') {
+  if (event.status !== 'registration' && event.status !== 'checkin' && !(await lateEntryOpen(adminClient, event))) {
     throw new ExpectedError('Cannot add pairs in current status');
   }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
@@ -2124,6 +2151,65 @@ async function checkInPairImpl(pairId: string) {
   revalidateEventPaths(checkedPairResult.tournament_id, checkedPairResult.event_id);
 }
 
+// ONE PERSON OF A DOUBLES TEAM (00309). People arrive at the door one at a
+// time, so the desk marks each, and the team is checked in when the second one
+// is. The waiver is asked of the person marked, not their partner: the partner
+// is asked when they arrive. An external team has nobody to ask.
+const PAIR_MEMBER_MIGRATION_MISSING = 'Run migration 00309 first';
+
+type PairMemberResult = FencedFieldResult & { pair_checked_in?: boolean };
+
+export async function checkInPairMember(pairId: string, slot: number): Promise<ActionResult<{ pairCheckedIn: boolean }>> {
+  return runAction(() => setPairMemberHereImpl(pairId, slot, true));
+}
+
+export async function undoPairMemberCheckIn(pairId: string, slot: number): Promise<ActionResult<{ pairCheckedIn: boolean }>> {
+  return runAction(() => setPairMemberHereImpl(pairId, slot, false));
+}
+
+async function setPairMemberHereImpl(pairId: string, slot: number, here: boolean): Promise<{ pairCheckedIn: boolean }> {
+  const admin = await requireCapability('tournaments.draw.checkin.mark.write');
+  // A client-controlled POST field, so the slot is checked here and again in the RPC.
+  if (slot !== 1 && slot !== 2) throw new ExpectedError('A team has two people. Pick the first or the second.');
+  const adminClient = createAdminClient();
+
+  const { data: pair } = await adminClient.from('tournament_pairs')
+    .select(`${pairContextSelect}, player1_id, player2_id, external1_name, external2_name, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)`)
+    .eq('id', pairId)
+    .single();
+
+  const pairCtx = extractEventContext(pair);
+  if (!pairCtx) throw new Error('Could not read this pair. Nothing was changed. Try again.');
+  await assertTournamentNotSuspended(adminClient, pairCtx.tid);
+
+  if (here) {
+    const playerId = (slot === 1 ? pair!.player1_id : pair!.player2_id) as string | null;
+    if (playerId) {
+      await assertEventWaiverSigned(adminClient, pairCtx.tid, {
+        id: pairId,
+        members: [{ id: playerId, name: pickName(slot === 1 ? pair!.player1 : pair!.player2) ?? 'This player' }],
+      });
+    }
+  }
+
+  const { data, error } = await adminClient.rpc('set_pair_member_check_in', {
+    p_pair_id: pairId,
+    p_slot: slot,
+    p_here: here,
+    p_actor: admin.id,
+  });
+  if (error) {
+    if (error.code === 'PGRST202' || error.code === '42883') throw new ExpectedError(PAIR_MEMBER_MIGRATION_MISSING);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as PairMemberResult | null;
+  if (!result?.ok) fencedRefusal(result, 'Pair not found');
+
+  revalidateEventPaths(result.tournament_id ?? pairCtx.tid, result.event_id ?? pairCtx.eventId);
+  return { pairCheckedIn: result.pair_checked_in === true };
+}
+
 export async function markPairNoShow(pairId: string) {
   await requireCapability('tournaments.draw.noshow.write');
   const adminClient = createAdminClient();
@@ -2200,6 +2286,32 @@ async function returnEntryToWaiting(
         ? 'This entry is no longer checked in. Reload the page to see where it stands.'
         : 'This entry is no longer marked as a no-show. Reload the page to see where it stands.',
     );
+  }
+
+  // A checked-in pair goes back through 00309's per-person write, both people
+  // at once, so the slots and the status move together. Before 00309 it takes
+  // the pair-level path below.
+  if (isPair && expected === 'checked_in') {
+    const { data: both, error: bothError } = await adminClient.rpc('set_pair_member_check_in', {
+      p_pair_id: entryId,
+      p_slot: null,
+      p_here: false,
+      p_actor: actorId,
+    });
+    if (!bothError || (bothError.code !== 'PGRST202' && bothError.code !== '42883')) {
+      if (bothError) {
+        Sentry.captureException(bothError);
+        throw new Error(bothError.message);
+      }
+      const bothResult = both as PairMemberResult | null;
+      if (!bothResult?.ok) fencedRefusal(bothResult, 'Pair not found');
+      if (!bothResult.tournament_id || !bothResult.event_id) {
+        Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable, page not revalidated'));
+        throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+      }
+      revalidateEventPaths(bothResult.tournament_id, bothResult.event_id);
+      return;
+    }
   }
 
   const { data, error } = await adminClient.rpc('set_field_entry_status', {

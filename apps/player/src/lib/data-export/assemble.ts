@@ -904,9 +904,11 @@ export async function assembleMemberExport(
 
   // Club events (00244): the member's sign-ups, then just enough of each event
   // to read them by, plus any event they created without signing up for it.
-  data.club_event_signups = await reader.all('club_event_signups', (q) =>
-    q.eq('player_id', playerId),
-  );
+  // The desk's pick of the member's partner (00311) names somebody else, so
+  // both references are dropped rather than left out of a select list.
+  data.club_event_signups = (
+    await reader.all('club_event_signups', (q) => q.eq('player_id', playerId))
+  ).map((row) => dropColumns(row, ['preferred_partner_player_id', 'preferred_partner_external_id']));
   const clubEventIds = ids(data.club_event_signups, 'event_id');
   data.club_events = (
     await reader.allInByKey(
@@ -1013,6 +1015,13 @@ export async function assembleMemberExport(
   // as zero rather than measured, because measuring it would mean counting
   // rows that are not about them.
   withheldRows.session_checkin_tokens = 0;
+  // A non-member's sign-up the desk recorded the member as the partner of
+  // (00311). Counted, never read: the row is the non-member's.
+  withheldRows.club_event_external_signups = await reader.countOnly(
+    'club_event_external_signups',
+    'preferred_partner_player_id',
+    (q) => q.eq('preferred_partner_player_id', playerId),
+  );
   withheldRows.tournament_checkin_tokens = 0;
 
   // Officer free text written ABOUT the member. COUNTED AND NEVER READ, so the

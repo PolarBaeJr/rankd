@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Button, Input, Select, Switch } from '@badminton/ui';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import {
@@ -11,6 +11,7 @@ import {
   type GroupsStage,
   type SlotRef,
   type StageTiebreak,
+  groupLabel,
 } from '@badminton/shared';
 import {
   STAGED_PRESETS,
@@ -75,7 +76,7 @@ export function StagedFormatEditor({
   drawn: ReadonlySet<number>;
   /** The config as saved, which a drawn stage must still match. null when creating. */
   stored: FormatConfig | null;
-  /** An external event moves nobody's rating, so no stage may be rated. */
+  /** An unrated event (external, or a club event's) moves nobody's rating, so no stage may be rated. */
   external: boolean;
 }) {
   const locked = drawn.size > 0;
@@ -145,7 +146,9 @@ export function StagedFormatEditor({
 }
 
 function PresetPicker({ external, onPick }: { external: boolean; onPick: (cfg: FormatConfig) => void }) {
-  const [name, setName] = useState<StagedPresetName>('poolsThenPlacement');
+  const [name, setName] = useState<StagedPresetName>('groupsThenTopKnockout');
+  const [advance, setAdvance] = useState('4');
+  const topN = name === 'groupsThenTopKnockout';
   const [pools, setPoolsText] = useState('4');
   const [groupsPerPool, setGroupsPerPool] = useState('2');
   const [groupSize, setGroupSize] = useState('4');
@@ -169,6 +172,7 @@ function PresetPicker({ external, onPick }: { external: boolean; onPick: (cfg: F
       groupTarget: num(groupTarget),
       finalsTarget: num(finalsTarget),
       bronze,
+      advance: num(advance),
     }, external);
     if (!res.ok) { setError(res.error); return; }
     setError(null);
@@ -185,14 +189,29 @@ function PresetPicker({ external, onPick }: { external: boolean; onPick: (cfg: F
         options={STAGED_PRESETS}
       />
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <Input label="Pools" type="number" min={1} max={32} value={pools} onChange={(e) => setPoolsText(e.target.value)} />
-        <Input label="Groups per pool" type="number" min={1} max={8} value={groupsPerPool} onChange={(e) => setGroupsPerPool(e.target.value)} />
-        <Input label="Teams per group" type="number" min={2} max={16} value={groupSize} onChange={(e) => setGroupSize(e.target.value)} />
-        <Input label="Courts per pool" type="number" min={0} max={16} value={courtsPerPool} onChange={(e) => setCourtsPerPool(e.target.value)} />
+        <Input label={topN ? 'Groups' : 'Pools'} type="number" min={1} max={32} value={pools} onChange={(e) => setPoolsText(e.target.value)} />
+        {topN ? (
+          <Select
+            label="How many go through"
+            value={advance}
+            onChange={(e) => setAdvance(e.target.value)}
+            options={[2, 4, 8, 16, 32].map((n) => ({ value: String(n), label: n === 2 ? '2 (a final)' : `${n}` }))}
+          />
+        ) : (<>
+          <Input label="Groups per pool" type="number" min={1} max={8} value={groupsPerPool} onChange={(e) => setGroupsPerPool(e.target.value)} />
+          <Input label="Teams per group" type="number" min={2} max={16} value={groupSize} onChange={(e) => setGroupSize(e.target.value)} />
+        </>)}
+        <Input label={topN ? 'Courts per group' : 'Courts per pool'} type="number" min={0} max={16} value={courtsPerPool} onChange={(e) => setCourtsPerPool(e.target.value)} />
         <Input label="Group games to" type="number" min={5} max={30} value={groupTarget} onChange={(e) => setGroupTarget(e.target.value)} />
         <Input label="Finals to" type="number" min={5} max={30} value={finalsTarget} onChange={(e) => setFinalsTarget(e.target.value)} />
       </div>
-      {name === 'poolsThenSemisFinal' && (
+      {topN && (
+        <p className="text-xs text-[var(--text-muted)]">
+          Every group winner goes through first, then the best runners-up across the groups, then the best thirds,
+          until {advance} are in. The groups fill evenly from whoever turns up.
+        </p>
+      )}
+      {(name === 'poolsThenSemisFinal' || (topN && num(advance) >= 4)) && (
         <Switch label="Play for third place" checked={bronze} onChange={setBronze} />
       )}
       {error && <p className="text-xs text-[var(--color-danger)]" role="alert">{error}</p>}
@@ -428,7 +447,7 @@ function StageCard({
           <Trash2 className="w-4 h-4" />
         </button>
       </div>
-      {locked && <p className="text-xs text-[var(--text-muted)]">Drawn, so its settings are fixed. Redraw it to start again.</p>}
+      {locked && <p className="text-xs text-[var(--text-muted)]">Drawn, so its settings are fixed apart from its courts. Redraw it to start again.</p>}
 
       <div className="space-y-2">
         <p className={heading}>Scoring</p>
@@ -501,7 +520,7 @@ function StageCard({
           <Switch label="Head starts" checked={s.handicap} disabled={locked} onChange={(v) => set(setScoring(stage, { handicap: v }))} />
           <Switch
             label="Rated"
-            description={external ? 'An external event moves nobody’s rating.' : s.handicap ? 'A stage with head starts is never rated.' : undefined}
+            description={external ? 'This event moves nobody’s rating.' : s.handicap ? 'A stage with head starts is never rated.' : undefined}
             checked={stage.rated && !external && !s.handicap}
             disabled={locked || external || s.handicap}
             onChange={(v) => set({ ...stage, rated: v })}
@@ -564,6 +583,13 @@ function StageCard({
             />
           </div>
           <Switch label="Play for third place" checked={stage.thirdPlace} disabled={locked} onChange={(v) => set({ ...stage, thirdPlace: v })} />
+          <CourtsInput
+            label="Courts"
+            value={stage.courts ?? []}
+            courtsLocked={false}
+            onChange={(next) => set({ ...stage, courts: next.length > 0 ? next : undefined })}
+          />
+          <p className="text-xs text-[var(--text-muted)]">Leave empty to use any court.</p>
         </div>
       )}
 
@@ -725,6 +751,7 @@ function SlotsEditor({
 
 function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked: boolean; onChange: (s: GroupsStage) => void }) {
   const courtsMode = stage.courts?.mode ?? 'none';
+  const gamesHintId = useId();
   return (
     <div className="space-y-2">
       <p className={heading}>Groups</p>
@@ -740,6 +767,17 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
           value={stage.groupSize === 'auto' ? '' : shown(stage.groupSize)}
           placeholder="Even split"
           onChange={(e) => onChange({ ...stage, groupSize: e.target.value.trim() === '' ? 'auto' : num(e.target.value) })}
+        />
+        <Input
+          label="Games per team"
+          type="number"
+          min={1}
+          max={15}
+          disabled={locked}
+          value={shown(stage.gamesPerTeam)}
+          placeholder="Everyone plays everyone"
+          aria-describedby={gamesHintId}
+          onChange={(e) => onChange({ ...stage, gamesPerTeam: e.target.value.trim() === '' ? undefined : num(e.target.value) })}
         />
         <Select
           label="Dealt into groups"
@@ -779,14 +817,17 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
           ]}
         />
       </div>
+      <p id={gamesHintId} className="text-xs text-[var(--text-muted)]">
+        Games per team: each group plays this many rounds. In a group with an odd number of teams one team sits out each round, so some play one fewer.
+      </p>
       {stage.courts?.mode === 'per_pool' && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {stage.courts.pools.map((list, pi) => (
             <CourtsInput
               key={pi}
-              label={`G${pi + 1} courts`}
+              label={stage.groupsPerPool === 1 ? `Group ${groupLabel(pi + 1)} courts` : `Pool ${pi + 1} courts`}
               value={list}
-              disabled={locked}
+              courtsLocked={false}
               onChange={(next) => stage.courts?.mode === 'per_pool' && onChange({
                 ...stage,
                 courts: { mode: 'per_pool', pools: stage.courts.pools.map((x, j) => (j === pi ? next : x)) },
@@ -799,7 +840,7 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
         <CourtsInput
           label="Courts"
           value={stage.courts.courts}
-          disabled={locked}
+          courtsLocked={false}
           onChange={(next) => onChange({ ...stage, courts: { mode: 'shared', courts: next } })}
         />
       )}
@@ -815,14 +856,22 @@ function GroupsFields({ stage, locked, onChange }: { stage: GroupsStage; locked:
   );
 }
 
-/** Court names as typed text, parsed on blur so a half-typed "1, " is not cut short. */
-function CourtsInput({ label, value, disabled, onChange }: { label: string; value: string[]; disabled: boolean; onChange: (next: string[]) => void }) {
-  const [text, setText] = useState(value.join(', '));
+/**
+ * Court names as typed text, parsed on blur so a half-typed "1, " is not cut
+ * short. Locked on its own, not with the stage: a drawn stage's courts can
+ * still change, so a court that breaks on the day can be swapped out.
+ */
+function CourtsInput({ label, value, courtsLocked, onChange }: { label: string; value: string[]; courtsLocked: boolean; onChange: (next: string[]) => void }) {
+  const joined = value.join(', ');
+  const [text, setText] = useState(joined);
+  // A preset replaces the list from outside; show it, or the next blur writes the old text back.
+  const [shown, setShown] = useState(joined);
+  if (joined !== shown) { setShown(joined); setText(joined); }
   return (
     <Input
       label={label}
       value={text}
-      disabled={disabled}
+      disabled={courtsLocked}
       placeholder="1, 2"
       onChange={(e) => setText(e.target.value)}
       onBlur={() => { const next = parseCourts(text); onChange(next); setText(next.join(', ')); }}

@@ -17,6 +17,7 @@ function errorBoundaries(dir: string): string[] {
 
 function expectedArea(route: string): string {
   if (route.startsWith('fees/')) return 'FEE';
+  if (route.startsWith('finances/')) return 'FEE';
   if (route.startsWith('tournaments/')) return 'TRN';
   return 'GEN';
 }

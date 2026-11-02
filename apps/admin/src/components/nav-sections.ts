@@ -12,6 +12,7 @@ import {
   Calendar,
   CalendarHeart,
   DollarSign,
+  Wallet,
   Megaphone,
   ShieldCheck,
   FileSignature,
@@ -27,6 +28,7 @@ import {
   type Capability,
   type Permissions,
 } from '../lib/permissions';
+import { FEE_LIST_CAPABILITIES, FINANCES_CAPABILITIES } from '../lib/fee-views';
 // Deep and type-only, NOT the '@badminton/ui' barrel: that loads every
 // component in the package, and this module is imported by tests that must not
 // need a DOM.
@@ -77,17 +79,17 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: '/sessions', label: 'Sessions', icon: Calendar, area: 'sessions' },
       { href: '/announcements', label: 'Announcements', icon: Megaphone, area: 'announcements' },
       { href: '/seasons', label: 'Seasons', icon: Medal, area: 'seasons' },
-      // Route stays /fees — it is the section's access key in permissions.ts
-      // and every existing link and revalidatePath points at it. The label is
-      // "Finances" because the section is no longer only fees: other income and
-      // expenses are tabs on the same page.
+      // Two pages in one section, both opened by fees.page. /fees is the list
+      // of member fees (who has paid, receipts to review, who still owes);
+      // /finances is the rest of the club's money: other income, expenses and
+      // the net position. They were tabs on one page until the fee list grew
+      // views of its own.
       //
-      // Sits in the first row now that /fees is exec-level: for an exec it is
-      // the only back-office link they have, and left in the second row it
-      // would have rendered as a one-item strip under a divider. An exec who
-      // follows it lands on the Expenses tab and sees nothing else — the page
-      // decides that, not this list.
-      { href: '/fees', label: 'Finances', icon: DollarSign, area: 'fees' },
+      // In the first row because an officer reaches the section: on the floor
+      // an exec holds the expense ledger and nothing on /fees, so the nav shows
+      // them Finances and not Fees (adminNavItemHasContent below).
+      { href: '/fees', label: 'Fees', icon: DollarSign, area: 'fees' },
+      { href: '/finances', label: 'Finances', icon: Wallet, area: 'fees' },
     ],
   },
   {
@@ -167,7 +169,7 @@ export const NAV_LAYOUT: NavEntry<NavItem>[] = [
   group(
     'club',
     'Club',
-    ['/announcements', '/fees', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'],
+    ['/announcements', '/fees', '/finances', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'],
     [{ parent: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] }],
   ),
   group('system', 'System', ['/ratings', '/club-changes', '/audit']),
@@ -190,4 +192,17 @@ export function adminNavItemOn(
 ): boolean {
   const id = adminFeatureFor(href);
   return id === null || features[id] || held.has(featureAccessCapability(id));
+}
+
+/**
+ * False for /fees or /finances when the viewer holds nothing that puts a row or
+ * a control on it. Both are opened by fees.page, which every officer holds, so
+ * canAccess() alone would offer an officer on the floor a Fees link to an empty
+ * list. Layered on top of canAccess() like adminNavItemOn; the page itself
+ * stays reachable by URL, and /fees sends such a viewer on to /finances.
+ */
+export function adminNavItemHasContent(href: string, held: ReadonlySet<Capability>): boolean {
+  if (href === '/fees') return FEE_LIST_CAPABILITIES.some((capability) => held.has(capability));
+  if (href === '/finances') return FINANCES_CAPABILITIES.some((capability) => held.has(capability));
+  return true;
 }

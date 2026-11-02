@@ -5,9 +5,9 @@ import { ExpectedError } from '../expected-error';
 import { getRoundName, nextPowerOf2 } from '../constants';
 import { getStandardSeedPositions } from '../draw-order';
 import { stageMatchRules } from './handicap';
-import { planStageGroups, scheduleStage } from './groups';
+import { planStageGroups, scheduleStage, type ScheduledStageMatch } from './groups';
 import { findStage, resolveStageMatches } from './advance';
-import type { FormatConfig, FormatStage, GroupsStage, KnockoutStage, MatchesStage } from './schema';
+import type { FormatConfig, FormatStage, KnockoutStage, MatchesStage } from './schema';
 import type { FormatResults } from './standings';
 
 export interface StageEntrant {
@@ -99,8 +99,11 @@ export function buildStageRows(
   const first = opts.firstMatchNumber ?? 1;
 
   switch (stage.kind) {
-    case 'groups':
-      return groupRows(stage, entrants, opts.rng ?? Math.random, newId, base, first, starts);
+    case 'groups': {
+      const planned = planStageGroups(entrants, stage, opts.rng ?? Math.random);
+      const schedule = scheduleStage(planned, stage, (e) => e.id);
+      return groupScheduleRows(cfg, stageKey, schedule, generation, { newId, firstMatchNumber: first });
+    }
     case 'knockout':
       return knockoutRows(stage, entrants, newId, base, first, starts);
     case 'matches':
@@ -115,17 +118,34 @@ const unrouted = {
   winner_to_match_id: null, winner_to_position: null, loser_to_match_id: null, loser_to_position: null,
 } as const;
 
-function groupRows(
-  stage: GroupsStage,
-  entrants: readonly StageEntrant[],
-  rng: () => number,
-  newId: () => string,
-  base: Base,
-  first: number,
-  starts: Starts,
+/**
+ * The rows for a groups stage's scheduled matches. The draw passes the whole
+ * schedule; a round added later passes only its own, with slots that start
+ * after the stage's last one, so the per-slot positions below cannot collide
+ * with a row already stored.
+ */
+export function groupScheduleRows(
+  cfg: FormatConfig,
+  stageKey: string,
+  schedule: ReadonlyArray<ScheduledStageMatch<StageEntrant>>,
+  generation: string,
+  opts: { newId?: () => string; firstMatchNumber: number },
 ): StageRow[] {
-  const planned = planStageGroups(entrants, stage, rng);
-  const schedule = scheduleStage(planned, stage, (e) => e.id);
+  const index = cfg.stages.findIndex((s) => s.key === stageKey);
+  const stage = findStage(cfg, stageKey);
+  if (!stage || index < 0 || stage.kind !== 'groups') throw new ExpectedError(`There is no groups stage "${stageKey}".`);
+  const newId = opts.newId ?? (() => globalThis.crypto.randomUUID());
+  const first = opts.firstMatchNumber;
+  const base: Base = {
+    draw_generation_id: generation,
+    stage: index + 1,
+    games_per_match: stage.scoring.bestOf,
+    points_per_game: stage.scoring.target,
+  };
+  const starts = (a: StageEntrant, b: StageEntrant) => {
+    const r = stageMatchRules(cfg, stage, a.category ?? null, b.category ?? null);
+    return { handicap_a: r.startA, handicap_b: r.startB };
+  };
   // round_number is the slot. Slots repeat across pools, so the position is a
   // counter per slot across the whole stage (the per-stage unique index).
   const positionInSlot = new Map<number, number>();
@@ -136,7 +156,7 @@ function groupRows(
     return {
       ...base,
       ...unrouted,
-      ...starts(sides),
+      ...starts(m.a, m.b),
       ...sides,
       id: newId(),
       pool_number: m.pool,

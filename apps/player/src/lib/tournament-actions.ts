@@ -350,6 +350,9 @@ async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): P
         throw new ExpectedError('You are already on the waitlist for this event.');
       case 'event_has_room':
         throw new ExpectedError('This event has room, so you can enter it now.');
+      // 00312: as many members are waiting as the event's limit allows.
+      case 'waitlist_full':
+        throw new ExpectedError('The waitlist is full.');
       case 'already_registered':
         throw new ExpectedError(
           joined.entry_status === 'withdrawn' || joined.entry_status === 'disqualified'
@@ -361,6 +364,10 @@ async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): P
           `You are already entered in ${joined.cap} ${joined.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
           'Withdraw from one to join this waitlist, or ask a tournament admin if one of them is a doubles pair.',
         );
+      // 00307: a tournament run for a club event fills from the club event's
+      // list, where the e-transfer screenshot is asked for.
+      case 'club_event_linked':
+        throw new ExpectedError('This tournament is run for a club event. Sign up on the club event page to be entered.');
       case 'registration_closed':
         throw new ExpectedError('Registration is closed');
       case 'registration_not_open':

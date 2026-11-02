@@ -21,8 +21,12 @@ import { LiveTournament } from '../../../live-tournament';
 import { readTournamentBonusSettingsForDisplay } from '@/lib/platform-settings';
 import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes } from '@/lib/private-notes';
 import { hasResultsTab } from '@/lib/event-tabs';
+import { laterSignup } from '@/lib/entry-sort';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { DrawCapabilities } from '@/lib/participant-controls';
+import { loadPartnerBoard } from '@/lib/partner-board';
+import { partnerAdvice } from '@/lib/partner-check';
+import type { ParticipantPartners } from './components/ParticipantsTab';
 import type { Capability } from '@/lib/permissions';
 import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../event-format-fields';
@@ -167,6 +171,7 @@ export default async function EventPage({
     waitlist,
     categoryRequests,
     importRows,
+    clubSignups,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -318,6 +323,15 @@ export default async function EventPage({
         }
         return (data ?? []) as { participant_id: string | null; pair_id: string | null; status: 'entered' | 'awaiting_partner' }[];
       }),
+    // When each member signed up on the linked club event, for the Participants
+    // tab's sort. A failed read only loses the sort's times: empty, no throw.
+    linkedClubEvent
+      ? supabase
+          .from('club_event_signups')
+          .select('player_id, created_at')
+          .eq('event_id', linkedClubEvent.id)
+          .then(({ data, error }) => (error ? [] : ((data ?? []) as unknown as { player_id: string; created_at: string }[])))
+      : Promise.resolve([] as { player_id: string; created_at: string }[]),
   ]);
   const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
   for (const row of importRows) {
@@ -328,6 +342,56 @@ export default async function EventPage({
 
   const pairs: PairWithPlayers[] = (pairRows ?? []) as PairWithPlayers[];
   const participants: ParticipantWithPlayer[] = (participantRows ?? []) as ParticipantWithPlayer[];
+
+  // Sign-up time per entry, off the club event rather than the entry rows: the
+  // 00292 backfill gave every entry the same now(), and pairing two people
+  // re-creates the row, so the entry's own created_at says nothing about who
+  // signed up first. A pair takes the later of its two members' times.
+  let signedUpAt: Record<string, string> | null = null;
+  if (linkedClubEvent) {
+    const signupTimes = new Map(clubSignups.map((row) => [row.player_id, row.created_at]));
+    const times: Record<string, string> = {};
+    for (const participant of participants) {
+      const at = signupTimes.get(participant.player_id);
+      if (at) times[participant.id] = at;
+    }
+    for (const pair of pairs) {
+      const at = laterSignup(
+        pair.player1_id ? signupTimes.get(pair.player1_id) : null,
+        pair.player2_id ? signupTimes.get(pair.player2_id) : null,
+      );
+      if (at) times[pair.id] = at;
+    }
+    signedUpAt = times;
+  }
+
+  // The club event's partner check (00311), under each unpaired name. Read
+  // only for a viewer who may read the club event's sign-ups, since it carries
+  // their Form answers; nothing renders without it.
+  let partners: ParticipantPartners | null = null;
+  if (linkedClubEvent && doubles && may('events.signups.read')) {
+    const board = await loadPartnerBoard(supabase, linkedClubEvent.id);
+    const byKey = partnerAdvice(board.people, board.result, board.pool);
+    const advice: ParticipantPartners['advice'] = {};
+    const keys: ParticipantPartners['keys'] = {};
+    for (const participant of participants) {
+      const key = `member:${participant.player_id}`;
+      if (!byKey[key]) continue;
+      advice[participant.id] = byKey[key];
+      keys[participant.id] = key;
+    }
+    partners = {
+      clubEventId: linkedClubEvent.id,
+      advice,
+      keys,
+      options: board.people.map((person) => ({
+        key: person.key,
+        name: person.name,
+        guest: person.key.startsWith('guest:'),
+      })),
+      canEditPartner: may('events.signups.checkin.write') && board.choiceReady,
+    };
+  }
 
   // The waiver state each row shows, resolved on the server. It has to be:
   // eventWaiverHash uses node:crypto, so a client component could not compute
@@ -463,6 +527,8 @@ export default async function EventPage({
         waitlist={waitlist}
         categoryRequests={categoryRequests}
         imported={imported}
+        signedUpAt={signedUpAt}
+        partners={partners}
         viewerId={viewer.id}
       />
     </div>

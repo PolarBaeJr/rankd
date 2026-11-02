@@ -984,15 +984,7 @@ export type Database = {
           sort_order?: number
           track?: Database["public"]["Enums"]["session_group"] | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "discord_self_roles_guild_id_fkey"
-            columns: ["guild_id"]
-            isOneToOne: false
-            referencedRelation: "discord_guilds"
-            referencedColumns: ["guild_id"]
-          },
-        ]
+        Relationships: []
       }
       discord_server_roles: {
         Row: {
@@ -1025,6 +1017,57 @@ export type Database = {
             referencedColumns: ["guild_id"]
           },
         ]
+      }
+      discord_server_settings: {
+        Row: {
+          automod_action: string
+          automod_flag_suspects: boolean
+          automod_spray: boolean
+          automod_spray_channels: number
+          automod_spray_window_minutes: number
+          automod_timeout_minutes: number
+          automod_trap_action: string
+          automod_trap_channel_ids: string[]
+          automod_words: string[]
+          automod_words_action: string
+          guild_id: string
+          scam_guard: boolean
+          server_log_channel_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          automod_action?: string
+          automod_flag_suspects?: boolean
+          automod_spray?: boolean
+          automod_spray_channels?: number
+          automod_spray_window_minutes?: number
+          automod_timeout_minutes?: number
+          automod_trap_action?: string
+          automod_trap_channel_ids?: string[]
+          automod_words?: string[]
+          automod_words_action?: string
+          guild_id: string
+          scam_guard?: boolean
+          server_log_channel_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          automod_action?: string
+          automod_flag_suspects?: boolean
+          automod_spray?: boolean
+          automod_spray_channels?: number
+          automod_spray_window_minutes?: number
+          automod_timeout_minutes?: number
+          automod_trap_action?: string
+          automod_trap_channel_ids?: string[]
+          automod_words?: string[]
+          automod_words_action?: string
+          guild_id?: string
+          scam_guard?: boolean
+          server_log_channel_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       discord_session_pings: {
         Row: {
@@ -1160,6 +1203,7 @@ export type Database = {
           discord_event_id: string
           guild_id: string
           synced_ends_at: string
+          synced_location: string | null
           synced_name: string
           synced_starts_at: string
           tournament_id: string
@@ -1170,6 +1214,7 @@ export type Database = {
           discord_event_id: string
           guild_id: string
           synced_ends_at: string
+          synced_location?: string | null
           synced_name: string
           synced_starts_at: string
           tournament_id: string
@@ -1180,6 +1225,7 @@ export type Database = {
           discord_event_id?: string
           guild_id?: string
           synced_ends_at?: string
+          synced_location?: string | null
           synced_name?: string
           synced_starts_at?: string
           tournament_id?: string
@@ -3073,6 +3119,62 @@ export type Database = {
           },
         ]
       }
+      tournament_court_helpers: {
+        Row: {
+          court_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          player_id: string
+          tournament_id: string
+        }
+        Insert: {
+          court_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          player_id: string
+          tournament_id: string
+        }
+        Update: {
+          court_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          player_id?: string
+          tournament_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_court_helpers_court_fkey"
+            columns: ["court_id", "tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_courts"
+            referencedColumns: ["id", "tournament_id"]
+          },
+          {
+            foreignKeyName: "tournament_court_helpers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_court_helpers_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_court_helpers_tournament_id_fkey"
+            columns: ["tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_courts: {
         Row: {
           active: boolean
@@ -3664,7 +3766,9 @@ export type Database = {
           group_number: number | null
           id: string
           pair_name: string | null
+          player1_checked_in_at: string | null
           player1_id: string | null
+          player2_checked_in_at: string | null
           player2_id: string | null
           points: number | null
           seed_number: number | null
@@ -3684,7 +3788,9 @@ export type Database = {
           group_number?: number | null
           id?: string
           pair_name?: string | null
+          player1_checked_in_at?: string | null
           player1_id?: string | null
+          player2_checked_in_at?: string | null
           player2_id?: string | null
           points?: number | null
           seed_number?: number | null
@@ -3704,7 +3810,9 @@ export type Database = {
           group_number?: number | null
           id?: string
           pair_name?: string | null
+          player1_checked_in_at?: string | null
           player1_id?: string | null
+          player2_checked_in_at?: string | null
           player2_id?: string | null
           points?: number | null
           seed_number?: number | null
@@ -3879,8 +3987,10 @@ export type Database = {
           created_at: string
           created_by: string | null
           end_date: string | null
+          ends_time: string | null
           event_multiplier: number
           id: string
+          location: string | null
           max_events_per_player: number | null
           name: string
           placement_bonus_amounts: Json | null
@@ -3889,6 +3999,7 @@ export type Database = {
           registration_opens_at: string | null
           season_id: string | null
           start_date: string
+          starts_time: string | null
           status: Database["public"]["Enums"]["tournament_status"]
           suspended_at: string | null
           suspension_reason: string | null
@@ -3902,8 +4013,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           end_date?: string | null
+          ends_time?: string | null
           event_multiplier?: number
           id?: string
+          location?: string | null
           max_events_per_player?: number | null
           name: string
           placement_bonus_amounts?: Json | null
@@ -3912,6 +4025,7 @@ export type Database = {
           registration_opens_at?: string | null
           season_id?: string | null
           start_date: string
+          starts_time?: string | null
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null
@@ -3925,8 +4039,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           end_date?: string | null
+          ends_time?: string | null
           event_multiplier?: number
           id?: string
+          location?: string | null
           max_events_per_player?: number | null
           name?: string
           placement_bonus_amounts?: Json | null
@@ -3935,6 +4051,7 @@ export type Database = {
           registration_opens_at?: string | null
           season_id?: string | null
           start_date?: string
+          starts_time?: string | null
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null
@@ -5021,6 +5138,16 @@ export type Database = {
           media_consent_changed_at: string
         }[]
       }
+      set_pair_member_check_in: {
+        Args: {
+          p_actor: string
+          p_here: boolean
+          p_pair_id: string
+          p_slot: number
+        }
+        Returns: Json
+      }
+      staged_late_entry_open: { Args: { p_event_id: string }; Returns: boolean }
       staged_source_fingerprint: {
         Args: { p_event_id: string; p_stage: number }
         Returns: Json

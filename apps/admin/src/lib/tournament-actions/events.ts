@@ -47,6 +47,7 @@ import {
   isWaitlistMissing,
   type WaitlistFillResult,
 } from './_internal';
+import { fillFreeCourts, type AutoCallReport } from './auto-call';
 
 // ============================================================
 // Event Management
@@ -409,6 +410,11 @@ async function updateTournamentEventImpl(
     format_config?: unknown;
     /** A legacy event's points table (00275). Sent on its own once the event is drawn. */
     points_config?: unknown;
+    /**
+     * Switch an undrawn event to stages, sent with its format_config. The only
+     * format change offered: the three simple formats are each a preset of it.
+     */
+    format?: 'staged';
   }
 ) {
   const admin = await requireCapability('tournaments.manage.event.update.write');
@@ -487,10 +493,39 @@ async function updateTournamentEventImpl(
   // The waitlist has its own action, which takes the field lock (00278).
   delete patch.waitlist_enabled;
   delete patch.waitlist_auto_promote;
+  delete patch.waitlist_limit;
+
+  // SWITCHING TO STAGES. The gate above already refused a drawn event (the
+  // update has more than one key, and the event is not staged yet). The
+  // simple format's own columns are cleared so nothing reads a leftover
+  // pool_to_bracket shape later, and the event keeps the rating it was made
+  // with: a club event's linked tournament is created unrated, while a stage
+  // is rated unless it says otherwise.
+  const switchingToStages = 'format' in updates;
+  if (switchingToStages) {
+    if (updates.format !== 'staged') throw new ExpectedError('An event can only be switched to stages.');
+    if (event.format === 'staged') throw new ExpectedError('This event is already played in stages.');
+    if (updates.format_config == null) throw new ExpectedError('Set out the stages before switching.');
+    const simpleOnly = ['group_count', 'qualifiers_per_group', 'seed_skip_count', 'seeded_from_event_id', 'seed_by', 'points_config'] as const;
+    if (simpleOnly.some((k) => k in updates)) {
+      throw new ExpectedError('Switching to stages replaces the group and bracket settings, so send only the stages.');
+    }
+    Object.assign(patch, {
+      format: 'staged',
+      group_count: null,
+      qualifiers_per_group: null,
+      seed_skip_count: 0,
+      seed_by: null,
+      seeded_from_event_id: null,
+      points_config: null,
+    });
+  }
+  const targetFormat = switchingToStages ? 'staged' : event.format;
+  const keepsUnrated = event.external_event === true || (event as { rated?: boolean | null }).rated === false;
 
   if ('format_config' in updates) {
-    if (event.format !== 'staged') throw new ExpectedError('Only an event played in stages has stage settings.');
-    const cfg = normalizeFormatConfig(updates.format_config, event.external_event === true);
+    if (targetFormat !== 'staged') throw new ExpectedError('Only an event played in stages has stage settings.');
+    const cfg = normalizeFormatConfig(updates.format_config, keepsUnrated);
     const { data: drawnRows, error: drawnError } = await adminClient.from('tournament_matches')
       .select('stage')
       .eq('event_id', eventId)
@@ -813,6 +848,74 @@ export async function setEventWaitlist(
   return runAction(() => setEventWaitlistImpl(eventId, settings));
 }
 
+const WAITLIST_LIMIT_MIGRATION_MISSING = 'Run migration 00312 first';
+
+/**
+ * How many members may wait at once (00312). Null is no limit. Lowering it
+ * removes nobody; it only stops new joins.
+ */
+async function setEventWaitlistLimitImpl(eventId: string, limit: number | null) {
+  const admin = await requireCapability('tournaments.manage.event.update.write');
+  const adminClient = createAdminClient();
+
+  if (!(limit === null || (Number.isInteger(limit) && limit >= 1))) {
+    throw new ExpectedError('The waitlist limit must be a whole number of at least 1, or blank for no limit.');
+  }
+
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError || !event) throw new Error(eventError?.message ?? 'Event not found');
+  if (!('waitlist_limit' in event)) throw new ExpectedError(WAITLIST_LIMIT_MIGRATION_MISSING);
+  if (event.external_event === true) {
+    throw new ExpectedError('An external event has no waitlist: its teams are entered by name.');
+  }
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('The waitlist can only be changed while the event is taking entries or checking in.');
+  }
+
+  // Not in the generated types until 00312 reaches production.
+  const { data, error } = await adminClient.rpc('set_event_waitlist_limit' as never, {
+    p_event_id: eventId,
+    p_limit: limit,
+    p_actor: admin.id,
+  } as never);
+  if (error) {
+    if (isWaitlistMissing(error)) throw new ExpectedError(WAITLIST_LIMIT_MIGRATION_MISSING);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as { ok: boolean; reason?: string; limit?: number | null; previous_limit?: number | null } | null;
+  if (!result?.ok) {
+    switch (result?.reason) {
+      case 'invalid_limit':
+        throw new ExpectedError('The waitlist limit must be a whole number of at least 1, or blank for no limit.');
+      case 'external_event':
+        throw new ExpectedError('An external event has no waitlist: its teams are entered by name.');
+      case 'event_status':
+        throw new ExpectedError('The waitlist can only be changed while the event is taking entries or checking in.');
+      default:
+        throw new ExpectedError('The waitlist could not be changed. Reload the page and try again.');
+    }
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'event_waitlist_updated',
+    performed_by: admin.id,
+    details: { limit, previous_limit: result.previous_limit ?? null },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+}
+
+export async function setEventWaitlistLimit(
+  eventId: string,
+  limit: number | null,
+): Promise<ActionResult<void>> {
+  return runAction(() => setEventWaitlistLimitImpl(eventId, limit));
+}
+
 export async function deleteTournamentEvent(eventId: string) {
   const admin = await requireCapability('tournaments.manage.event.delete.write');
   const adminClient = createAdminClient();
@@ -847,7 +950,10 @@ export async function deleteTournamentEvent(eventId: string) {
 // for failed with nothing to act on. 599b8a0 / 057f5b3 / 20e8bea did this for
 // the actions next door; these two were missed because they are called from a
 // component that already checks `res.ok` for the generator calls beside them.
-async function setEventStatusImpl(eventId: string, status: TournamentEventStatus) {
+async function setEventStatusImpl(
+  eventId: string,
+  status: TournamentEventStatus,
+): Promise<{ autoCall: AutoCallReport } | undefined> {
   const admin = await requireCapability('tournaments.manage.event.status.write');
   const adminClient = createAdminClient();
 
@@ -963,13 +1069,26 @@ async function setEventStatusImpl(eventId: string, status: TournamentEventStatus
     details: sweep.forfeited > 0 || sweep.unresolved > 0 ? sweep : undefined,
   });
 
+  // Starting a staged event puts the first matches on every free court. The
+  // row read above still says bracket_generated, so it is passed as live.
+  let autoCall: AutoCallReport | undefined;
+  if (status === 'live' && event.format === 'staged') {
+    try {
+      autoCall = (await fillFreeCourts(adminClient, { event: { ...event, status: 'live' }, actorId: admin.id, trigger: 'start' })) ?? undefined;
+    } catch (err) {
+      Sentry.captureException(err);
+      autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+    }
+  }
+
   revalidateEventPaths(event.tournament_id, eventId);
   scheduleManagedFormSync('tournament', event.tournament_id);
+  return autoCall ? { autoCall } : undefined;
 }
 
 export async function setEventStatus(
   eventId: string,
   status: TournamentEventStatus,
-): Promise<ActionResult<void>> {
-  return runAction(async () => { await setEventStatusImpl(eventId, status); });
+): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(() => setEventStatusImpl(eventId, status));
 }

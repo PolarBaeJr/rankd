@@ -4,6 +4,7 @@ import {
   finalPlacings,
   formatConfigSchema,
   groupTable,
+  groupsThenTopKnockout,
   headStartFor,
   legacyFormatDefinition,
   planStageGroups,
@@ -472,5 +473,43 @@ describe('pickCategory', () => {
   it('is null with no config or no suggestion', () => {
     expect(pickCategory(null, 'mens')).toBeNull();
     expect(pickCategory(cfg, null)).toBeNull();
+  });
+});
+
+describe('groups, then the top N to a knockout', () => {
+  const placeOf = (cfg: FormatConfig, results: FormatResults, groups: number, place: number) =>
+    Array.from({ length: groups }, (_, i) => groupTable(cfg, cfg.stages[0] as GroupsStage, results, i + 1, 1).rows[place - 1]!.id);
+
+  it('takes the best 8 from 3 groups: every winner, every runner-up, the best 2 thirds', () => {
+    const cfg = groupsThenTopKnockout({ pools: 3, advance: 8 });
+    expect(formatConfigSchema.parse(cfg)).toEqual(cfg);
+    const { results } = playGroups(cfg);
+    const slots = resolveSlots(cfg, 'knockout', results).map((s) => s.entry);
+    expect(slots).toHaveLength(8);
+    expect(new Set(slots).size).toBe(8);
+    expect(slots.slice(0, 3).sort()).toEqual(placeOf(cfg, results, 3, 1).sort());
+    expect(slots.slice(3, 6).sort()).toEqual(placeOf(cfg, results, 3, 2).sort());
+    const thirds = placeOf(cfg, results, 3, 3);
+    expect(slots.slice(6).every((id) => thirds.includes(id!))).toBe(true);
+  });
+
+  it('takes the best 2 group winners of 4 for a final', () => {
+    const cfg = groupsThenTopKnockout({ pools: 4, advance: 2 });
+    const { results } = playGroups(cfg);
+    const slots = resolveSlots(cfg, 'knockout', results).map((s) => s.entry);
+    expect(slots).toHaveLength(2);
+    expect(slots.every((id) => placeOf(cfg, results, 4, 1).includes(id!))).toBe(true);
+    expect(cfg.stages[1]).toMatchObject({ kind: 'knockout', size: 2, thirdPlace: false });
+  });
+
+  it('reads one group top down', () => {
+    const cfg = groupsThenTopKnockout({ pools: 1, advance: 4 });
+    const { results } = playGroups(cfg);
+    const table = groupTable(cfg, cfg.stages[0] as GroupsStage, results, 1, 1).rows.map((r) => r.id);
+    expect(resolveSlots(cfg, 'knockout', results).map((s) => s.entry)).toEqual(table.slice(0, 4));
+  });
+
+  it('refuses a number going through that is not a power of 2', () => {
+    expect(() => groupsThenTopKnockout({ pools: 3, advance: 6 })).toThrow(/2, 4, 8/);
   });
 });

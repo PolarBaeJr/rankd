@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { ArrowRight, MapPin } from 'lucide-react';
-import { courtLabel, type TournamentCourt } from '@badminton/shared';
+import { allowedTournamentCourts, courtLabel, parseFormatConfig, stageCourtLabels, type TournamentCourt } from '@badminton/shared';
 import type {
   TournamentMatchRow,
   TournamentEventRow,
@@ -79,10 +79,17 @@ export function LiveStrip({
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
   const canScore = canEnterResult && deskEventPlaying(event.status, event.format as string);
+  const cannotScore = canScore ? null
+    : !canEnterResult ? 'You cannot enter scores for this event.' : 'Scores open when the tournament starts.';
   const onCourt = rows.filter((r) => r.state === 'live');
   const next = nextCallable(rows);
   const counts = deskCounts(rows);
-  const suggested = next ? deskCourtSuggestion(next, courts, new Set(busyCourtIds)) : null;
+  const cfg = useMemo(
+    () => (event.format === 'staged' ? parseFormatConfig(event.format_config) : null),
+    [event.format, event.format_config],
+  );
+  const allowed = next && courts ? allowedTournamentCourts(courts, stageCourtLabels(cfg, next.match)) : null;
+  const suggested = next ? deskCourtSuggestion(next, courts, new Set(busyCourtIds), allowed) : null;
 
   // The same condition that adds the courts tab, so the button below can never
   // point at a tab that is not there.
@@ -125,11 +132,14 @@ export function LiveStrip({
                       {body}
                     </button>
                   ) : (
-                    <span key={match.id} className={chip}>{body}</span>
+                    <span key={match.id} className={chip} title={cannotScore ?? undefined}>{body}</span>
                   );
                 })}
               </div>
             </div>
+          )}
+          {onCourt.length > 0 && cannotScore && (
+            <p className="text-xs text-[var(--text-muted)]">{cannotScore}</p>
           )}
 
           <div className="flex items-start gap-2 min-w-0 text-xs">

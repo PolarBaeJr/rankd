@@ -109,7 +109,9 @@ export class DiscordApi {
         method,
         headers: {
           authorization: `Bot ${this.token}`,
-          ...(isForm ? {} : { 'content-type': 'application/json' }),
+          // Only with a JSON body: Discord rejects a bodyless call that claims
+          // JSON (50109 "invalid JSON"), which broke every unban on 2026-10-27.
+          ...(isForm || body === undefined ? {} : { 'content-type': 'application/json' }),
           ...extraHeaders,
         },
         ...(body === undefined
@@ -147,6 +149,61 @@ export class DiscordApi {
     if (!response.ok) throw new Error(`GET member -> ${response.status}`);
     const body = (await response.json()) as { roles?: unknown };
     return Array.isArray(body.roles) ? (body.roles as string[]) : [];
+  }
+
+  /**
+   * A user's display name (their global name, else their username), or null
+   * if Discord does not know them. Any user, not only a member.
+   */
+  async getUserName(userId: string): Promise<string | null> {
+    const response = await this.request('GET', `/users/${userId}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GET user -> ${response.status}`);
+    const body = (await response.json()) as { username?: unknown; global_name?: unknown };
+    const name = typeof body.global_name === 'string' && body.global_name ? body.global_name : body.username;
+    return typeof name === 'string' && name ? name : null;
+  }
+
+  /** A user's shown name and avatar picture, or null when there is no such user. */
+  async getUserProfile(userId: string): Promise<{ name: string; avatarUrl: string } | null> {
+    const response = await this.request('GET', `/users/${userId}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`GET user -> ${response.status}`);
+    const body = (await response.json()) as { username?: unknown; global_name?: unknown; avatar?: unknown };
+    const name = typeof body.global_name === 'string' && body.global_name ? body.global_name : body.username;
+    if (typeof name !== 'string' || !name) return null;
+    // No avatar means Discord's default picture, chosen from the id.
+    const avatarUrl =
+      typeof body.avatar === 'string' && /^(a_)?[0-9a-f]{32}$/.test(body.avatar)
+        ? `https://cdn.discordapp.com/avatars/${userId}/${body.avatar}.png?size=64`
+        : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(userId) >> 22n) % 6n)}.png`;
+    return { name, avatarUrl };
+  }
+
+  /**
+   * The server's latest "message deleted" audit entries, newest first. Discord
+   * writes one only when somebody deletes ANOTHER person's message, and adds
+   * to its count rather than writing a new one when the same moderator deletes
+   * the same person's messages in the same channel again soon after. Null when
+   * the bot cannot read the audit log (it needs View Audit Log).
+   */
+  async listMessageDeleteAudits(guildId: string): Promise<
+    { id: string; userId: string | null; targetId: string | null; channelId: string | null; count: number }[] | null
+  > {
+    const response = await this.request('GET', `/guilds/${guildId}/audit-logs?action_type=72&limit=10`);
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      audit_log_entries?: { id?: unknown; user_id?: unknown; target_id?: unknown; options?: { channel_id?: unknown; count?: unknown } }[];
+    };
+    return (body.audit_log_entries ?? [])
+      .filter((entry): entry is typeof entry & { id: string } => typeof entry.id === 'string')
+      .map((entry) => ({
+        id: entry.id,
+        userId: typeof entry.user_id === 'string' ? entry.user_id : null,
+        targetId: typeof entry.target_id === 'string' ? entry.target_id : null,
+        channelId: typeof entry.options?.channel_id === 'string' ? entry.options.channel_id : null,
+        count: Number(entry.options?.count ?? 1) || 1,
+      }));
   }
 
   /**
@@ -202,6 +259,23 @@ export class DiscordApi {
       .reduce((highest, r) => Math.max(highest, r.position), 0);
   }
 
+  /**
+   * The bot's own server-wide permissions: @everyone's plus every role it
+   * holds. Channel overwrites are not counted, so this is the ceiling.
+   */
+  async getOwnPermissions(guildId: string): Promise<bigint> {
+    const userId = await this.getOwnUserId();
+    const member = await this.request('GET', `/guilds/${guildId}/members/${userId}`);
+    if (!member.ok) throw new Error(`GET member -> ${member.status}`);
+    const { roles } = (await member.json()) as { roles?: string[] };
+    const mine = new Set([...(roles ?? []), guildId]);
+    let permissions = 0n;
+    for (const role of await this.listGuildRoles(guildId)) {
+      if (mine.has(role.id)) permissions |= BigInt(role.permissions ?? '0');
+    }
+    return permissions;
+  }
+
   /** The bot's own user id, for callers that must refuse to act on it. */
   async getBotUserId(): Promise<string> {
     return this.getOwnUserId();
@@ -237,6 +311,38 @@ export class DiscordApi {
     return this.moderationCall('DELETE', `/guilds/${guildId}/bans/${userId}`, reason);
   }
 
+  /**
+   * The server's latest audit log entries of one kind (newest first, at most
+   * 100), each with its id and reason. Null when unreadable: it needs View
+   * Audit Log.
+   */
+  async listAuditLogEntries(
+    guildId: string,
+    actionType: number
+  ): Promise<{ id: string; reason: string }[] | null> {
+    try {
+      const response = await this.request('GET', `/guilds/${guildId}/audit-logs?action_type=${actionType}&limit=100`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as { audit_log_entries?: { id?: unknown; reason?: unknown }[] };
+      return (body.audit_log_entries ?? [])
+        .filter((entry): entry is { id: string; reason?: unknown } => typeof entry.id === 'string')
+        .map((entry) => ({ id: entry.id, reason: typeof entry.reason === 'string' ? entry.reason : '' }));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Time a member out until `until` (Discord caps it at 28 days). They stay
+   * in the server and can read, but cannot post, react or speak. Needs
+   * Moderate Members, and the same role order as a ban.
+   */
+  async timeoutMember(guildId: string, userId: string, until: Date, reason: string): Promise<RoleCallResult> {
+    return this.moderationCall('PATCH', `/guilds/${guildId}/members/${userId}`, reason, {
+      communication_disabled_until: until.toISOString(),
+    });
+  }
+
   private async moderationCall(
     method: string,
     path: string,
@@ -257,6 +363,94 @@ export class DiscordApi {
       console.error(`[bot] ${method} ${path} threw:`, error);
       return 'failed';
     }
+  }
+
+  /** A channel's pinned messages, with who posted each and its first embed's text. Null when unreadable. */
+  async listPinnedMessages(
+    channelId: string
+  ): Promise<
+    | {
+        id: string;
+        authorId: string | null;
+        embed: { footer: string; description: string } | null;
+        /** Every button on the message, in order. */
+        buttons: { customId: string; label: string }[];
+        /** Laid out by components alone (IS_COMPONENTS_V2): editable only as such. */
+        componentsV2: boolean;
+      }[]
+    | null
+  > {
+    try {
+      const response = await this.request('GET', `/channels/${channelId}/pins`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as {
+        id?: unknown;
+        author?: { id?: unknown };
+        embeds?: { footer?: { text?: unknown }; description?: unknown }[];
+        components?: unknown[];
+        flags?: unknown;
+      }[];
+      return body
+        .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
+        .map((message) => {
+          const embed = message.embeds?.[0];
+          return {
+            id: message.id,
+            authorId: typeof message.author?.id === 'string' ? message.author.id : null,
+            buttons: collectButtons(message.components ?? []),
+            componentsV2: typeof message.flags === 'number' && (message.flags & (1 << 15)) !== 0,
+            embed: embed
+              ? {
+                  footer: typeof embed.footer?.text === 'string' ? embed.footer.text : '',
+                  description: typeof embed.description === 'string' ? embed.description : '',
+                }
+              : null,
+          };
+        });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Pin a message. Needs Manage Messages (Pin Messages on newer servers). */
+  async pinMessage(channelId: string, messageId: string, reason: string): Promise<RoleCallResult> {
+    return this.moderationCall('PUT', `/channels/${channelId}/pins/${messageId}`, reason);
+  }
+
+  /** A channel's latest messages, newest first (up to 100), or null when unreadable. */
+  async listRecentMessages(
+    channelId: string,
+    limit: number
+  ): Promise<{ id: string; authorId: string | null; at: number; pinned: boolean }[] | null> {
+    try {
+      const response = await this.request('GET', `/channels/${channelId}/messages?limit=${Math.min(100, Math.max(1, limit))}`);
+      if (!response.ok) return null;
+      const body = (await response.json()) as { id?: unknown; author?: { id?: unknown }; timestamp?: unknown; pinned?: unknown }[];
+      return body
+        .filter((message): message is typeof message & { id: string } => typeof message.id === 'string')
+        .map((message) => ({
+          id: message.id,
+          authorId: typeof message.author?.id === 'string' ? message.author.id : null,
+          at: typeof message.timestamp === 'string' ? Date.parse(message.timestamp) : 0,
+          pinned: message.pinned === true,
+        }));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Delete several messages in one call (2 to 100, each under 14 days old, a
+   * Discord rule), or one with a plain delete. Needs Manage Messages.
+   */
+  async deleteMessages(channelId: string, messageIds: string[], reason: string): Promise<RoleCallResult> {
+    if (messageIds.length === 0) return 'ok';
+    if (messageIds.length === 1) {
+      return this.moderationCall('DELETE', `/channels/${channelId}/messages/${messageIds[0]}`, reason);
+    }
+    return this.moderationCall('POST', `/channels/${channelId}/messages/bulk-delete`, reason, {
+      messages: messageIds.slice(0, 100),
+    });
   }
 
   /**
@@ -717,4 +911,23 @@ function multipartBody(payload: unknown, file: CardFile): FormData {
   // upload everything behind it.
   form.append('files[0]', new Blob([file.bytes], { type: file.contentType }), file.filename);
   return form;
+}
+
+/**
+ * Every button in a message's components, however deep: an action row's,
+ * and in a components V2 layout a container's rows and a section's accessory.
+ */
+function collectButtons(components: unknown[]): { customId: string; label: string }[] {
+  const found: { customId: string; label: string }[] = [];
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    const component = node as { type?: unknown; custom_id?: unknown; label?: unknown; components?: unknown; accessory?: unknown };
+    if (component.type === 2 && typeof component.custom_id === 'string') {
+      found.push({ customId: component.custom_id, label: typeof component.label === 'string' ? component.label : '' });
+    }
+    if (Array.isArray(component.components)) component.components.forEach(visit);
+    visit(component.accessory);
+  };
+  components.forEach(visit);
+  return found;
 }

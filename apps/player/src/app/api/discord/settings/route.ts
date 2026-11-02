@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { checkDiscordManager, managerInput } from '@/lib/discord-manager';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -39,12 +40,10 @@ export const dynamic = 'force-dynamic';
  * a bot rolled ahead of its player app must not be able to widen it.
  */
 const SNOWFLAKE = /^\d{17,20}$/;
-const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 type Check = (value: string) => string | null;
 
 const channel: Check = (v) => (SNOWFLAKE.test(v) ? null : 'not a channel id');
-const clock: Check = (v) => (CLOCK.test(v) ? null : 'not a HH:MM time');
 const role: Check = (v) => (SNOWFLAKE.test(v) ? null : 'not a role id');
 
 const WRITABLE: Record<string, Check> = {
@@ -55,18 +54,15 @@ const WRITABLE: Record<string, Check> = {
   feedback_channel_id: channel,
   event_feedback_channel_id: channel,
   audit_channel_id: channel,
-  server_log_channel_id: channel,
+  // The server log is not here: it belongs to each server (server-settings).
   // Read by the session-pings route before it falls back to /rolepicker rows.
   session_ping_all_role_id: role,
   session_ping_competitive_role_id: role,
   session_ping_recreational_role_id: role,
-  tournament_event_start_time: clock,
-  tournament_event_end_time: clock,
-  // Bounded on both ends. Discord rejects a scheduled event whose description
-  // runs long, and an empty string is not "no location" — that is what deleting
-  // the key means, and the two must stay distinguishable.
-  tournament_event_location: (v) =>
-    v.length >= 1 && v.length <= 100 ? null : 'must be 1-100 characters',
+  // The tournament times and location are not here since 00304: each
+  // tournament keeps its own, set in the console or with /tourney details. The
+  // tournament-events route still reads any old club-wide value as a fallback,
+  // but nothing writes one any more.
   // The floor is not cosmetic: the ping job runs every five minutes, so a lead
   // time under that would be missed as often as it was hit.
   session_ping_lead_minutes: (v) => {
@@ -122,6 +118,17 @@ export async function POST(request: Request) {
   const { settings } = (body ?? {}) as { settings?: unknown };
   if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
     return NextResponse.json({ error: 'invalid_settings' }, { status: 400 });
+  }
+
+  // Only a club officer who may change settings, and (except for /setup)
+  // only from a server the club has connected. See discord-manager.ts.
+  const manager = managerInput(body);
+  if (!manager) return NextResponse.json({ error: 'invalid_caller' }, { status: 400 });
+  const managerCheck = await checkDiscordManager(createServiceRoleClient(), { ...manager });
+  if (!managerCheck.ok) {
+    return managerCheck.refusal === 'unavailable'
+      ? NextResponse.json({ error: 'caller_unavailable' }, { status: 503 })
+      : NextResponse.json({ error: managerCheck.refusal }, { status: 403 });
   }
 
   const entries = Object.entries(settings as Record<string, unknown>);

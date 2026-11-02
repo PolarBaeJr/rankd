@@ -254,7 +254,8 @@ describe('what may go in a baseline', () => {
   // editable (00104): the club owner wanted a treasurer who can see the club's
   // books, which no exec can. So the widest baseline is the exec baseline PLUS
   // four finance reads, since 00105 plus `players.consoleaccess.write`, and
-  // since 00223 plus `announcements.discord.write` —
+  // since 00223 plus `announcements.discord.write`, and since 2026-10-23
+  // everything outside the five admin areas. It is
   // asserted as a derivation from EDITOR_OFFERABLE rather than a fresh list, so
   // this test says "the ceiling is the ceiling" instead of pinning the same
   // numbers twice.
@@ -277,57 +278,38 @@ describe('what may go in a baseline', () => {
     );
     expect([...composed].sort()).toEqual([...EDITOR_OFFERABLE].sort());
 
-    // AND STILL BOUNDED BY SOMETHING NAMED. The point of the old assertion was
-    // that the widest composition is a set somebody enumerated, not "everything"
-    // — so it is restated as the gap: the four finance reads and, since 00105,
-    // the console-access write. Nothing else.
-    //
-    // `announcements.discord.write` is NOT in this gap, and that is the change
-    // 00224 made: it shipped above the assignable set in 00223 and moved INSIDE
-    // it when the owner gave it to VP External, so it is no longer something
-    // the ceiling adds — it is something an admin may hand out.
-    //
-    // MEASURED AGAINST EXEC_ASSIGNABLE, NOT THE FLOOR. "The gap" means what the
-    // ceiling added beyond what an exec could already do; the narrowed baseline
-    // would make it sixty-seven entries and this assertion would stop naming the
-    // five capabilities somebody actually enumerated, which is its whole job.
-    //
-    // THIRTEEN NOW: the eight `page.access.*` keys to switched-off features
-    // joined the ceiling, one per club feature switch (`page.access.events`
-    // arrived with club events in 00244). They are enumerated below for
-    // the same reason the five are, even though the ceiling spreads them from
-    // the feature registry: a new feature's key should be a line somebody reads.
-    const beyond = [...composed].filter(
-      (capability) => !(EXEC_ASSIGNABLE as readonly Capability[]).includes(capability),
+    // AND STILL BOUNDED BY SOMETHING NAMED. Since 2026-10-23 the ceiling is
+    // every capability outside the five admin areas, derived rather than
+    // enumerated (the owner's "write follow the roles and i can add additional
+    // stuff"). So the gap is no longer a short literal list; it is restated as
+    // the rule, re-derived here from CAPABILITIES, plus the named admin-only
+    // capabilities that the widest composition must still not reach.
+    const adminOnly = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
+    expect([...composed].sort()).toEqual(
+      CAPABILITIES.filter((c) => !adminOnly.includes(c.split('.')[0] ?? '')).sort(),
     );
-    expect(beyond.sort()).toEqual([
-      'fees.clubfees.read',
-      'fees.netposition.read',
-      'fees.otherincome.read',
-      'fees.reinstatements.read',
-      'page.access.announcements',
-      'page.access.challenges',
-      'page.access.events',
-      'page.access.fees',
-      'page.access.guest_waivers',
-      'page.access.leaderboard',
-      'page.access.membership',
-      'page.access.my_stats',
-      'page.access.predictions',
-      'page.access.sessions',
-      'page.access.socials',
-      'page.access.tournaments',
-      'players.consoleaccess.write',
-    ]);
+    for (const capability of [
+      'permissions.write',
+      'permissions.page',
+      'audit.page',
+      'ratings.page',
+      'accounts.apikey.mint.write',
+      'platform.settings.write',
+    ] as Capability[]) {
+      expect(composed.has(capability), `${capability} reached the widest baseline`).toBe(false);
+    }
+    // The capability that hands out a LEVEL is inside it, which is why the
+    // claim above (a capability set is not a level) is the one that matters.
+    expect(composed.has('players.consoleaccess.write')).toBe(true);
 
     // ...and an uncomposed trainer is untouched by any of this.
     expect([...effectiveCapabilities('trainer', UNRESTRICTED)].sort())
       .toEqual([...TRAINER_BASELINE].sort());
 
     // NOR IS AN UNCOMPOSED EXEC, WHICH IS NOW A MUCH SMALLER CLAIM AND WORTH
-    // MAKING HERE. The widest thing an admin may author is 78 capabilities; the
-    // most an officer holds without anybody authoring anything is twelve reads.
-    // The gap between those two numbers is the whole of this change.
+    // MAKING HERE. The widest thing an admin may author is everything outside
+    // the admin areas; the most an officer holds without anybody authoring
+    // anything is the floor: those areas' reads and one expense write.
     expect([...effectiveCapabilities('exec', UNRESTRICTED)].sort())
       .toEqual([...EXEC_BASELINE].sort());
   });

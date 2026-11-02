@@ -33,6 +33,7 @@ import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { getFeatureFlags } from './feature-gate';
 import { refuseClosedTournament } from './tournament-closed';
 import { loadEntryWindows, windowsFor } from './tournament-windows';
+import { waitlistLimitReached } from './event-waitlist';
 
 /**
  * What the member has to have been TOLD before this runs.
@@ -340,11 +341,20 @@ export async function enterEventCore(
       case 'event_full':
         // 00278 says whether this event keeps a waitlist, so the member is
         // pointed at it rather than told only that the door is shut.
-        if (entered.waitlist === true) throw new ExpectedError('Event is full, join the waitlist');
+        // 00312: unless the waitlist is at its limit too, when there is no way in.
+        if (entered.waitlist === true) {
+          if (await waitlistLimitReached(service, eventId)) throw new ExpectedError('This event is full, and so is its waitlist.');
+          throw new ExpectedError('Event is full, join the waitlist');
+        }
         throw new ExpectedError('Event is full');
       // 00278: somebody is already waiting, so a free place is theirs.
       case 'waitlist_queue':
+        if (await waitlistLimitReached(service, eventId)) throw new ExpectedError('This event is full, and so is its waitlist.');
         throw new ExpectedError('Others are waiting for this event, join the waitlist');
+      // 00307: a tournament run for a club event fills from the club event's
+      // list, where the e-transfer screenshot is asked for.
+      case 'club_event_linked':
+        throw new ExpectedError('This tournament is run for a club event. Sign up on the club event page to be entered.');
       case 'registration_closed':
         throw new ExpectedError('Registration is closed');
       // The window (00276) moved between the check above and the lock.

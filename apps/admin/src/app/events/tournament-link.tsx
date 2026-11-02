@@ -45,6 +45,9 @@ export function ClubEventTournamentCard({
   const [format, setFormat] = useState<LinkTournamentInput['format']>('single_elimination');
   const [rated, setRated] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The choices stay hidden until the exec asks to make the tournament, like
+  // every other section's Edit.
+  const [choosing, setChoosing] = useState(false);
 
   if (linked) {
     return (
@@ -104,34 +107,47 @@ export function ClubEventTournamentCard({
           {nonMembers > 0 &&
             ` The ${nonMembers} non-member${nonMembers === 1 ? '' : 's'} from the Google Form ${nonMembers === 1 ? 'is' : 'are'} entered as ${nonMembers === 1 ? 'a guest' : 'guests'}: no login, no dues, and sent nothing.`}
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Select
-            label="Event type"
-            value={eventType}
-            onChange={(e) => setEventType(e.target.value as LinkTournamentInput['event_type'])}
-            options={TYPES.map((t) => ({ value: t, label: TOURNAMENT_EVENT_TYPE_LABELS[t] }))}
-          />
+        {!choosing ? (
           <div>
-            <Select
-              label="Format"
-              value={format}
-              onChange={(e) => setFormat(e.target.value as LinkTournamentInput['format'])}
-              options={FORMATS.map((f) => ({ value: f, label: TOURNAMENT_EVENT_FORMAT_LABELS[f] }))}
-            />
-            <p className="mt-1 text-xs text-[var(--text-muted)]">{TOURNAMENT_EVENT_FORMAT_HINTS[format]}</p>
+            <Button variant="secondary" onClick={() => setChoosing(true)}>
+              Run as a tournament
+            </Button>
           </div>
-        </div>
-        <Checkbox
-          checked={rated}
-          onChange={setRated}
-          label="Results count toward ratings"
-          showLabel
-        />
-        <div>
-          <Button onClick={handleLink} loading={busy}>
-            Run as a tournament
-          </Button>
-        </div>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Select
+                label="Event type"
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value as LinkTournamentInput['event_type'])}
+                options={TYPES.map((t) => ({ value: t, label: TOURNAMENT_EVENT_TYPE_LABELS[t] }))}
+              />
+              <div>
+                <Select
+                  label="Format"
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value as LinkTournamentInput['format'])}
+                  options={FORMATS.map((f) => ({ value: f, label: TOURNAMENT_EVENT_FORMAT_LABELS[f] }))}
+                />
+                <p className="mt-1 text-xs text-[var(--text-muted)]">{TOURNAMENT_EVENT_FORMAT_HINTS[format]}</p>
+              </div>
+            </div>
+            <Checkbox
+              checked={rated}
+              onChange={setRated}
+              label="Results count toward ratings"
+              showLabel
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleLink} loading={busy}>
+                Make the tournament
+              </Button>
+              <Button variant="secondary" onClick={() => setChoosing(false)} disabled={busy}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </Card>
   );

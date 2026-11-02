@@ -63,6 +63,12 @@ export async function sendEmail(
   if (!process.env.RESEND_API_KEY) {
     throw new Error('RESEND_API_KEY not set');
   }
+  // A .invalid address can never be delivered (RFC 2606), and a bounce costs
+  // the sending domain its reputation. A guest added by hand with no email
+  // holds one (00306), as an erased account does.
+  if (isUndeliverableAddress(to)) {
+    throw new Error('Refusing to send to an undeliverable .invalid address');
+  }
   const r = getResend();
   const { data, error } = await r.emails.send({ from: FROM, to, subject, html, headers });
   if (error) {
@@ -75,6 +81,11 @@ export async function sendEmail(
   // changes. `null` rather than undefined so a caller storing it has one shape
   // to handle whether or not the provider named the message.
   return { providerMessageId: data?.id ?? null };
+}
+
+/** True for an address on the reserved .invalid domain, which no mail can reach. */
+export function isUndeliverableAddress(address: string): boolean {
+  return /\.invalid$/i.test(address.trim());
 }
 
 export type SendOutcome =
@@ -113,6 +124,7 @@ async function sendCategoryEmail(
   options: { transactional?: boolean } = {},
 ): Promise<SendOutcome> {
   const address = to.trim().toLowerCase();
+  if (isUndeliverableAddress(address)) return { sent: false, reason: 'suppressed' };
   const db = getAdmin();
 
   if (db) {

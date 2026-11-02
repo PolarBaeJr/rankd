@@ -387,6 +387,13 @@ export interface Tournament {
    * Optional because a database without 00275 has no such column.
    */
   placement_bonus_amounts?: Record<string, unknown> | null;
+  /**
+   * The tournament's own daily times and venue (00304). PostgREST returns a
+   * time as HH:MM:SS. Optional because a database without 00304 has none.
+   */
+  starts_time?: string | null;
+  ends_time?: string | null;
+  location?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -801,6 +808,9 @@ export interface TournamentPair {
   status: TournamentParticipantStatus;
   checked_in_at: string | null;
   checked_in_by: string | null;
+  // When each slot's person was marked here (00309). Absent before 00309.
+  player1_checked_in_at?: string | null;
+  player2_checked_in_at?: string | null;
   final_position: number | null;
   combined_elo: number | null;
   points: number;

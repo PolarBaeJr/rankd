@@ -145,6 +145,35 @@ describe('decideAutoConfirm', () => {
     expect(parseReceiptText('Interac e-Transfer\nAmount 12.50\nSent to Treasurer')).toMatchObject({ amountCents: 1250 });
   });
 
+  it('reads an amount under an "Amount Date" line, and an l the OCR read as a capital I', () => {
+    // RBC's dark "Confirmation" screen, as tesseract reads it.
+    const rbc = [
+      'Confirmation x',
+      'Your Interac e-transfer was sent!',
+      'Reference number: H012345672026101012345678 [ )]',
+      'New account balance',
+      'Chequing - Preferred Package',
+      'riverside smash',
+      'Ilsa1@example.org',
+      'Legal name',
+      'Contact method',
+      'Email',
+      'Amount Date',
+      '$5.00 Oct 22, 2026',
+      'Make another transfer',
+    ].join('\n');
+    expect(parseReceiptText(rbc)).toMatchObject({ kind: 'e_transfer', amountCents: 500, payeeEmail: 'llsa1@example.org' });
+    const ctx = { ...etransfer, amountCents: 500, clubEmail: 'llsa1@example.org', clubPayeeName: null };
+    expect(decideAutoConfirm(parseReceiptText(rbc), ctx)).toMatchObject({ confirm: true, amountCents: 500 });
+    // A real lower case i stays an i.
+    expect(decideAutoConfirm(parseReceiptText(rbc.replace('Ilsa1', 'ilsa1')), ctx)).toMatchObject({
+      confirm: false,
+      flag: 'payee_mismatch',
+    });
+    // The date's figures are never taken for the amount.
+    expect(parseReceiptText('Interac e-transfer\nAmount Date\nOct 22, 2026')).toMatchObject({ amountCents: null });
+  });
+
   it('reads a bank\'s deposited notice, and matches one of several payee names', () => {
     const notice =
       'Hi Sam,\n\nYour transfer to ALEX CHEN was\nsuccessfully deposited.\n\nThe $5.00 (CAD) you sent to ALEX CHEN has been successfully\ndeposited.\n';

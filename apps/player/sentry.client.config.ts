@@ -32,6 +32,11 @@ Sentry.init({
     // an unhandled rejection on whatever page the member opened from a link.
     /Object Not Found Matching Id:/,
   ],
+  // Scripts an in-app browser adds to the page, never ours: Instagram's
+  // webview injects app://navigation_performance_logger_android, and its
+  // bridge to the app fails now and then (JAVASCRIPT-NEXTJS-1B). Our own code
+  // always loads from https, so nothing of ours can match.
+  denyUrls: [/^app:\/\//],
   integrations: [
     // Names every browser-side Supabase call as a DB span so the flame graph
     // shows which query/RPC is slow (not just that a request was slow).

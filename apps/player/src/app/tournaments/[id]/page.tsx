@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import {
   formatDate,
+  describeTournamentTimes,
   isDoublesEvent,
   TOURNAMENT_EVENT_TYPE_LABELS,
   eventStatusLabel,
@@ -87,6 +88,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // A draft is unpublished. RLS lets a member read it (tournaments_select is
   // USING (TRUE)), so the page is what keeps it private.
   if (!tournament || tournament.status === 'draft') notFound();
+  // Its own daily times and venue (00304), shown only when the club set them.
+  const tournamentTimes = describeTournamentTimes(tournament.starts_time, tournament.ends_time);
 
   const { data: events } = await supabase
     .from('tournament_events')
@@ -245,6 +248,18 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             </h1>
             <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap', fontSize: 12 }}>
               <span className="mono muted">{formatDate(tournament.start_date)}</span>
+              {tournamentTimes && (
+                <>
+                  <span className="muted">·</span>
+                  <span className="mono muted">{tournamentTimes}</span>
+                </>
+              )}
+              {tournament.location && (
+                <>
+                  <span className="muted">·</span>
+                  <span className="muted">{tournament.location}</span>
+                </>
+              )}
               <span className="muted">·</span>
               <span className="muted" style={{ textTransform: 'capitalize' }}>{tournament.format}</span>
               <span className="muted">·</span>

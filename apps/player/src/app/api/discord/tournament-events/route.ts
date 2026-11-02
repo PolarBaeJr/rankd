@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { TOURNAMENT_EVENT_TYPE_LABELS, readFeatureFlags, wallClockToUtc } from '@badminton/shared';
+import {
+  TOURNAMENT_EVENT_TYPE_LABELS,
+  clockHHMM,
+  readFeatureFlags,
+  wallClockToUtc,
+} from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -21,12 +26,13 @@ export const dynamic = 'force-dynamic';
 // but announcing one in Discord is a different act from it being fetchable:
 // this is the thing that pings the Events tab. Draft stays private here.
 //
-// THE THREE FIELDS DISCORD NEEDS THAT THE SCHEMA HAS NOT GOT. An EXTERNAL
-// scheduled event requires a start instant, an end instant and a location.
-// `tournaments` stores start_date and end_date as DATE and has no location
-// column at all — 00109 dropped the columns that only pretended to carry this
-// sort of thing. So they come from discord_settings, where the club can see
-// and change them, rather than from a constant buried in here.
+// THE THREE FIELDS DISCORD NEEDS BEYOND THE DATES. An EXTERNAL scheduled
+// event requires a start instant, an end instant and a location. `tournaments`
+// stores start_date and end_date as DATEs, and since 00304 each tournament
+// carries its own starts_time, ends_time and location, set in the console or
+// with /tourney details. A tournament that leaves one blank takes the old
+// club-wide discord_settings key, which is still read so nothing posted before
+// 00304 moves, but is no longer settable; then 09:00, 18:00 and no location.
 
 interface TournamentRow {
   id: string;
@@ -35,6 +41,10 @@ interface TournamentRow {
   end_date: string | null;
   status: string;
   suspended_at: string | null;
+  /** HH:MM:SS as PostgREST returns a time, or null (00304). */
+  starts_time: string | null;
+  ends_time: string | null;
+  location: string | null;
   tournament_events: { event_type: string }[] | null;
 }
 
@@ -44,6 +54,8 @@ interface MappingRow {
   synced_name: string;
   synced_starts_at: string;
   synced_ends_at: string;
+  /** The app's location last pushed, null when there was none (00304). */
+  synced_location: string | null;
 }
 
 const DEFAULT_START_TIME = '09:00';
@@ -53,6 +65,11 @@ const DEFAULT_END_TIME = '18:00';
 // rejects anything longer outright, so the description is built to fit rather
 // than sent hopefully.
 const MAX_DESCRIPTION = 1000;
+
+// Discord's cap on an EXTERNAL event's location. The column allows 200 (the
+// same as a session's), so the value is cut to fit here rather than refused
+// by Discord on every tick, and the cut value is what gets recorded.
+const MAX_LOCATION = 100;
 
 // A start time Discord will accept has to be in the future, and "in the future"
 // is evaluated at Discord's clock, not ours. Two minutes of slack covers the
@@ -87,6 +104,21 @@ function parseClubTime(value: string | undefined, fallback: string): [number, nu
     return [fh, fm];
   }
   return [h, m];
+}
+
+/**
+ * Cut to at most `max` UTF-16 units without splitting a character, as the
+ * club-events route does. Deterministic, because the result is compared
+ * against what was recorded last time.
+ */
+function fit(s: string, max: number): string {
+  if (s.length <= max) return s;
+  let out = '';
+  for (const ch of s) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
 }
 
 function clubDateAt(date: string, [h, m]: [number, number]): Date {
@@ -130,7 +162,8 @@ export async function GET(request: Request) {
   // changed. Ones already posted are left standing rather than cancelled, so a
   // switch flipped by mistake does not tear down the club's Events tab. A
   // failed read is "on", which is the behaviour before the switch existed.
-  if (!(await readFeatureFlags(supabase)).tournaments) {
+  const features = await readFeatureFlags(supabase);
+  if (!features.tournaments) {
     return NextResponse.json({
       actions: [],
       skipped: [{ tournamentId: '*', reason: 'tournaments_disabled' }],
@@ -141,7 +174,9 @@ export async function GET(request: Request) {
     supabase.from('discord_settings').select('key, value'),
     supabase
       .from('discord_tournament_events')
-      .select('tournament_id, discord_event_id, synced_name, synced_starts_at, synced_ends_at')
+      .select(
+        'tournament_id, discord_event_id, synced_name, synced_starts_at, synced_ends_at, synced_location'
+      )
       .eq('guild_id', guildId)
       .order('updated_at', { ascending: false })
       .limit(MAX_MAPPED),
@@ -161,17 +196,20 @@ export async function GET(request: Request) {
   const settings = new Map(
     ((settingsResult.data ?? []) as { key: string; value: string }[]).map((s) => [s.key, s.value])
   );
-  const startTime = parseClubTime(settings.get('tournament_event_start_time'), DEFAULT_START_TIME);
-  const endTime = parseClubTime(settings.get('tournament_event_end_time'), DEFAULT_END_TIME);
-  const location = settings.get('tournament_event_location')?.trim() || null;
+  // The club-wide values from before 00304: each tournament's own come first.
+  const clubStartTime = settings.get('tournament_event_start_time');
+  const clubEndTime = settings.get('tournament_event_end_time');
+  const clubLocation = settings.get('tournament_event_location')?.trim() || null;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ?? null;
 
   const mapped = new Map(
     ((mappedResult.data ?? []) as MappingRow[]).map((m) => [m.tournament_id, m])
   );
 
+  // One literal, not a concatenation: the typed client parses the select
+  // string, and a joined string widens to plain `string` and loses the row type.
   const columns =
-    'id, name, start_date, end_date, status, suspended_at, tournament_events(event_type)';
+    'id, name, start_date, end_date, status, suspended_at, starts_time, ends_time, location, tournament_events(event_type)';
 
   // TWO READS, MERGED. The announceable set is "status = active"; the
   // cancellable set is "already has a Discord event", and a tournament that has
@@ -263,6 +301,52 @@ export async function GET(request: Request) {
     }
   }
 
+  // RUN AS A CLUB EVENT (00292): posted once, by the club-events route, whose
+  // description carries the bracket link. Without this a linked pair is two
+  // Discord events for one day of badminton.
+  //
+  // "Linked" is any PUBLISHED club event whose tournament_event_id is one of
+  // this tournament's events, whatever its times. Published is the club-events
+  // route's test for creating and for keeping, so this covers what it would
+  // announce and what it has announced. No time cut on purpose: once the club
+  // event ends its Discord event goes, and bringing the tournament's back for
+  // the rest of the run would flip a duplicate on at the worst moment.
+  //
+  // Only while club events are switched on: with them off the club-events
+  // route posts nothing, and standing this one down would leave the tournament
+  // with no Discord event at all.
+  //
+  // A failed read is a 503, as for every other read here. A read that comes
+  // back silently empty can only make a tournament look UNlinked, which posts
+  // a duplicate rather than deleting anything: the safe direction.
+  const runsAsClubEvent = new Set<string>();
+  if (byId.size > 0 && features.events) {
+    const { data: linkedClubEvents, error: clubEventsError } = await supabase
+      .from('club_events')
+      .select('tournament_event_id')
+      .eq('status', 'published')
+      .not('tournament_event_id', 'is', null);
+    const linkedEventIds = [
+      ...new Set(
+        ((linkedClubEvents ?? []) as { tournament_event_id: string | null }[])
+          .map((c) => c.tournament_event_id)
+          .filter((id): id is string => !!id)
+      ),
+    ];
+    const linkedResult =
+      clubEventsError || linkedEventIds.length === 0
+        ? { data: [] as unknown, error: null }
+        : await supabase.from('tournament_events').select('id, tournament_id').in('id', linkedEventIds);
+    const linkError = clubEventsError ?? linkedResult.error;
+    if (linkError) {
+      console.error('[discord] tournament-events club event link read failed:', linkError.message);
+      return NextResponse.json({ error: 'club_events_unavailable', detail: linkError.message }, { status: 503 });
+    }
+    for (const row of (linkedResult.data ?? []) as { tournament_id: string }[]) {
+      runsAsClubEvent.add(row.tournament_id);
+    }
+  }
+
   // DELETED OUTRIGHT, which the loop below cannot see because there is no row
   // left to iterate.
   //
@@ -288,7 +372,7 @@ export async function GET(request: Request) {
       syncedStartsAt: existing.synced_starts_at,
       syncedEndsAt: existing.synced_ends_at,
       patchTimes: false,
-      location,
+      location: existing.synced_location ?? null,
       description: '',
     });
   }
@@ -321,12 +405,44 @@ export async function GET(request: Request) {
           syncedStartsAt: existing.synced_starts_at,
           syncedEndsAt: existing.synced_ends_at,
           patchTimes: false,
-          location,
+          location: existing.synced_location ?? null,
           description: '',
         });
       }
       continue;
     }
+
+    // Its club event carries it instead (see runsAsClubEvent). One posted
+    // before the link, or before this rule, is taken down the way an
+    // unpublished tournament's is, so the duplicate goes.
+    if (runsAsClubEvent.has(t.id)) {
+      if (existing) {
+        actions.push({
+          kind: 'cancel',
+          tournamentId: t.id,
+          discordEventId: existing.discord_event_id,
+          name: t.name,
+          startsAt: existing.synced_starts_at,
+          endsAt: existing.synced_ends_at,
+          syncedStartsAt: existing.synced_starts_at,
+          syncedEndsAt: existing.synced_ends_at,
+          patchTimes: false,
+          location: existing.synced_location ?? null,
+          description: '',
+        });
+      } else {
+        skipped.push({ tournamentId: t.id, reason: 'runs_as_club_event' });
+      }
+      continue;
+    }
+
+    // Each value on its own: the tournament's, else the club's old key, else
+    // the default. clockHHMM because a time column comes back as HH:MM:SS,
+    // which parseClubTime would read as malformed and quietly replace.
+    const startTime = parseClubTime(clockHHMM(t.starts_time) ?? clubStartTime, DEFAULT_START_TIME);
+    const endTime = parseClubTime(clockHHMM(t.ends_time) ?? clubEndTime, DEFAULT_END_TIME);
+    const ownLocation = t.location?.trim() || clubLocation;
+    const location = ownLocation ? fit(ownLocation, MAX_LOCATION) : null;
 
     const starts = clubDateAt(t.start_date, startTime);
     const ends = clubDateAt(t.end_date ?? t.start_date, endTime);
@@ -380,8 +496,11 @@ export async function GET(request: Request) {
     const retimed =
       Date.parse(existing.synced_starts_at) !== starts.getTime() ||
       Date.parse(existing.synced_ends_at) !== ends.getTime();
+    // Its own column since 00304, as discord_club_events has. Before it a
+    // location could only change club-wide, and the change was never pushed.
+    const relocated = (existing.synced_location ?? null) !== location;
 
-    if (!renamed && !retimed) continue;
+    if (!renamed && !retimed && !relocated) continue;
 
     // ONCE DISCORD HAS STARTED THE EVENT, ITS TIMES ARE FROZEN — and pretending
     // otherwise is how this route would have burned a call every fifteen
@@ -389,9 +508,10 @@ export async function GET(request: Request) {
     //
     // Discord refuses to retime an event already in progress. Nothing here
     // needs to go wrong for that to bite: a tournament is mid-run, an exec
-    // edits tournament_event_start_time (which flips the comparison above for
-    // EVERY mapped tournament at once), the PATCH is refused, nothing is
-    // recorded, and the next tick computes the identical diff and tries again.
+    // edits its start time, the PATCH is refused, nothing is recorded, and the
+    // next tick computes the identical diff and tries again. A location change
+    // is the same case, because modifyScheduledEvent only sends the location
+    // together with the times.
     // The session pings carry MAX_LATENESS_MINUTES for exactly this shape.
     //
     // So: a started event gets a name-and-description PATCH or nothing at all.
@@ -451,7 +571,23 @@ export async function POST(request: Request) {
   const startsAt = str('syncedStartsAt');
   const endsAt = str('syncedEndsAt');
 
-  if (!tournamentId || !guildId || !discordEventId || !name || !startsAt || !endsAt) {
+  // OPTIONAL, unlike the club-events route, and only because of the order
+  // things deploy in: a bot older than 00304 records without a location, and a
+  // 400 here would leave a created Discord event with no mapping, which the
+  // next tick duplicates. Absent leaves the recorded value alone; null is "no
+  // location", which is real.
+  const hasLocation = Object.hasOwn(body, 'location');
+  const location = body.location;
+
+  if (
+    !tournamentId ||
+    !guildId ||
+    !discordEventId ||
+    !name ||
+    !startsAt ||
+    !endsAt ||
+    (hasLocation && !(typeof location === 'string' || location === null))
+  ) {
     return NextResponse.json({ error: 'incomplete_mapping' }, { status: 400 });
   }
 
@@ -465,6 +601,7 @@ export async function POST(request: Request) {
         synced_name: name,
         synced_starts_at: startsAt,
         synced_ends_at: endsAt,
+        ...(hasLocation ? { synced_location: location as string | null } : {}),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'tournament_id,guild_id' }

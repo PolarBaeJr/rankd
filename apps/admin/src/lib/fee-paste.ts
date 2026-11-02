@@ -298,7 +298,7 @@ export interface PasteMatchResult {
   waived: Array<{ entry: PastedPayer; player: PasteRosterPlayer }>;
   notBillable: Array<{ entry: PastedPayer; player: PasteRosterPlayer; reason: string }>;
   ambiguous: Array<{ entry: PastedPayer; candidates: PasteRosterPlayer[]; reason: string }>;
-  /** `paid` false: a Google Form's named row (00290), waiting on its receipt under Submitted. */
+  /** `paid` false: a Google Form's named row (00290), waiting on its receipt under To review. */
   alreadyNamed: Array<{ entry: PastedPayer; manualName: string; paid: boolean }>;
   notFound: Array<{ entry: PastedPayer; possibleMembers: PasteRosterPlayer[] }>;
   invalid: PastedInvalid[];
@@ -650,7 +650,7 @@ export function toFeePastePreview(
       name: manualName,
       reason: paid
         ? 'Already recorded as a named payment this season'
-        : 'Already named this season, not paid yet: confirm its receipt under Submitted',
+        : 'Already named this season, not paid yet: confirm its receipt under To review',
       ...(paid ? {} : { unpaid: true }),
     })),
     notBillable: m.notBillable.map(({ entry, player, reason }) => row(entry, player, reason)),

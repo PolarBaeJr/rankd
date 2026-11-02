@@ -300,6 +300,23 @@ export default async function EventDetailPage({
   const registrationNotice = registrationWindowNotice(entryWindows.registration, windowNow);
   const checkinNotice = checkinWindowNotice(entryWindows.checkin, windowNow);
 
+  // A tournament run for a club event fills from the club event's list (00292),
+  // and enter_tournament_event refuses a member's own entry (00307), so the
+  // way in is a link there. A failed read shows the usual controls, which the
+  // refusal then explains.
+  // Also for somebody who withdrew: signing up again on the club event puts
+  // them back in here.
+  let clubEvent: { href: string; title: string } | null = null;
+  if (!playerRegistration || playerOutOfEvent) {
+    const { data: linkedClubEvent } = await createServiceRoleClient()
+      .from('club_events')
+      .select('id, title')
+      .eq('tournament_event_id' as never, eventId as never)
+      .maybeSingle();
+    const linked = linkedClubEvent as { id: string; title: string } | null;
+    if (linked) clubEvent = { href: `/events/${linked.id}`, title: linked.title };
+  }
+
   // The club-fee refusal registerForEvent would make (00260), said before the
   // click. Only asked of somebody not already in the event, and a failed read
   // says nothing: see lib/membership-screen.
@@ -636,6 +653,7 @@ export default async function EventDetailPage({
               registrationNotice={registrationNotice}
               checkinNotice={checkinNotice}
               waitlist={waitlist}
+              clubEvent={clubEvent}
             />
           </div>
         </div>

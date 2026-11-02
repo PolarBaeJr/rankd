@@ -5,6 +5,7 @@ import {
   EDITOR_OFFERABLE,
   EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  EXEC_READS,
   FEATURE_ACCESS_CAPABILITIES,
   TRAINER_BASELINE,
   PERMISSION_ROLES,
@@ -205,7 +206,7 @@ describe('the capability vocabulary', () => {
     for (const capability of CAPABILITIES) {
       const page = pageOf(capability);
       expect(isCapability(page), `${capability} → ${page}`).toBe(true);
-      expect(page.split('.')[0]).toBe(capability.split('.')[0]);
+      expect(page.split('.')[0] ?? '').toBe(capability.split('.')[0] ?? '');
       if (modeOf(capability) === 'page' || inPageArea(capability)) expect(page).toBe(capability);
     }
   });
@@ -256,7 +257,7 @@ describe('CAPABILITY_GATES', () => {
   it('agrees with each capability about its area and mode', () => {
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
-      expect(entry.area, capability).toBe(capability.split('.')[0]);
+      expect(entry.area, capability).toBe(capability.split('.')[0] ?? '');
       // The `page` area's keys are drawn as reads: the editor keeps one page
       // slot per area, and seven page-mode entries would overwrite each other.
       expect(entry.mode, capability).toBe(inPageArea(capability) ? 'read' : modeOf(capability));
@@ -458,28 +459,36 @@ describe('baselines', () => {
     ]);
   });
 
-  // THE FLOOR, PINNED ONE BY ONE — the club owner's "everyone can read things,
-  // but cant write it", written down so that a single write appearing here is a
-  // diff somebody has to read. Eight pages and four reads; the only two reads
-  // that are not an area's page are the expense ledger and the two tournament
-  // reads that were never anything but reads.
-  it('gives an exec exactly 13 capabilities, one of them a write, pinned one by one', () => {
-    expect([...EXEC_BASELINE]).toEqual([
-      'announcements.page',
-      'fees.page',
-      'fees.expenses.read',
-      'fees.expenses.add.write',
-      'legal.page',
-      'matches.page',
-      'players.page',
-      'players.read',
-      'seasons.page',
-      'sessions.page',
-      'tournaments.page',
-      'tournaments.draw.entrycounts.read',
-      'tournaments.draw.waivers.read',
-    ]);
-    expect(EXEC_BASELINE.length).toBe(13);
+  // THE FLOOR, DERIVED AND CHECKED AGAINST ITS RULE. Owner, 2026-10-23: "give
+  // them read to everything, but write follow the roles". The floor stopped
+  // being a hand-kept list of thirteen and became every `.read` and `.page`
+  // outside the five admin areas, plus the one named write. It is re-derived
+  // here from CAPABILITIES independently of the constant, so a read added later
+  // passes without an edit and a write, or an admin-area read, fails.
+  it('gives an exec every read and page outside the admin areas, plus one named write', () => {
+    const adminOnly = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
+    const derived = CAPABILITIES.filter(
+      (c) =>
+        (c.endsWith('.read') || c.endsWith('.page')) && !adminOnly.includes(c.split('.')[0] ?? ''),
+    );
+    expect([...EXEC_READS]).toEqual(derived);
+    expect([...EXEC_BASELINE].sort()).toEqual(['fees.expenses.add.write', ...derived].sort());
+    // Nothing from the five admin areas, read or write.
+    expect(EXEC_BASELINE.filter((c) => adminOnly.includes(c.split('.')[0] ?? ''))).toEqual([]);
+    // The reads the owner's instruction was about, named so the derivation
+    // cannot quietly come out empty or miss a whole section.
+    for (const capability of [
+      'challenges.page',
+      'walkovers.page',
+      'disputes.page',
+      'events.page',
+      'events.signups.read',
+      'fees.clubfees.read',
+      'tournaments.fees.read',
+      'changelog.page',
+    ] as Capability[]) {
+      expect(EXEC_BASELINE, capability).toContain(capability);
+    }
     // The property the list exists to have, asserted as a property rather than
     // read off the list above. It said NOT ONE WRITE until 2026-09-19, when the
     // owner asked for the expense write to reach every officer. Naming the
@@ -599,15 +608,17 @@ describe('baselines', () => {
     expect(effectiveCapabilities('exec', UNRESTRICTED).size).toBe(EXEC_BASELINE.length);
   });
 
-  // THE FLOOR IS INSIDE THE TRANSCRIPTION, which is the narrowing stated as an
-  // inclusion. If this ever fails, the "baseline" has grown something no exec
-  // held before capabilities existed — the one direction it must never move.
-  it('keeps the exec baseline strictly inside what an exec may be assigned', () => {
-    const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
+  // THE FLOOR IS INSIDE THE CEILING. It used to be inside the transcription,
+  // but reading everything (2026-10-23) put pages there that no exec held
+  // historically: /challenges, /walkovers, /disputes, /events. What must still
+  // hold is that an officer's floor is something an admin could have handed
+  // out anyway, so the floor never reaches past EDITOR_OFFERABLE.
+  it('keeps the exec baseline strictly inside what may be offered', () => {
+    const offerable = new Set<Capability>(EDITOR_OFFERABLE);
     for (const capability of EXEC_BASELINE) {
-      expect(assignable.has(capability), `${capability} is not historic exec work`).toBe(true);
+      expect(offerable.has(capability), `${capability} is above the ceiling`).toBe(true);
     }
-    expect(EXEC_BASELINE.length).toBeLessThan(EXEC_ASSIGNABLE.length);
+    expect(EXEC_BASELINE.length).toBeLessThan(EDITOR_OFFERABLE.length);
   });
 
   // THE INVARIANT, CHECKED AGAINST THE BASELINES THEMSELVES. A baseline is fed
@@ -1041,78 +1052,68 @@ describe('EDITOR_OFFERABLE', () => {
   });
 
   // AND THE SECOND CONSTANT, GUARDED FROM THE OTHER DIRECTION. Now that there is
-  // a floor as well as a ceiling, the mistake to catch is a widening landing in
-  // the FLOOR — where it would reach every officer in the club by level, with
-  // nobody choosing it. The floor holds exactly one write, chosen deliberately
-  // on 2026-09-19 and named below, so the cheapest way to say that is to say it
-  // again here, at the constant that bounds handing out. A widening that lands
-  // in the floor still fails this: the loop refuses anything NOT already
-  // assignable, and the pin refuses a second write however it got there.
-  it('never lets the widening reach the exec baseline', () => {
+  // a floor as well as a ceiling, the mistake to catch is a WRITE landing in the
+  // floor, where it would reach every officer in the club by level, with nobody
+  // choosing it. Since 2026-10-23 the floor takes every read and page outside
+  // the admin areas, so the widening may reach it as reads and only as reads.
+  // The floor holds exactly one write, chosen deliberately on 2026-09-19 and
+  // named below.
+  it('lets the widening reach the exec baseline as reads only', () => {
     const floor = new Set<Capability>(EXEC_BASELINE);
     const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
     for (const capability of EDITOR_OFFERABLE) {
       if (assignable.has(capability)) continue;
-      expect(floor.has(capability), `${capability} reached the exec baseline`).toBe(false);
+      if (!floor.has(capability)) continue;
+      expect(
+        capability.endsWith('.read') || capability.endsWith('.page'),
+        `${capability} reached the exec baseline`,
+      ).toBe(true);
     }
     expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([
       'fees.expenses.add.write',
     ]);
   });
 
-  // Named one by one so that opening any of them is a diff somebody has to
-  // read. These are the club's rating and account rules, its audit trail, the
-  // ability to MOVE money, and the ability to hand out permissions at all.
+  // WHAT STAYS OUT, AND SINCE 2026-10-23 IT IS FIVE WHOLE AREAS. The owner's
+  // "write follow the roles and i can add additional stuff" made every other
+  // capability offerable, money writes and roster merges included, so the
+  // ceiling now refuses exactly the admin areas: who holds what, the audit
+  // trail, ratings, the data API's accounts and the platform switches. Derived
+  // below, so a capability added later in those areas is refused without an
+  // edit, and named as well, so the derivation cannot quietly come out empty.
   //
-  // THE FOUR FINANCE READS CAME OFF THIS LIST, on purpose and as the whole
-  // point of 00104: the club owner asked for a treasurer who can SEE money in as
-  // well as out. Seeing is not moving, and every `fees.*.write` below stayed.
-  //
-  // `players.consoleaccess.write` IS OFFERABLE AND IS DELIBERATELY NOT BELOW —
-  // 00105, the club owner's "also make role change a permission". It is the
-  // first WRITE on the offerable list, and what bounds it is not this list: the
-  // action reading it closure-checks the target's whole set on both sides and
-  // still refuses the admin level outright, both pinned in
+  // `players.consoleaccess.write` is offerable, and what bounds it is not this
+  // list: the action reading it closure-checks the target's whole set on both
+  // sides and still refuses the admin level outright, both pinned in
   // apps/admin/src/lib/__tests__/console-access-capability.test.ts. Handing out
   // the admin LEVEL remains the act no capability expresses, which is why
   // `permissions.write` is still below and this is not.
-  it('withholds the admin-only half, permissions.write included', () => {
+  it('withholds the admin-only areas, permissions.write included', () => {
     const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+    const adminOnly = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
+    expect(CAPABILITIES.filter((c) => !offerable.has(c))).toEqual(
+      CAPABILITIES.filter((c) => adminOnly.includes(c.split('.')[0] ?? '')),
+    );
     for (const capability of [
       'permissions.write',
       'permissions.page',
       'audit.page',
       // THE EXPORT FOLLOWS THE PAGE IT BELONGS TO. `audit.page` is withheld, so
       // offering either of these would hand somebody a download from a section
-      // they cannot open. Whichever way that page moves one day, these move
-      // with it, and neither goes first.
+      // they cannot open.
       'audit.export.read',
       'audit.signins.read',
       'ratings.page',
       'accounts.page',
-      // THE DATA API'S KEYS ARE WITHHELD HERE TOO, and they are the reason the
-      // page above stayed withheld. Minting is not console work: the key it
-      // produces reads the club's data from outside every gate in this file,
-      // with no session, no audit row per read, and no expiry short of a
-      // revoke. Handing that out is an admin act.
+      // THE DATA API'S KEYS ARE WITHHELD HERE TOO. Minting is not console work:
+      // the key it produces reads the club's data from outside every gate in
+      // this file, with no session, no audit row per read, and no expiry short
+      // of a revoke. Handing that out is an admin act.
       'accounts.apikey.read',
       'accounts.apikey.mint.write',
       'accounts.apikey.revoke.write',
       'platform.page',
       'platform.settings.write',
-      'fees.clubfees.markpaid.write',
-      'fees.clubfees.waive.write',
-      'fees.otherincome.add.write',
-      'fees.reinstatements.write',
-      'fees.playerflags.write',
-      'seasons.fees.write',
-      'tournaments.fees.read',
-      'players.privilegedfields.write',
-      'players.merge.write',
-      'players.remove.write',
-      'challenges.page',
-      'disputes.page',
-      'walkovers.page',
     ] as const) {
       expect(offerable.has(capability), `${capability} is offerable`).toBe(false);
     }
@@ -1150,7 +1151,11 @@ describe('permits', () => {
   it('gives an unrestricted person their level baseline and nothing more', () => {
     expect(effectiveCapabilities('exec', UNRESTRICTED).size).toBe(EXEC_BASELINE.length);
     expect(effectiveCapabilities('trainer', UNRESTRICTED).size).toBe(TRAINER_BASELINE.length);
-    expect(permits('exec', UNRESTRICTED, 'fees.clubfees.read')).toBe(false);
+    // An officer reads the books by level now, and still moves no money and
+    // opens no admin area without being given it.
+    expect(permits('exec', UNRESTRICTED, 'fees.clubfees.read')).toBe(true);
+    expect(permits('exec', UNRESTRICTED, 'fees.clubfees.markpaid.write')).toBe(false);
+    expect(permits('exec', UNRESTRICTED, 'audit.page')).toBe(false);
     expect(permits('trainer', UNRESTRICTED, 'players.update.write')).toBe(false);
   });
 
@@ -1240,8 +1245,9 @@ describe('resolvePermissions', () => {
     const resolved = resolvePermissions('exec', 'finance', [], []);
     expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
     // The role REPLACED the base before this change, so a treasurer held three
-    // capabilities and could open nothing else at all. They hold thirteen now.
-    expect(RESTRICTED(resolved)).toHaveLength(13);
+    // capabilities and could open nothing else at all. They hold the whole
+    // floor now, which since 2026-10-23 is every read outside the admin areas.
+    expect(RESTRICTED(resolved)).toHaveLength(EXEC_BASELINE.length);
     for (const capability of EXEC_BASELINE) {
       expect(RESTRICTED(resolved), capability).toContain(capability);
     }
@@ -1306,7 +1312,8 @@ describe('resolvePermissions', () => {
   });
 
   // Revoking a read takes that read and NOTHING ELSE. This is the exact case
-  // the old `write ⊆ read` prune existed for, inverted deliberately.
+  // the old `write ⊆ read` prune existed for, inverted deliberately. The read
+  // is a floor read since 2026-10-23, so the revoke takes it out of the floor.
   it('leaves the write behind when the matching read is revoked', () => {
     const resolved = resolvePermissions(
       'exec',
@@ -1315,8 +1322,9 @@ describe('resolvePermissions', () => {
       ['fees.otherincome.read'],
     );
     expect(RESTRICTED(resolved)).toEqual(
-      withFloor('fees.expenses.add.write', 'fees.otherincome.add.write'),
+      less(['fees.otherincome.read'], 'fees.expenses.add.write', 'fees.otherincome.add.write'),
     );
+    expect(RESTRICTED(resolved)).not.toContain('fees.otherincome.read');
   });
 
   // -------------------------------------------------------------------------
@@ -1378,16 +1386,14 @@ describe('resolvePermissions', () => {
       ['fees.clubfees.read', 'fees.clubfees.waive.write'],
       ['fees.page'],
     );
-    // NOT empty any more: closing /fees closes /fees, and leaves the seven other
-    // sections the floor opens exactly as they were.
+    // NOT empty any more: closing /fees closes /fees, and leaves every other
+    // section the floor opens exactly as it was.
     expect(RESTRICTED(resolved).filter((c) => c.startsWith('fees.'))).toEqual([]);
-    // Three now, not two: the floor's own `fees.expenses.add.write` goes with
-    // the page as well, which is the whole claim of this test. Closing /fees
-    // has to close the write the FLOOR gave, not only the reads, or a revoked
-    // section would still accept a filing.
-    expect(RESTRICTED(resolved)).toEqual(
-      less(['fees.page', 'fees.expenses.read', 'fees.expenses.add.write']),
-    );
+    // Every floor capability in `fees` goes with the page, the floor's own
+    // `fees.expenses.add.write` included, which is the whole claim of this
+    // test. Closing /fees has to close the write the FLOOR gave, not only the
+    // reads, or a revoked section would still accept a filing.
+    expect(RESTRICTED(resolved)).toEqual(FLOOR.filter((c) => !c.startsWith('fees.')));
   });
 
   it('is pure — the same inputs give the same answer and nothing is mutated', () => {

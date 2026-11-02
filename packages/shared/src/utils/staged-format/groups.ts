@@ -115,10 +115,12 @@ interface Unit<T> {
   fixtures: Array<[T, T]>;
 }
 
-function poolUnits<T>(groups: ReadonlyArray<PlannedGroup<T>>, interleave: boolean): Array<Unit<T>> {
+type GroupRounds<T> = (g: PlannedGroup<T>) => Array<Array<[T, T]>>;
+
+function poolUnits<T>(groups: ReadonlyArray<PlannedGroup<T>>, interleave: boolean, roundsFor: GroupRounds<T>): Array<Unit<T>> {
   const byGroup = [...groups]
     .sort((x, y) => x.group - y.group)
-    .map((g) => ({ g, rounds: circleMethodRounds(g.members) }));
+    .map((g) => ({ g, rounds: roundsFor(g) }));
   const units: Array<Unit<T>> = [];
   const push = (g: PlannedGroup<T>, r: number, fixtures: Array<[T, T]> | undefined) => {
     if (fixtures && fixtures.length) units.push({ pool: g.pool, group: g.group, round: r + 1, fixtures });
@@ -171,36 +173,46 @@ const flatten = <T>(units: Array<Unit<T>>): Array<Pending<T>> =>
  *
  * matchNumber runs across the whole stage in slot order (then pool, then court
  * order), so it is stable for a given plan.
+ *
+ * `opts.roundsFor` replaces the circle method, so a round added to a drawn
+ * stage is packed onto courts by the same rules as the draw was. `opts.firstSlot`
+ * starts the slots after the ones already played; matchNumber still starts at 1.
  */
 export function scheduleStage<T>(
   groups: ReadonlyArray<PlannedGroup<T>>,
-  stage: Pick<GroupsStage, 'pools' | 'interleave' | 'courts'>,
+  stage: Pick<GroupsStage, 'pools' | 'interleave' | 'courts' | 'gamesPerTeam'>,
   key: (t: T) => unknown = (t) => t,
+  opts: { roundsFor?: GroupRounds<T>; firstSlot?: number } = {},
 ): Array<ScheduledStageMatch<T>> {
+  // gamesPerTeam keeps the first rounds of the circle method, which is a whole
+  // number of rounds for every group: in an odd group the rest falls on a
+  // different team each round, so some teams play one game fewer.
+  const roundsFor = opts.roundsFor ?? ((g: PlannedGroup<T>) => circleMethodRounds(g.members).slice(0, stage.gamesPerTeam ?? Infinity));
+  const firstSlot = opts.firstSlot ?? 1;
   const pools = [...new Set(groups.map((g) => g.pool))].sort((x, y) => x - y);
   const placed: Array<Omit<ScheduledStageMatch<T>, 'matchNumber'> & { order: number }> = [];
 
   if (stage.courts?.mode === 'shared') {
     const courts = stage.courts.courts;
-    const perPool = pools.map((p) => poolUnits(groups.filter((g) => g.pool === p), stage.interleave));
+    const perPool = pools.map((p) => poolUnits(groups.filter((g) => g.pool === p), stage.interleave, roundsFor));
     const deepest = perPool.reduce((m, u) => Math.max(m, u.length), 0);
     const units: Array<Unit<T>> = [];
     for (let i = 0; i < deepest; i++) for (const u of perPool) if (u[i]) units.push(u[i]!);
     pack(flatten(units), courts.length, key).forEach((slot, si) => {
-      slot.forEach((m, ci) => placed.push({ ...m, slot: si + 1, court: courts[ci]!, order: ci }));
+      slot.forEach((m, ci) => placed.push({ ...m, slot: firstSlot + si, court: courts[ci]!, order: ci }));
     });
   } else {
     for (const p of pools) {
-      const units = poolUnits(groups.filter((g) => g.pool === p), stage.interleave);
+      const units = poolUnits(groups.filter((g) => g.pool === p), stage.interleave, roundsFor);
       if (stage.courts?.mode === 'per_pool') {
         const courts = stage.courts.pools[p - 1] ?? [];
         pack(flatten(units), Math.max(1, courts.length), key).forEach((slot, si) => {
-          slot.forEach((m, ci) => placed.push({ ...m, slot: si + 1, court: courts[ci] ?? null, order: ci }));
+          slot.forEach((m, ci) => placed.push({ ...m, slot: firstSlot + si, court: courts[ci] ?? null, order: ci }));
         });
       } else {
         units.forEach((u, si) => {
           u.fixtures.forEach(([a, b], ci) => placed.push({
-            pool: u.pool, group: u.group, round: u.round, a, b, slot: si + 1, court: null, order: ci,
+            pool: u.pool, group: u.group, round: u.round, a, b, slot: firstSlot + si, court: null, order: ci,
           }));
         });
       }

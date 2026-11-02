@@ -176,6 +176,7 @@ async function banPlayerImpl(input: BanInput) {
 
   revalidatePath('/players');
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 export async function reinstatePlayer(input: ReinstatementInput) {
@@ -320,6 +321,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
 
   revalidatePath('/players');
   revalidatePath('/fees');
+  revalidatePath('/finances');
 
   if (feeError) {
     // club_fees_reinstatement_ban_key (00065, 00094): two admins submitting the same
@@ -442,4 +444,5 @@ export async function recordReinstatementPayment(input: ReinstatementPaymentInpu
   }, { playerId: fee.player_id });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }

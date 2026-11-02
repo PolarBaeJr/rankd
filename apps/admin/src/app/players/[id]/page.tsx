@@ -910,7 +910,7 @@ export default async function PlayerDetailPage({
             />
             {discordLink && <PanelRow label="Linked" value={day(discordLink.linked_at)} />}
           </div>
-          <DiscordLinkPanel playerId={player.id} playerName={player.full_name} />
+          <DiscordLinkPanel playerId={player.id} playerName={player.full_name} linked={Boolean(discordLink)} />
         </Panel>
       )}
 

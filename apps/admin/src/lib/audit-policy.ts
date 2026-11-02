@@ -258,6 +258,9 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // An external team (00269) has no fee row or member record behind it, so this
   // row is the only trace it was ever entered.
   'external_pair_removed',
+  // A court helper taken off a court (00310). Matched by the _removed pattern;
+  // the row is the only trace of who could score on that court and when.
+  'court_helper_removed',
   'seeds_cleared',
   'draw_unlocked',
   // A category change approved after the team has played (00279). No risk

@@ -26,8 +26,10 @@ export interface PoolsPresetOptions {
   courts?: string[][] | null;
   groupTarget?: number;
   finalsTarget?: number;
-  /** poolsThenSemisFinal only: play for third. Default true. */
+  /** poolsThenSemisFinal and groupsThenTopKnockout: play for third. Default true. */
   bronze?: boolean;
+  /** groupsThenTopKnockout only: how many go through to the knockout, a power of 2. Default 4. */
+  advance?: number;
   categories?: FormatCategory[];
   headStarts?: HeadStarts;
 }
@@ -186,6 +188,70 @@ export function poolsThenSemisFinal(opts: PoolsPresetOptions = {}): FormatConfig
     ],
   };
   return base(opts, [groups, semis, finals]);
+}
+
+/**
+ * Groups, then the best N overall to a knockout: every group winner first,
+ * then the best runners-up across the groups, then the best thirds, until N
+ * are in. N need not be a multiple of the groups (8 from 3 groups is the 3
+ * winners, the 3 runners-up and the best 2 thirds). The group size fits the
+ * turnout, so only the number of groups is set in advance. Plain scoring with
+ * no head starts, and rated unless the event is not.
+ */
+export function groupsThenTopKnockout(opts: PoolsPresetOptions = {}): FormatConfig {
+  const groupCount = opts.pools ?? 4;
+  const advance = opts.advance ?? 4;
+  if (!Number.isInteger(groupCount) || groupCount < 1 || groupCount > 32) {
+    throw new ExpectedError('Use between 1 and 32 groups.');
+  }
+  if (!Number.isInteger(advance) || advance < 2 || advance > 128 || (advance & (advance - 1)) !== 0) {
+    throw new ExpectedError('The number going through must be 2, 4, 8, 16, 32, 64 or 128.');
+  }
+  const groupTarget = opts.groupTarget ?? 21;
+  const finalsTarget = opts.finalsTarget ?? 21;
+  const plain = (target: number): StageScoring => (
+    { bestOf: 1, target, winByTwo: true, cap: pointsCap(target), handicap: false, forfeit: null }
+  );
+  const groups: GroupsStage = {
+    kind: 'groups',
+    key: 'groups',
+    name: 'Group stage',
+    rated: true,
+    scoring: plain(groupTarget),
+    entrants: { from: 'field', order: 'elo' },
+    pools: groupCount,
+    groupsPerPool: 1,
+    groupSize: 'auto',
+    assignment: 'snake',
+    interleave: false,
+    courts: opts.courts === null ? null : { mode: 'per_pool', pools: opts.courts ?? defaultCourts(groupCount) },
+    tiebreaks: STAGE_TIEBREAKS,
+    poolRanking: 'none',
+  };
+  // Place by place, each place ranked across the groups and only as many taken
+  // as are still needed. With one group, its table is read top down.
+  const slots: SlotRef[] = [];
+  for (let place = 1, left = advance; left > 0; place++) {
+    if (groupCount === 1) {
+      slots.push({ type: 'group_place', stage: 'groups', pool: 1, group: 1, place });
+      left -= 1;
+    } else {
+      const take = Math.min(groupCount, left);
+      slots.push({ type: 'group_rank', stage: 'groups', place, rankBy: STAGE_TIEBREAKS, ...(take < groupCount ? { count: take } : {}) });
+      left -= take;
+    }
+  }
+  return base(opts, [groups, {
+    kind: 'knockout',
+    key: 'knockout',
+    name: advance === 2 ? 'Final' : 'Knockout',
+    rated: true,
+    scoring: plain(finalsTarget),
+    entrants: { from: 'slots', slots },
+    size: advance,
+    seeding: 'standard',
+    thirdPlace: advance >= 4 && opts.bronze !== false,
+  }]);
 }
 
 // ============================================================

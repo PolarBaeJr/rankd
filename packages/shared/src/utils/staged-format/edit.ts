@@ -1,16 +1,24 @@
 // What may change in a staged event's config once play has started: stages
 // not yet drawn, and nothing else that a drawn row was built from.
 
-import type { FormatConfig } from './schema';
+import type { FormatConfig, FormatStage } from './schema';
 
 const same = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+
+// A stage's settings without its courts, which may change after the draw.
+function withoutCourts(stage: FormatStage | undefined): unknown {
+  if (!stage || stage.kind === 'matches') return stage;
+  const { courts: _courts, ...rest } = stage;
+  return rest;
+}
 
 /**
  * Why `next` may not replace `prev`, or null when it may. `drawn` holds the
  * 1-based numbers of the stages that have matches.
  *
  *  - A drawn stage keeps its place in the list and every one of its settings:
- *    its rows were built from them and its results judged by them.
+ *    its rows were built from them and its results judged by them. Its courts
+ *    are the exception, so a court that breaks on the day can be swapped out.
  *  - Categories and head starts are frozen once anything is drawn, because a
  *    knockout row snapshots its head starts when its sides arrive, so a change
  *    would judge later rows of the same stage by different numbers.
@@ -30,7 +38,7 @@ export function stagedConfigEditRefusal(
     const before = prev.stages[n - 1];
     const after = next.stages[n - 1];
     if (!after) return `Stage ${n} (${before?.name ?? 'drawn'}) has been drawn, so it cannot be removed.`;
-    if (!same(before, after)) {
+    if (!same(withoutCourts(before), withoutCourts(after))) {
       return `Stage ${n} (${before?.name ?? after.name}) has been drawn, so its settings are fixed. Only stages not yet drawn can change.`;
     }
   }

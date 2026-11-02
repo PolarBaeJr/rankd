@@ -69,6 +69,11 @@ src/
   api.ts            Calls back into the player app's /api/discord/* surface.
   register-commands.ts  Optional compare-and-register at startup.
   scheduled-event-sync.ts  The Events tab loop shared by tournament-events and club-events.
+  server-log.ts     The per-server log: who did what, deleted and edited messages.
+  scam-guard.ts     Auto mod, tuned per server under /config.
+  trap-notice.ts    The trap channel's pinned warning card and its count.
+  moderation.ts     /softban: a ban that deletes recent messages, then an unban.
+  purge-memory.ts   Who ran /purge where, so the server log can name them.
   ...               announcements, session-pings, session-board,
                     tournament-events, club-events, match-results, feedback,
                     handles, audit, config, settings, outbox, reconcile,
@@ -78,10 +83,15 @@ src/
 
 ## Commands
 
-`/leaderboard` `/profile` `/sessions` `/sessionpost` `/tournaments` `/bug`
-`/feedback` `/announce` `/say` `/link` `/unlink` `/forcelink` `/forceunlink`
-`/forceupdate` `/setup` `/config` `/rolepicker` `/guidepost` `/discord`
-`/socials`
+Members: `/leaderboard` `/profile` `/sessions` `/tournaments` `/schedule`
+`/challenge` `/signup` `/receipt` `/bug` `/feedback` `/link` `/unlink`
+`/discord` `/socials`
+
+Officers, from the console's own permissions: `/session` `/event` `/tourney`
+`/sessionpost` `/announce` `/say` `/forcelink` `/forceunlink` `/forceupdate`
+`/rolepicker` `/guidepost`
+
+In any server, by Discord permission: `/setup` `/config` (Manage Server), `/purge` (Manage Messages), `/softban` (Ban Members)
 
 The definitions, including which are exec-only, are `COMMAND_DEFINITIONS` in
 `src/commands.ts`.

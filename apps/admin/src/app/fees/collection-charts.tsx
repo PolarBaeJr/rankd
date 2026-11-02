@@ -20,21 +20,20 @@ import {
 import { CardHeading } from './card-heading';
 
 /**
- * HOW COLLECTION IS GOING — the Club fees tab's chart panel.
+ * HOW COLLECTION IS GOING: the dues chart panel on /finances.
  *
  * TWO QUESTIONS AN OFFICER ACTUALLY ASKS, and they are different questions:
  *
  *   "Have we got the money in?"   the split — a level.
  *   "Has collection stalled?"     the curve — a rate.
  *
- * The stat strip above answers neither. It counts PEOPLE (paid / outstanding /
+ * The /fees View counts answer neither. They count PEOPLE (paid, unpaid,
  * waived), and the treasurer booking a gym needs dollars; forty members paid out
  * of ninety is not half the money when the two tiers are priced differently.
- * Neither figure below restates a number already on the screen.
  *
- * BEHIND `fees.clubfees.read` AND NOTHING ELSE, and it costs no query at all:
- * every row it draws was already fetched to render the fee table. See the note
- * on the fetch in page.tsx.
+ * BEHIND `fees.clubfees.read` AND NOTHING ELSE: every row it draws comes from
+ * loadDuesRoster (lib/dues-roster.ts), the same read the /fees list makes. See
+ * the note on the fetch in app/finances/page.tsx.
  *
  * DUES ONLY. `club_fees` has held entry fees and reinstatements since 00094 and
  * they answer to `tournaments.fees.read` and `fees.reinstatements.read` — other

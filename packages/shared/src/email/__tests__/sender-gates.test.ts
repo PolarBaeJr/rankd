@@ -105,6 +105,18 @@ describe('sendCategoryEmail gates', () => {
     expect(sent).toHaveLength(0);
   });
 
+  it('never hands a .invalid address to the provider (00306: a guest added with no email)', async () => {
+    preferenceResult.data = { notification_preferences: { email_challenges: true } };
+    const { sendChallengeReceivedEmail, sendEmail } = await loadSender();
+
+    const outcome = await sendChallengeReceivedEmail(
+      'guest+0b4c@no-email.invalid', 'Alex', 'singles', 'ranked', 'ch-1',
+    );
+    expect(outcome).toEqual({ sent: false, reason: 'suppressed' });
+    await expect(sendEmail('Guest+0b4c@No-Email.INVALID', 'Hi', '<p>hi</p>')).rejects.toThrow(/undeliverable/);
+    expect(sent).toHaveLength(0);
+  });
+
   it('does not send to a suppressed address', async () => {
     suppressionResult.data = { email: 'member@example.test' };
     const { sendChallengeReceivedEmail } = await loadSender();

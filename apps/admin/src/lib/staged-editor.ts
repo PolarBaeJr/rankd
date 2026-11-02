@@ -8,6 +8,9 @@ import {
   poolsPlayoffThenPlacement,
   poolsThenPlacement,
   poolsThenSemisFinal,
+  groupsThenTopKnockout,
+  ordinal,
+  parseCourtList,
   slotRefLabel,
   slotRefWidth,
   stagedConfigEditRefusal,
@@ -22,9 +25,10 @@ import {
   type StageScoring,
 } from '@badminton/shared';
 
-export type StagedPresetName = 'poolsThenPlacement' | 'poolsPlayoffThenPlacement' | 'poolsThenSemisFinal';
+export type StagedPresetName = 'groupsThenTopKnockout' | 'poolsThenPlacement' | 'poolsPlayoffThenPlacement' | 'poolsThenSemisFinal';
 
 export const STAGED_PRESETS: Array<{ value: StagedPresetName; label: string }> = [
+  { value: 'groupsThenTopKnockout', label: 'Groups, then the top N to a knockout' },
   { value: 'poolsThenPlacement', label: 'Pools, then placement matches' },
   { value: 'poolsPlayoffThenPlacement', label: 'Pools, a playoff per pool, then placement matches' },
   { value: 'poolsThenSemisFinal', label: 'Four pools, then semi-finals and a final' },
@@ -37,7 +41,8 @@ export function presetConfig(
   external: boolean,
 ): { ok: true; config: FormatConfig } | { ok: false; error: string } {
   try {
-    const build = name === 'poolsThenPlacement' ? poolsThenPlacement
+    const build = name === 'groupsThenTopKnockout' ? groupsThenTopKnockout
+      : name === 'poolsThenPlacement' ? poolsThenPlacement
       : name === 'poolsPlayoffThenPlacement' ? poolsPlayoffThenPlacement
         : poolsThenSemisFinal;
     const config = build(opts);
@@ -71,9 +76,23 @@ export interface SlotOption {
  * when it reseeds. A match side takes one entrant, so a best-of-place there is
  * offered as the single best one.
  */
+/**
+ * A slot as the editor lists it. A best-of-place ref can stand for several
+ * entrants (every group's winner, or the best two thirds), so it is named as a
+ * whole here; slotRefLabel names one entrant out of it, which is what a drawn
+ * match shows.
+ */
+export function editorSlotLabel(ref: SlotRef, cfg: FormatConfig): string {
+  if (ref.type !== 'group_rank') return slotRefLabel(ref, cfg);
+  const place = ordinal(ref.place);
+  if (ref.count == null) return `Every group's ${place} place`;
+  if (ref.count === 1) return `The best ${place} place`;
+  return `The best ${ref.count} of the ${place} places`;
+}
+
 export function slotOptions(cfg: FormatConfig, index: number, inMatch: boolean): SlotOption[] {
   const out: SlotOption[] = [];
-  const add = (ref: SlotRef) => out.push({ value: slotValue(ref), label: slotRefLabel(ref, cfg), ref });
+  const add = (ref: SlotRef) => out.push({ value: slotValue(ref), label: editorSlotLabel(ref, cfg), ref });
   const stage = cfg.stages[index];
   if (inMatch && stage?.entrants.from === 'slots' && stage.entrants.reseed) {
     const seeds = stage.entrants.slots.reduce(
@@ -117,7 +136,7 @@ export function slotValue(ref: SlotRef): string {
 export function slotOptionsFor(cfg: FormatConfig, index: number, inMatch: boolean, current: SlotRef): SlotOption[] {
   const opts = slotOptions(cfg, index, inMatch);
   const value = slotValue(current);
-  return opts.some((o) => o.value === value) ? opts : [{ value, label: slotRefLabel(current, cfg), ref: current }, ...opts];
+  return opts.some((o) => o.value === value) ? opts : [{ value, label: editorSlotLabel(current, cfg), ref: current }, ...opts];
 }
 
 function defaultEntrants(cfg: FormatConfig, index: number): FormatStage['entrants'] {
@@ -198,9 +217,9 @@ export function setPools(stage: GroupsStage, pools: number): GroupsStage {
   return { ...stage, pools, courts: { mode: 'per_pool', pools: lists } };
 }
 
-/** Court names typed as "1, 2, 3". */
+/** Court names typed as "1, 2, 3", or a range as "1-8". */
 export function parseCourts(text: string): string[] {
-  return text.split(',').map((c) => c.trim()).filter((c) => c.length > 0);
+  return parseCourtList(text);
 }
 
 export function addMatch(cfg: FormatConfig, index: number): FormatConfig {

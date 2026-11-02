@@ -233,6 +233,38 @@ describe('/tourney tournament commands', () => {
     expect(sent(3)).toEqual({ path: '/api/discord/actions/markTournamentFeeUnpaid', body: { discordUserId: CALLER, args: [T1, PLAYER] } });
   });
 
+  it('details sends only the fields filled in, and says what is saved', async () => {
+    fetchSpy.mockResolvedValue(
+      json({ ok: true, data: { name: 'Fall Open', starts_time: '09:30', ends_time: '17:00', location: 'Central Gym' } })
+    );
+    const answer = await finished(
+      await tourney('details', [
+        { name: 'start', value: '9:30' },
+        { name: 'location', value: ' Central Gym ' },
+      ])
+    );
+    // Zero-padded and trimmed before it leaves; the end is not sent at all, so
+    // the console keeps the one already saved.
+    expect(sent(0)).toEqual({
+      path: '/api/discord/actions/updateTournamentDetails',
+      body: { discordUserId: CALLER, args: [T1, { starts_time: '09:30', location: 'Central Gym' }] },
+    });
+    expect(answer).toContain('Fall Open, 09:30 to 17:00 at Central Gym');
+  });
+
+  it('details refuses a bad time, a backwards pair and an empty call before the console', async () => {
+    const bad = (await tourney('details', [{ name: 'start', value: '7pm' }])) as BotResponse;
+    expect((bad.data as { content: string }).content).toContain('24-hour');
+    const backwards = (await tourney('details', [
+      { name: 'start', value: '18:00' },
+      { name: 'end', value: '09:00' },
+    ])) as BotResponse;
+    expect((backwards.data as { content: string }).content).toContain('after the start');
+    const empty = (await tourney('details')) as BotResponse;
+    expect((empty.data as { content: string }).content).toContain('at least one');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('suspend opens a modal, and its submit sends the reason', async () => {
     const modal = await tourney('suspend');
     expect(modal.type).toBe(9);

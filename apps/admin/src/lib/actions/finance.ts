@@ -143,7 +143,7 @@ export async function addOtherIncome(input: OtherIncomeInput) {
     new_value: row,
   }, { seasonId: parsed.season_id });
 
-  revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 export async function removeOtherIncome(id: string) {
@@ -189,7 +189,7 @@ export async function removeOtherIncome(id: string) {
     old_value: existing,
   }, { seasonId: existing.season_id });
 
-  revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 /**
@@ -271,7 +271,7 @@ export async function addExpense(input: ClubExpenseInput) {
     new_value: row,
   }, { seasonId: parsed.season_id });
 
-  revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 /**
@@ -430,7 +430,7 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
     new_value: patch,
   }, { seasonId: existing.season_id });
 
-  revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 /**
@@ -521,7 +521,7 @@ export async function markExpenseReimbursed(
     new_value: { reimbursed_at, reimbursed_by: admin.id, paid_by: existing.paid_by },
   }, { seasonId: existing.season_id });
 
-  revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 /**
@@ -568,5 +568,5 @@ export async function removeExpense(id: string) {
     old_value: existing,
   }, { seasonId: existing.season_id });
 
-  revalidatePath('/fees');
+  revalidatePath('/finances');
 }

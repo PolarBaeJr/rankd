@@ -13,6 +13,15 @@ const upsertGuilds = vi.fn();
 const upsertRoles = vi.fn();
 const upsertSettings = vi.fn();
 
+// The caller check has its own tests; here every caller may.
+const { checkDiscordManager } = vi.hoisted(() => ({
+  checkDiscordManager: vi.fn(async () => ({ ok: true }) as { ok: true } | { ok: false; refusal: string }),
+}));
+vi.mock('@/lib/discord-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/discord-manager')>()),
+  checkDiscordManager,
+}));
+
 vi.mock('@/lib/supabase-server', () => ({
   createServiceRoleClient: () => ({
     from: (table: string) => ({
@@ -36,7 +45,12 @@ function post(body: unknown, auth = 'Bearer test-secret') {
   return new Request('http://localhost/api/discord/config', {
     method: 'POST',
     headers: { authorization: auth, 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    // Every bot write names who ran the command and where (discord-manager.ts).
+    body: JSON.stringify(
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? { discordUserId: '111111111111111111', guildId: '222222222222222222', ...body }
+        : body
+    ),
   });
 }
 
@@ -154,5 +168,14 @@ describe('writes', () => {
     const res = await POST(post(VALID));
     expect(res.status).toBe(503);
     expect(upsertRoles).not.toHaveBeenCalled();
+  });
+});
+
+describe('the caller check', () => {
+  it('refuses a caller the club does not allow, and writes nothing', async () => {
+    checkDiscordManager.mockResolvedValueOnce({ ok: false, refusal: 'not_permitted' });
+    const response = await POST(post({ guildId: '222222222222222222', roles: { member: '333333333333333333' } }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'not_permitted' });
   });
 });

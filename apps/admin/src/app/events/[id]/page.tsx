@@ -10,16 +10,21 @@ import {
   utcToClubWallClock,
   type ClubEventKind,
 } from '@badminton/shared';
-import { Badge, Card, DetailList, DetailRow, EditableSection, PageHeader } from '@badminton/ui';
+import { Badge, Card, DetailList, DetailRow, EditableSection, PageHeader, type PlayerOption } from '@badminton/ui';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { ClubEventControls, ClubEventForm, type ClubEventFormValues } from '../event-form';
 import { ClubEventSignupsTable, type ClubEventSignupRow } from '../signups-table';
+import { AddPersonButton } from '../add-person';
 import { loadManagedForm, loadRegistrationImports } from '@/lib/registration-imports';
 import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
+import { LiveEvent } from '../live-event';
+import { loadPartnerBoard } from '@/lib/partner-board';
+import { partnerAdvice } from '@/lib/partner-check';
+import type { PartnerOption } from '@/components/partner-notes/PartnerChoiceDialog';
 import type { CheckInRow } from '@/components/checkin-list';
 
 type EventRow = {
@@ -44,7 +49,10 @@ type SignupRow = {
   player_id: string;
   created_at: string;
   checked_in_at?: string | null;
-  players: { full_name: string | null } | { full_name: string | null }[] | null;
+  players:
+    | { full_name: string | null; is_guest?: boolean | null }
+    | { full_name: string | null; is_guest?: boolean | null }[]
+    | null;
 };
 
 export default async function ClubEventPage({ params }: { params: Promise<{ id: string }> }) {
@@ -73,6 +81,16 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     .maybeSingle();
   const event = eventData as EventRow | null;
   if (!event) notFound();
+
+  // 00312's column, read on its own so the page still loads before the
+  // migration: the read fails, and the form leaves the limit out.
+  const { data: limitData, error: limitError } = await adminClient
+    .from('club_events')
+    .select('waitlist_limit' as never)
+    .eq('id', id)
+    .maybeSingle();
+  const waitlistLimitReady = !limitError;
+  const waitlistLimit = limitError ? null : ((limitData as { waitlist_limit?: number | null } | null)?.waitlist_limit ?? null);
 
   // Non-members a Google Form signed up (00284) take places too, and their rows
   // RESTRICT the event's delete, so Delete must not be offered while any exist.
@@ -110,16 +128,21 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       .order('created_at', { ascending: true });
   let checkInReady = true;
   let { data: signupData, error: signupError } = canSeeSignups
-    ? await readSignups('player_id, created_at, checked_in_at, players(full_name)')
+    ? await readSignups('player_id, created_at, checked_in_at, players!club_event_signups_player_id_fkey(full_name, is_guest)')
     : { data: null, error: null };
   if (signupError) {
     checkInReady = false;
-    ({ data: signupData } = await readSignups('player_id, created_at, players(full_name)'));
+    ({ data: signupData } = await readSignups('player_id, created_at, players!club_event_signups_player_id_fkey(full_name, is_guest)'));
   }
   const signupRows = (signupData ?? []) as unknown as SignupRow[];
   const signups = signupRows.map((row) => {
     const player = Array.isArray(row.players) ? row.players[0] : row.players;
-    return { player_id: row.player_id, created_at: row.created_at, name: player?.full_name ?? 'A member' };
+    return {
+      player_id: row.player_id,
+      created_at: row.created_at,
+      name: player?.full_name ?? 'A member',
+      guest: player?.is_guest === true,
+    };
   });
 
   // The Form's non-members (00284) and the door's walk-ins (00294) join the
@@ -133,33 +156,66 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
           .eq('event_id', id)
           .order('created_at', { ascending: true })
       : { data: [] };
-  // The preferred partner each Form answer named (00299), read on its own so
-  // a database without the column shows no notes rather than no list.
-  const [{ data: memberNotes }, { data: guestNotes }] = canSeeSignups
-    ? await Promise.all([
-        adminClient
+  // The partner check (00311): what each Form answer named (00299), the
+  // desk's choice, and how it squares with the linked tournament's teams.
+  // Behind the same gate as the list, since it carries the same names.
+  const partnerBoard = canSeeSignups ? await loadPartnerBoard(adminClient, id) : null;
+  const partners = partnerBoard ? partnerAdvice(partnerBoard.people, partnerBoard.result, partnerBoard.pool) : {};
+  const partnerOptions: PartnerOption[] = (partnerBoard?.people ?? []).map((person) => ({
+    key: person.key,
+    name: person.name,
+    guest: person.key.startsWith('guest:'),
+  }));
+  // A member's fee for the event, so their row says paid or unpaid as a
+  // guest's does. Members sign the club waiver when they join, so there is no
+  // per-event waiver to show.
+  const { data: memberFeeData } =
+    canSeeSignups && signups.length > 0
+      ? await adminClient
+          .from('club_fees')
+          .select('player_id, amount_cents, paid_at')
+          .eq('club_event_id', id)
+          .in(
+            'player_id',
+            signups.map((row) => row.player_id),
+          )
+      : { data: [] };
+  const memberFee = new Map(
+    ((memberFeeData ?? []) as { player_id: string; amount_cents: number | null; paid_at: string | null }[]).map(
+      (row) => [row.player_id, { amountCents: row.amount_cents, paid: row.paid_at !== null }],
+    ),
+  );
+  // Answers an officer typed for somebody added by hand (00306), read on their
+  // own so a database without the column shows no answers rather than no list.
+  const { data: answerData } =
+    canSeeSignups && signups.length > 0
+      ? await adminClient
           .from('club_event_signups')
-          .select('player_id, preferred_partner')
+          .select('player_id, answers')
           .eq('event_id', id)
-          .not('preferred_partner', 'is', null),
-        externals > 0
-          ? adminClient
-              .from('club_event_external_signups')
-              .select('id, preferred_partner')
-              .eq('event_id', id)
-              .not('preferred_partner', 'is', null)
-          : Promise.resolve({ data: [] }),
-      ])
-    : [{ data: [] }, { data: [] }];
-  const memberPartner = new Map(
-    ((memberNotes ?? []) as { player_id: string; preferred_partner: string }[]).map((row) => [
+          .not('answers', 'is', null)
+      : { data: [] };
+  const memberAnswers = new Map(
+    ((answerData ?? []) as unknown as { player_id: string; answers: Record<string, string> }[]).map((row) => [
       row.player_id,
-      row.preferred_partner,
+      row.answers,
     ]),
   );
-  const guestPartner = new Map(
-    ((guestNotes ?? []) as { id: string; preferred_partner: string }[]).map((row) => [row.id, row.preferred_partner]),
-  );
+  // Who can be added by hand: anybody who could sign up and has not.
+  let addable: PlayerOption[] = [];
+  if (canCheckIn && event.status !== 'cancelled') {
+    const { data: playerData } = await adminClient
+      .from('players')
+      .select('id, full_name, is_guest')
+      .eq('is_banned', false)
+      .is('deletion_requested_at', null)
+      .not('status', 'in', '(pending_approval,suspended)')
+      .order('full_name');
+    const signedUpIds = new Set(signups.map((row) => row.player_id));
+    addable = ((playerData ?? []) as { id: string; full_name: string | null; is_guest: boolean | null }[])
+      .filter((player) => !signedUpIds.has(player.id) && player.full_name)
+      .map((player) => ({ id: player.id, name: player.full_name as string, meta: player.is_guest ? 'Guest' : null }));
+  }
 
   const entryById = new Map((formImports?.entries ?? []).map((entry) => [entry.id, entry]));
   const guests = (
@@ -183,7 +239,6 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       entryId: entry && entry.status === 'entered' ? entry.id : null,
       waiverSigned: row.walk_in ? false : entry ? !!entry.waiver?.signed : null,
       fee: entry?.fee ?? null,
-      partner: guestPartner.get(row.id) ?? null,
     };
   });
   const signedUp: ClubEventSignupRow[] = [
@@ -192,11 +247,13 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         kind: 'member',
         key: `member:${row.player_id}`,
         ...row,
-        partner: memberPartner.get(row.player_id) ?? null,
+        fee: memberFee.get(row.player_id) ?? null,
+        answers: memberAnswers.get(row.player_id) ?? null,
       }),
     ),
     ...guests,
-  ].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    // Newest first, so the latest sign-ups are at the top (owner, 2026-10-24).
+  ].sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   // The door list: members, then the Form's non-members (00284), who carry no
   // player id and are keyed by their own row.
@@ -256,16 +313,25 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     signup_opens_at: event.signup_opens_at ? utcToClubWallClock(event.signup_opens_at) : '',
     signup_closes_at: event.signup_closes_at ? utcToClubWallClock(event.signup_closes_at) : '',
     capacity: event.capacity === null ? '' : String(event.capacity),
+    waitlist_limit: waitlistLimit === null ? '' : String(waitlistLimit),
     cost_dollars: event.cost_cents === null ? '' : (event.cost_cents / 100).toFixed(2),
     publish: event.status === 'published',
   };
 
   return (
     <div>
+      <LiveEvent eventId={id} channel="event-page" />
       <PageHeader
         eyebrow="EVENTS"
         title={event.title}
         sub={<Link href="/events" className="hover:underline">Back to club events</Link>}
+        actions={
+          <ClubEventControls
+            eventId={event.id}
+            canCancel={canCancel && !cancelled}
+            canDelete={canDelete && taken === 0}
+          />
+        }
       />
       <div className="flex flex-col gap-5">
         <EditableSection
@@ -316,17 +382,19 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 label="Capacity"
                 value={event.capacity === null ? `No limit, ${taken} signed up` : `${taken} of ${event.capacity} places taken`}
               />
+              <DetailRow label="Waitlist limit" value={waitlistLimit === null ? 'No limit' : String(waitlistLimit)} />
               <DetailRow label="Cost" value={cost} />
               {cancelled && <DetailRow label="Cancel reason" value={event.cancelled_reason} mono={false} wide />}
             </DetailList>
           }
-          form={<ClubEventForm key={event.id} eventId={event.id} initial={initial} />}
-        />
-
-        <ClubEventControls
-          eventId={event.id}
-          canCancel={canCancel && !cancelled}
-          canDelete={canDelete && taken === 0}
+          form={
+            <ClubEventForm
+              key={event.id}
+              eventId={event.id}
+              initial={initial}
+              waitlistLimitReady={waitlistLimitReady}
+            />
+          }
         />
 
         {(linked || !cancelled) && (
@@ -379,13 +447,33 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
 
         {canSeeSignups && (
           <Card className="p-0">
-            <h2
-              className="px-5 pb-4 pt-5 text-[13px] font-bold uppercase tracking-[0.14em] text-[var(--ink)]"
-              style={{ fontFamily: 'var(--display)' }}
-            >
-              Signed up
-            </h2>
-            <ClubEventSignupsTable eventId={event.id} rows={signedUp} canRemove={canRemoveSignup} />
+            <div className="flex items-center justify-between gap-3 px-5 pb-4 pt-5">
+              <h2
+                className="text-[13px] font-bold uppercase tracking-[0.14em] text-[var(--ink)]"
+                style={{ fontFamily: 'var(--display)' }}
+              >
+                Signed up
+              </h2>
+              {canCheckIn && event.status !== 'cancelled' && (
+                <AddPersonButton
+                  eventId={event.id}
+                  members={addable}
+                  costCents={event.cost_cents}
+                  canMarkPaid={may('fees.clubfees.markpaid.write')}
+                />
+              )}
+            </div>
+            <ClubEventSignupsTable
+              eventId={event.id}
+              rows={signedUp}
+              canRemove={canRemoveSignup}
+              partners={partners}
+              partnerOptions={partnerOptions}
+              canEditPartner={canCheckIn && !cancelled && partnerBoard?.choiceReady === true}
+              canPair={
+                !!partnerBoard?.linkedEventId && partnerBoard.doubles && may('tournaments.draw.pairs.add.write')
+              }
+            />
           </Card>
         )}
 

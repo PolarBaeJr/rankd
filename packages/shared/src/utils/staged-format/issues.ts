@@ -31,6 +31,7 @@ const FIELD_WORDS: Record<string, string> = {
   courts: 'courts',
   tiebreaks: 'tiebreak order',
   poolRanking: 'pool ranking',
+  gamesPerTeam: 'games per team',
   size: 'draw size',
   seeding: 'seeding',
   thirdPlace: 'third place',

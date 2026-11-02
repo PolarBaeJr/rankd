@@ -18,6 +18,7 @@
 //                       it on court ('live' had no writer at all before 00136)
 //   - courts.ts       : a tournament's own courts (00273): add, rename, order,
 //                       switch off, and import the courts already typed
+//   - court-helpers.ts: naming console members to keep score on a court (00310)
 //   - _internal.ts    — private helpers (NOT 'use server' — revalidation,
 //                       notifications, Elo apply/reverse, standings)
 export {
@@ -27,6 +28,7 @@ export {
   setEventStatus,
   setEventWindows,
   setEventWaitlist,
+  setEventWaitlistLimit,
 } from './tournament-actions/events';
 
 export {
@@ -46,6 +48,8 @@ export {
   withdrawPairMember,
   swapPairMember,
   checkInPair,
+  checkInPairMember,
+  undoPairMemberCheckIn,
   markPairNoShow,
   undoCheckIn,
   undoNoShow,
@@ -73,7 +77,7 @@ export {
   unlockDraw,
 } from './tournament-actions/brackets';
 
-export { drawStage, redrawStage } from './tournament-actions/stages';
+export { drawStage, redrawStage, addStageRound, placeLateEntrant } from './tournament-actions/stages';
 
 export {
   setPairCategory,
@@ -94,6 +98,7 @@ export {
   undoMatchResult,
   getMatchOutcomeSummary,
   getCurrentHeadStarts,
+  enterCourtHelperResult,
 } from './tournament-actions/results';
 export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from './tournament-actions/results';
 
@@ -115,3 +120,5 @@ export {
   setTournamentCourtActive,
   importCourtsFromMatches,
 } from './tournament-actions/courts';
+
+export { addCourtHelper, removeCourtHelper } from './tournament-actions/court-helpers';

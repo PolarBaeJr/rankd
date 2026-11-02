@@ -32,9 +32,10 @@ import type {
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
+import { lateEntryWindow } from '@/lib/stage-controls';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
-import { ParticipantsTab } from './ParticipantsTab';
+import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
@@ -110,11 +111,15 @@ interface Props {
   categoryRequests: CategoryRequest[] | null;
   /** Entries a Google Form made (00283), by participant or pair id. */
   imported?: Record<string, 'entered' | 'awaiting_partner'> | null;
+  /** Sign-up time per participant or pair id, off the linked club event. Null when unlinked. */
+  signedUpAt?: Record<string, string> | null;
+  /** The linked club event's partner check (00311). Null when unlinked or not readable. */
+  partners?: ParticipantPartners | null;
   // Who is looking, so the panel offers Cancel on their own requests only.
   viewerId: string;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, viewerId }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -153,6 +158,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // because that is where stage 1 is drawn. playsRoundRobin and endsInKnockout
   // are both false for it here, so the legacy tabs never show.
   const staged = format === 'staged';
+  // A staged event between its first stage's draw and the next takes a late entry (00308).
+  const lateEntry = staged && lateEntryWindow(event, matches.map((m) => m.stage));
   if (staged && status !== 'registration') {
     tabs.push({ id: 'stages', label: 'Stages', icon: <Layers className="w-4 h-4" /> });
   }
@@ -294,18 +301,21 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       )}
 
       {/* What is on court and what is next, above whichever tab is open. It
-          renders nothing unless the courts tab exists and has work in it. */}
-      <LiveStrip
-        matches={matches}
-        event={event}
-        participants={participants}
-        pairs={pairs}
-        isDoubles={isDoubles}
-        canEnterResult={drawCapabilities.enterResult}
-        courts={courts}
-        busyCourtIds={busyCourtIds}
-        onOpenCourts={() => setActiveTab('courts')}
-      />
+          renders nothing unless the courts tab exists and has work in it. A
+          staged event's Stages tab carries its own court cards, so not there. */}
+      {!(staged && activeTab === 'stages') && (
+        <LiveStrip
+          matches={matches}
+          event={event}
+          participants={participants}
+          pairs={pairs}
+          isDoubles={isDoubles}
+          canEnterResult={drawCapabilities.enterResult}
+          courts={courts}
+          busyCourtIds={busyCourtIds}
+          onOpenCourts={() => setActiveTab('courts')}
+        />
+      )}
 
       {categoryRequests && categoryRequests.length > 0 && (
         <CategoryRequestsPanel
@@ -355,6 +365,9 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waitlist={waitlist}
             categoryRequests={categoryRequests}
             imported={imported}
+            signedUpAt={signedUpAt}
+            partners={partners}
+            lateEntry={lateEntry}
           />
         )}
         {activeTab === 'checkin' && (
@@ -401,6 +414,10 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             isDoubles={isDoubles}
             canGenerate={drawCapabilities.generate}
+            courts={courts}
+            busyCourtIds={busyCourtIds}
+            canManageCourts={drawCapabilities.manageCourts}
+            canEnterResult={drawCapabilities.enterResult}
           />
         )}
         {activeTab === 'bracket' && (

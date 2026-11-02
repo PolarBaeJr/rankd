@@ -90,6 +90,9 @@ export const groupsStageSchema = z.object({
   ]).nullable().default(null),
   tiebreaks: z.array(stageTiebreakSchema).min(1).max(STAGE_TIEBREAKS.length).default(['wins', 'point_diff']),
   poolRanking: z.enum(['best_group_winner', 'none']).default('none'),
+  // How many rounds each group plays. Absent is a full round robin, so every
+  // config saved before this key existed draws exactly as it did.
+  gamesPerTeam: z.number().int().min(1).max(15).optional(),
 });
 
 export const knockoutStageSchema = z.object({
@@ -103,6 +106,8 @@ export const knockoutStageSchema = z.object({
   // list fills the draw lines top to bottom.
   seeding: z.enum(['standard', 'as_listed']).default('standard'),
   thirdPlace: z.boolean().default(false),
+  // The courts this stage's matches may go on. Absent is any court.
+  courts: z.array(courtName).min(1).max(64).optional(),
 });
 
 export const stageMatchDefSchema = z.object({

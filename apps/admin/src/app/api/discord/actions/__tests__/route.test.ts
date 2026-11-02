@@ -66,6 +66,7 @@ vi.mock('@/lib/tournament-actions/scheduling', () => ({
 }));
 vi.mock('@/lib/actions/tournaments', () => ({
   updateTournamentStatus: (...a: unknown[]) => record('updateTournamentStatus', a),
+  updateTournamentDetails: (...a: unknown[]) => record('updateTournamentDetails', a),
   suspendTournament: (...a: unknown[]) => recordVoid('suspendTournament', a),
   resumeTournament: (...a: unknown[]) => recordVoid('resumeTournament', a),
 }));
@@ -170,6 +171,28 @@ describe('POST /api/discord/actions/[name]', () => {
     expect(await res.json()).toEqual({ ok: false, refusal: 'passkey_required' });
   });
 
+  it('runs /event edit through updateClubEvent with its reason', async () => {
+    const input = { title: 'Social night' };
+    const res = await call('editClubEvent', { discordUserId: DISCORD_ID, args: [ID, input, 'Moved to Friday'] });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([{ name: 'updateClubEvent', args: [ID, input, 'Moved to Friday'], actorId: 'exec-1' }]);
+  });
+
+  it.each([
+    [[ID, { title: 'Social night' }]],
+    [[ID, { title: 'Social night' }, 'why']],
+    [[ID, { title: 'Social night' }, 'x'.repeat(501)]],
+  ])('is a 400 for an /event edit without a usable reason', async (args) => {
+    const res = await call('editClubEvent', { discordUserId: DISCORD_ID, args });
+    expect(res.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('keeps updateClubEvent to its two arguments, as /event publish sends', async () => {
+    const res = await call('updateClubEvent', { discordUserId: DISCORD_ID, args: [ID, {}, 'A reason here'] });
+    expect(res.status).toBe(400);
+  });
+
   it('passes a well-formed session create through', async () => {
     const input = {
       name: 'Club night',
@@ -200,6 +223,8 @@ describe('POST /api/discord/actions/[name]: tournaments', () => {
     ['setMatchCourt', [ID, '2']],
     ['setMatchLive', [ID, false]],
     ['updateTournamentStatus', [ID, 'completed']],
+    ['updateTournamentDetails', [ID, { starts_time: '09:30', ends_time: '17:00', location: 'Central Gym' }]],
+    ['updateTournamentDetails', [ID, { location: 'Central Gym' }]],
     ['suspendTournament', [ID, 'Fire alarm']],
     ['resumeTournament', [ID]],
     ['markTournamentFeePaid', [{ tournament_id: ID, player_id: OTHER, method: 'cash' }]],
@@ -218,6 +243,10 @@ describe('POST /api/discord/actions/[name]: tournaments', () => {
     ['enterWalkover', [ID, 'c', 'x']],
     ['setMatchCourt', [ID, 'x'.repeat(41)]],
     ['updateTournamentStatus', [ID, 'suspended']],
+    // A misspelt key would be dropped by a loose schema and look like success.
+    ['updateTournamentDetails', [ID, { start_time: '09:30' }]],
+    ['updateTournamentDetails', [ID, { starts_time: '9am' }]],
+    ['updateTournamentDetails', [ID, { location: 'x'.repeat(201) }]],
     ['suspendTournament', [ID, 'x']],
     // An amount would re-price the ledger row; only a method may be named.
     ['markTournamentFeePaid', [{ tournament_id: ID, player_id: OTHER, amount_cents: 0 }]],

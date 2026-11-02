@@ -68,7 +68,7 @@ beforeEach(() => {
   process.env.DISCORD_BOT_TOKEN = 'tok';
   postMessage.mockResolvedValue('m1');
   postAuditEntry.mockResolvedValue(true);
-  loadConfig.mockResolvedValue({ registry: [], auditChannelId: 'audit-1' });
+  loadConfig.mockResolvedValue({ registry: new Map([['g1', {}]]), auditChannelId: 'audit-1' });
 });
 
 afterEach(() => {

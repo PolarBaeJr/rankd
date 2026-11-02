@@ -63,6 +63,7 @@ export async function updatePlayerFlags(playerId: string, flags: PlayerFlagsInpu
   revalidatePath('/players');
   revalidatePath(`/players/${playerId}`);
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 export async function markFeePaid(input: FeeMarkInput) {
@@ -207,6 +208,7 @@ export async function markFeePaid(input: FeeMarkInput) {
   }, { playerId: input.player_id });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 // One-time waiver of the season fee: recorded as a paid row with
@@ -336,6 +338,7 @@ export async function waiveFee(input: FeeWaiveInput) {
   }, { playerId: input.player_id });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 export async function markFeeUnpaid(playerId: string, seasonId: string) {
@@ -411,6 +414,7 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
   }, { playerId });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 // Manual entry: record a club-fee payment for someone who paid without an
@@ -498,11 +502,12 @@ export async function addManualFee(input: ManualFeeInput) {
   });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 /**
  * Mark a named dues row paid. A Google Form files one unpaid for a non-member
- * (00290), and confirming its receipt under Submitted settles it; this is for
+ * (00290), and confirming its receipt under To review settles it; this is for
  * the payment that arrived some other way, cash at a session or an e-transfer
  * with no screenshot. Same refusals as markFeePaid: a paid or waived row is
  * left alone, and the write only lands while the row is still unpaid.
@@ -571,6 +576,7 @@ export async function markNamedFeePaid(input: NamedFeeMarkInput) {
   });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 export async function removeManualFee(id: string) {
@@ -602,6 +608,7 @@ export async function removeManualFee(id: string) {
   });
 
   revalidatePath('/fees');
+  revalidatePath('/finances');
 }
 
 /**
@@ -675,7 +682,7 @@ export async function attachNamedPayment(
     if (existing && !named.paid_at) {
       throw new ExpectedError(
         `"${named.manual_name}" is not paid yet and ${playerName} already has a fee this season. ` +
-          'Settle its receipt under Submitted first, then move it.',
+          'Settle its receipt under To review first, then move it.',
       );
     }
 
@@ -715,6 +722,7 @@ export async function attachNamedPayment(
       }
       await audit(named.id, 'attached');
       revalidatePath('/fees');
+      revalidatePath('/finances');
       return { playerName, moved: 'attached' as const };
     }
 
@@ -743,6 +751,7 @@ export async function attachNamedPayment(
       .select('id');
     await audit(existing.id, 'merged');
     revalidatePath('/fees');
+    revalidatePath('/finances');
     if (removeError || !removed || removed.length === 0) {
       throw new Error(
         `The payment is now on ${playerName}'s fee, but the named payment "${named.manual_name}" could not be removed, ` +

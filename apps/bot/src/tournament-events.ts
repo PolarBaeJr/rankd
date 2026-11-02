@@ -18,6 +18,8 @@ export function runTournamentEvents(): Promise<TournamentRunResult> {
       };
     },
     record(guildId, discordEventId, action) {
+      // The app's location, not the fallback Discord was sent, for the reason
+      // club-events.ts gives: the app compares against it (00304).
       return recordTournamentEvent({
         tournamentId: action.sourceId,
         guildId,
@@ -25,6 +27,7 @@ export function runTournamentEvents(): Promise<TournamentRunResult> {
         name: action.name,
         syncedStartsAt: action.syncedStartsAt,
         syncedEndsAt: action.syncedEndsAt,
+        location: action.location,
       });
     },
     clear(guildId, sourceId) {

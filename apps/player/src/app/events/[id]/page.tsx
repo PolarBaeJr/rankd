@@ -19,7 +19,8 @@ import {
 } from '@/lib/club-event-view';
 import { clubEventFormLink } from '@/lib/event-form-link';
 import { VisitorSignup } from '@/components/visitor-signup';
-import { SignupButton } from './signup-button';
+import { getMembershipPayments } from '@/lib/club-socials';
+import { SignupButton, type SignupFee } from './signup-button';
 
 export default async function ClubEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -40,7 +41,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const event = eventData as ClubEventRow | null;
   if (!event) notFound();
 
-  const [{ count: takenCount }, { data: takenByRpc, error: takenError }, { data: mineRow }, waitlist] = await Promise.all([
+  const [{ count: takenCount }, { data: takenByRpc, error: takenError }, { data: mineRow }, waitlist, waitlistLimit] = await Promise.all([
     service.from('club_event_signups').select('player_id', { count: 'exact', head: true }).eq('event_id', id),
     // The places taken as the sign-up RPC counts them: guests too, and not
     // no-shows (00294). Before 00294 the plain count stands.
@@ -49,10 +50,13 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       ? supabase.from('club_event_signups').select('event_id').eq('event_id', id).eq('player_id', player.id).maybeSingle()
       : { data: null },
     player ? readWaitlist(service, id, player.id) : { available: false, position: null, waiting: 0 },
+    readWaitlistLimit(service, id),
   ]);
   const taken = takenError || typeof takenByRpc !== 'number' ? takenCount ?? 0 : (takenByRpc as number);
   const state = clubEventSignupState(event, new Date(), taken, mineRow !== null);
   const cost = formatClubEventCost(event.cost_cents);
+  const fee =
+    player && cost && (event.cost_cents ?? 0) > 0 && state !== 'going' ? await signupFee(service, id, player, cost) : null;
   // A full event takes a waitlist until it ends, also after it starts: a
   // no-show's place is given at the door. So does one with a freed place that
   // members are already queued for.
@@ -64,6 +68,8 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     (taken >= event.capacity || waitlist.waiting > 0) &&
     endsAt > Date.now() &&
     (state === 'full' || state === 'started' || state === 'open');
+  // 00312: as many members are waiting as the event's limit allows.
+  const waitlistFull = waitlistLimit !== null && waitlist.waiting >= waitlistLimit;
 
   // The tournament this event runs on (00292), once the exec has activated it:
   // the draw and results live there. Read with the service role, because the
@@ -163,7 +169,13 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               </div>
               <div className="ev-fact">
                 <div className="k">When it is full</div>
-                <div className="v">{event.capacity === null ? 'No limit on places' : 'Join the waitlist'}</div>
+                <div className="v">
+                  {event.capacity === null
+                    ? 'No limit on places'
+                    : waitlistLimit !== null
+                      ? `Join the waitlist (up to ${waitlistLimit})`
+                      : 'Join the waitlist'}
+                </div>
               </div>
               <div className="ev-fact">
                 <div className="k">Fee</div>
@@ -181,8 +193,10 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 state={state}
                 position={waitlist.position}
                 canWait={canWait}
+                waitlistFull={waitlistFull}
                 closesAt={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
                 opensAt={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
+                fee={fee}
               />
             ) : (
               <VisitorSignup formUrl={formUrl} open={state === 'open' || state === 'full'} />
@@ -208,7 +222,9 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               {left === null
                 ? `${taken} going`
                 : left === 0
-                  ? 'Full. New sign-ups join the waitlist.'
+                  ? waitlistFull
+                    ? 'Full, and so is the waitlist.'
+                    : 'Full. New sign-ups join the waitlist.'
                   : `${left} ${left === 1 ? 'place' : 'places'} left`}
             </div>
           </section>
@@ -257,4 +273,48 @@ async function readWaitlist(
   const rows = (data ?? []) as { player_id: string }[];
   const index = rows.findIndex((row) => row.player_id === playerId);
   return { available: true, position: index === -1 ? null : index + 1, waiting: rows.length };
+}
+
+// The event's waitlist limit (00312), read with the service role on its own,
+// not in CLUB_EVENT_COLUMNS, so a database without the column is no limit.
+async function readWaitlistLimit(
+  service: ReturnType<typeof createServiceRoleClient>,
+  eventId: string,
+): Promise<number | null> {
+  const { data, error } = await service
+    .from('club_events')
+    .select('waitlist_limit' as never)
+    .eq('id', eventId)
+    .maybeSingle();
+  if (error) return null;
+  return (data as { waitlist_limit?: number | null } | null)?.waitlist_limit ?? null;
+}
+
+/**
+ * The fee a member pays to sign up, as club_event_signup_fee charges it: not
+ * an exec or fee-exempt, and no fee of theirs for it already paid or holding a
+ * receipt (a withdraw keeps one). signUpWithReceipt decides again either way.
+ */
+async function signupFee(
+  service: ReturnType<typeof createServiceRoleClient>,
+  eventId: string,
+  player: { id: string; is_exec?: boolean | null; fee_exempt?: boolean | null },
+  amount: string,
+): Promise<SignupFee | null> {
+  if (player.is_exec || player.fee_exempt) return null;
+  const [{ data }, payments] = await Promise.all([
+    service
+      .from('club_fees')
+      .select('paid_at, fee_submissions!fee_submissions_club_fee_fkey(status)')
+      .eq('fee_type', 'event')
+      .eq('club_event_id', eventId)
+      .eq('player_id', player.id)
+      .maybeSingle(),
+    getMembershipPayments(),
+  ]);
+  const existing = data as { paid_at: string | null; fee_submissions: { status: string }[] | null } | null;
+  if (existing?.paid_at || (existing?.fee_submissions ?? []).some((s) => s.status === 'submitted' || s.status === 'confirmed')) {
+    return null;
+  }
+  return { amount, etransferEmail: payments.etransferEmail };
 }

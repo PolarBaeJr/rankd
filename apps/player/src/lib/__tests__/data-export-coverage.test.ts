@@ -253,14 +253,14 @@ describe('the parser sees the schema it claims to', () => {
     expect(Object.keys(DROPPED_TABLES)).toHaveLength(6);
   });
 
-  it('excludes the three migration scratch tables by name', () => {
+  it('excludes the migration scratch tables by name', () => {
     // A NAMED LIST, not a regex accident: a leading-underscore regex would
     // also exclude a real table somebody named badly and nothing would say so.
     const live = [...liveTables().keys()];
     for (const scratch of MIGRATION_SCRATCH_TABLES) {
       expect(live).not.toContain(scratch);
     }
-    expect(MIGRATION_SCRATCH_TABLES).toHaveLength(3);
+    expect(MIGRATION_SCRATCH_TABLES).toHaveLength(5);
   });
 
   it('follows ALTER TABLE ADD COLUMN, not only CREATE TABLE bodies', () => {
