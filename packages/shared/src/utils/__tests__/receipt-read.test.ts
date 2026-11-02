@@ -191,6 +191,8 @@ describe('decideAutoConfirm', () => {
     ].join('\n');
     expect(parseReceiptText(scotia)).toMatchObject({ kind: 'e_transfer', amountCents: 500 });
     expect(decideAutoConfirm(parseReceiptText(scotia), ctx)).toMatchObject({ confirm: true });
+    // A space the read put before the "@" does not lose the address.
+    expect(decideAutoConfirm(parseReceiptText(scotia.replace('Ilsa1@', 'Ilsa1 @')), ctx)).toMatchObject({ confirm: true });
     // A balance alone on its line is never the amount.
     expect(parseReceiptText(scotia.replace('$5.00 Oct 29, 2026', 'Oct 29, 2026'))).toMatchObject({ amountCents: null });
     // TD: the sender's own address first, the recipient's under "Recipient".
