@@ -41,7 +41,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const event = eventData as ClubEventRow | null;
   if (!event) notFound();
 
-  const [{ count: takenCount }, { data: takenByRpc, error: takenError }, { data: mineRow }, waitlist] = await Promise.all([
+  const [{ count: takenCount }, { data: takenByRpc, error: takenError }, { data: mineRow }, waitlist, waitlistLimit] = await Promise.all([
     service.from('club_event_signups').select('player_id', { count: 'exact', head: true }).eq('event_id', id),
     // The places taken as the sign-up RPC counts them: guests too, and not
     // no-shows (00294). Before 00294 the plain count stands.
@@ -50,6 +50,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       ? supabase.from('club_event_signups').select('event_id').eq('event_id', id).eq('player_id', player.id).maybeSingle()
       : { data: null },
     player ? readWaitlist(service, id, player.id) : { available: false, position: null, waiting: 0 },
+    readWaitlistLimit(service, id),
   ]);
   const taken = takenError || typeof takenByRpc !== 'number' ? takenCount ?? 0 : (takenByRpc as number);
   const state = clubEventSignupState(event, new Date(), taken, mineRow !== null);
@@ -67,6 +68,8 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     (taken >= event.capacity || waitlist.waiting > 0) &&
     endsAt > Date.now() &&
     (state === 'full' || state === 'started' || state === 'open');
+  // 00312: as many members are waiting as the event's limit allows.
+  const waitlistFull = waitlistLimit !== null && waitlist.waiting >= waitlistLimit;
 
   // The tournament this event runs on (00292), once the exec has activated it:
   // the draw and results live there. Read with the service role, because the
@@ -166,7 +169,13 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               </div>
               <div className="ev-fact">
                 <div className="k">When it is full</div>
-                <div className="v">{event.capacity === null ? 'No limit on places' : 'Join the waitlist'}</div>
+                <div className="v">
+                  {event.capacity === null
+                    ? 'No limit on places'
+                    : waitlistLimit !== null
+                      ? `Join the waitlist (up to ${waitlistLimit})`
+                      : 'Join the waitlist'}
+                </div>
               </div>
               <div className="ev-fact">
                 <div className="k">Fee</div>
@@ -184,6 +193,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 state={state}
                 position={waitlist.position}
                 canWait={canWait}
+                waitlistFull={waitlistFull}
                 closesAt={event.signup_closes_at ? formatClubEventTime(event.signup_closes_at) : null}
                 opensAt={event.signup_opens_at ? formatClubEventTime(event.signup_opens_at) : null}
                 fee={fee}
@@ -212,7 +222,9 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               {left === null
                 ? `${taken} going`
                 : left === 0
-                  ? 'Full. New sign-ups join the waitlist.'
+                  ? waitlistFull
+                    ? 'Full, and so is the waitlist.'
+                    : 'Full. New sign-ups join the waitlist.'
                   : `${left} ${left === 1 ? 'place' : 'places'} left`}
             </div>
           </section>
@@ -261,6 +273,21 @@ async function readWaitlist(
   const rows = (data ?? []) as { player_id: string }[];
   const index = rows.findIndex((row) => row.player_id === playerId);
   return { available: true, position: index === -1 ? null : index + 1, waiting: rows.length };
+}
+
+// The event's waitlist limit (00312), read with the service role on its own,
+// not in CLUB_EVENT_COLUMNS, so a database without the column is no limit.
+async function readWaitlistLimit(
+  service: ReturnType<typeof createServiceRoleClient>,
+  eventId: string,
+): Promise<number | null> {
+  const { data, error } = await service
+    .from('club_events')
+    .select('waitlist_limit' as never)
+    .eq('id', eventId)
+    .maybeSingle();
+  if (error) return null;
+  return (data as { waitlist_limit?: number | null } | null)?.waitlist_limit ?? null;
 }
 
 /**

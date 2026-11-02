@@ -1523,7 +1523,7 @@ import {
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses, recomputeEventStandings } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
-import { updateTournamentEvent, createTournamentEvent, setEventWindows, setEventWaitlist } from '../tournament-actions/events';
+import { updateTournamentEvent, createTournamentEvent, setEventWindows, setEventWaitlist, setEventWaitlistLimit } from '../tournament-actions/events';
 import { updateTournament } from '../actions/tournaments';
 // THE FORM'S OWN PAYLOAD BUILDER, not a hand-made patch. Whether an exec's
 // choice of seed_by survives a save depends on toFormatPayload and
@@ -8323,6 +8323,71 @@ describe('the waitlist (00278)', () => {
     const res = await setEventWaitlist('e1', { enabled: true, autoPromote: true });
     expect(res.ok === false && res.error).toBe('An external event has no waitlist: its teams are entered by name.');
     expect(store.rpcCalls.map((c) => c.name)).not.toContain('set_event_waitlist');
+  });
+
+  describe('the limit (00312)', () => {
+    const limitCalls = () => store.rpcCalls.filter((c) => c.name === 'set_event_waitlist_limit');
+
+    beforeEach(() => {
+      event().waitlist_limit = null;
+      store.waitlistRpc = (name, args) => (name === 'set_event_waitlist_limit'
+        ? { data: { ok: true, tournament_id: 't1', event_id: 'e1', limit: args.p_limit, previous_limit: null }, error: null }
+        : undefined);
+    });
+
+    it('asks for the migration on a database without the column, before the RPC', async () => {
+      delete event().waitlist_limit;
+      const res = await setEventWaitlistLimit('e1', 5);
+      expect(res.ok === false && res.error).toBe('Run migration 00312 first');
+      expect(limitCalls()).toEqual([]);
+    });
+
+    it('sets the limit through the RPC and writes the trail', async () => {
+      const res = await setEventWaitlistLimit('e1', 5);
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(limitCalls().map((c) => c.args)).toEqual([{ p_event_id: 'e1', p_limit: 5, p_actor: 'admin-1' }]);
+      expect(audit('event_waitlist_updated').map((r) => r.details)).toEqual([{ limit: 5, previous_limit: null }]);
+    });
+
+    it('clears the limit with null', async () => {
+      const res = await setEventWaitlistLimit('e1', null);
+      expect(res.ok).toBe(true);
+      expect(limitCalls().map((c) => c.args.p_limit)).toEqual([null]);
+    });
+
+    it.each([0, -1, 2.5, Number.NaN])('refuses %s before the RPC', async (limit) => {
+      const res = await setEventWaitlistLimit('e1', limit);
+      expect(res.ok === false && res.error).toBe('The waitlist limit must be a whole number of at least 1, or blank for no limit.');
+      expect(limitCalls()).toEqual([]);
+      expect(audit('event_waitlist_updated')).toEqual([]);
+    });
+
+    it('refuses an external event before the RPC', async () => {
+      event().external_event = true;
+      const res = await setEventWaitlistLimit('e1', 5);
+      expect(res.ok === false && res.error).toBe('An external event has no waitlist: its teams are entered by name.');
+      expect(limitCalls()).toEqual([]);
+    });
+
+    it('says why the RPC refused', async () => {
+      store.waitlistRpc = (name) => (name === 'set_event_waitlist_limit' ? { data: { ok: false, reason: 'event_status' }, error: null } : undefined);
+      const res = await setEventWaitlistLimit('e1', 5);
+      expect(res.ok === false && res.error).toBe('The waitlist can only be changed while the event is taking entries or checking in.');
+      expect(audit('event_waitlist_updated')).toEqual([]);
+    });
+
+    it('asks for the migration when the function is missing', async () => {
+      store.waitlistRpc = (name) => (name === 'set_event_waitlist_limit' ? { data: null, error: { code: 'PGRST202', message: 'missing' } } : undefined);
+      const res = await setEventWaitlistLimit('e1', 5);
+      expect(res.ok === false && res.error).toBe('Run migration 00312 first');
+    });
+
+    it('cannot be written through the plain event update', async () => {
+      store.db.tournament_matches = [];
+      const res = await updateTournamentEvent('e1', { max_participants: 3, waitlist_limit: 7 } as never);
+      expect(res.ok).toBe(true);
+      expect(event().waitlist_limit).toBeNull();
+    });
   });
 });
 

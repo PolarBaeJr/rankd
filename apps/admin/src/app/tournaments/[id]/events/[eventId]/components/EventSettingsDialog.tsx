@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Switch } from '@badminton/ui';
-import { setEventWaitlist, updateTournamentEvent } from '@/lib/tournament-actions';
+import { setEventWaitlist, setEventWaitlistLimit, updateTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import {
@@ -149,6 +149,30 @@ export function EventSettingsDialog({
         : 'Waitlist updated',
       'success',
     );
+    router.refresh();
+  }
+
+  // 00312. Read by probe, so the dialog still opens before the migration lands.
+  const limitReady = 'waitlist_limit' in event;
+  const storedLimit = (event as { waitlist_limit?: number | null }).waitlist_limit ?? null;
+  const [waitlistLimit, setWaitlistLimit] = useState(storedLimit?.toString() ?? '');
+  // What was last saved, so an Enter followed by a blur does not save twice.
+  const [savedLimit, setSavedLimit] = useState<number | null>(storedLimit);
+
+  async function saveWaitlistLimit() {
+    const trimmed = waitlistLimit.trim();
+    const limit = trimmed === '' ? null : Number(trimmed);
+    if (waitlistSaving || limit === savedLimit) return;
+    if (limit !== null && (!Number.isInteger(limit) || limit < 1)) {
+      toast('The waitlist limit must be a whole number of at least 1, or blank for no limit.', 'error');
+      return;
+    }
+    setWaitlistSaving(true);
+    const res = await setEventWaitlistLimit(event.id, limit);
+    setWaitlistSaving(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    setSavedLimit(limit);
+    toast('Waitlist limit updated', 'success');
     router.refresh();
   }
 
@@ -324,6 +348,30 @@ export function EventSettingsDialog({
                     onChange={(next) => saveWaitlist(waitlistEnabled, next)}
                   />
                 )}
+                {waitlistEnabled && (limitReady ? (
+                  <div className="space-y-1">
+                    <Input
+                      label="Waitlist limit"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={waitlistLimit}
+                      onChange={(e) => setWaitlistLimit(e.target.value)}
+                      onBlur={saveWaitlistLimit}
+                      onKeyDown={(e) => {
+                        // Inside the Save Changes form: Enter saves the limit, not the form.
+                        if (e.key === 'Enter') { e.preventDefault(); saveWaitlistLimit(); }
+                      }}
+                      placeholder="No limit"
+                      disabled={!waitlistEditable || waitlistSaving}
+                    />
+                    <p className="text-xs text-[var(--text-muted)]">
+                      How many members can wait at once. Blank means no limit. Lowering it takes nobody off; it only stops new joins.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--text-muted)]">Waitlist limit: run migration 00312 first.</p>
+                ))}
               </>
             ) : (
               <p className="text-xs text-[var(--text-muted)]">Waitlist: run migration 00278 first.</p>

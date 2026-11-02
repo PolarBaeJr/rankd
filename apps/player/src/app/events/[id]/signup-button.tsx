@@ -34,11 +34,13 @@ const DONE: Record<Act, string> = {
 // member stands, and only the buttons the server would accept in that state
 // (it decides again either way). `position` is the member's place on the
 // waitlist (00294), and `canWait` says the event takes a waitlist.
+// `waitlistFull` says the waitlist is at its limit (00312), so nobody can join.
 export function SignupButton({
   eventId,
   state,
   position = null,
   canWait = false,
+  waitlistFull = false,
   opensAt = null,
   closesAt = null,
   fee = null,
@@ -47,6 +49,7 @@ export function SignupButton({
   state: ClubEventSignupState;
   position?: number | null;
   canWait?: boolean;
+  waitlistFull?: boolean;
   opensAt?: string | null;
   closesAt?: string | null;
   fee?: SignupFee | null;
@@ -116,10 +119,15 @@ export function SignupButton({
     detail = closesAt ? `Sign-ups close ${closesAt}.` : null;
     if (fee) detail = `${fee.amount} by e-transfer. You send the screenshot when you sign up.${detail ? ` ${detail}` : ''}`;
     buttons.push(button('sign_up', 'Sign up'));
-    if (canWait) {
+    if (canWait && waitlistFull) {
+      detail = 'Members on the waitlist are ahead of you, and the waitlist is full.';
+    } else if (canWait) {
       detail = 'Members on the waitlist are ahead of you for the free place.';
       buttons.push(button('join', 'Join the waitlist', 'secondary'));
     }
+  } else if (canWait && waitlistFull) {
+    title = 'This event is full';
+    detail = 'The waitlist is full.';
   } else if (canWait) {
     title = 'This event is full';
     detail = 'Join the waitlist and we will tell you here if a place opens.';

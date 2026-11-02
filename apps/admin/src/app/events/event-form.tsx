@@ -30,6 +30,7 @@ export interface ClubEventFormValues {
   signup_opens_at: string;
   signup_closes_at: string;
   capacity: string;
+  waitlist_limit: string;
   cost_dollars: string;
   publish: boolean;
 }
@@ -44,6 +45,7 @@ const EMPTY_CLUB_EVENT_FORM: ClubEventFormValues = {
   signup_opens_at: '',
   signup_closes_at: '',
   capacity: '',
+  waitlist_limit: '',
   cost_dollars: '',
   publish: false,
 };
@@ -53,10 +55,13 @@ const KIND_OPTIONS = CLUB_EVENT_KINDS.map((kind) => ({ value: kind, label: CLUB_
 export function ClubEventForm({
   eventId,
   initial = EMPTY_CLUB_EVENT_FORM,
+  waitlistLimitReady = false,
 }: {
   /** Both absent on /events/new. */
   eventId?: string;
   initial?: ClubEventFormValues;
+  /** Whether club_events has waitlist_limit yet (00312). */
+  waitlistLimitReady?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -82,6 +87,9 @@ export function ClubEventForm({
         signup_opens_at: values.signup_opens_at,
         signup_closes_at: values.signup_closes_at,
         capacity: values.capacity.trim() === '' ? null : Number(values.capacity),
+        ...(waitlistLimitReady
+          ? { waitlist_limit: values.waitlist_limit.trim() === '' ? null : Number(values.waitlist_limit) }
+          : {}),
         cost_dollars: values.cost_dollars.trim() === '' ? null : Number(values.cost_dollars),
         publish: values.publish,
       };
@@ -169,6 +177,18 @@ export function ClubEventForm({
           value={values.capacity}
           onChange={(e) => set('capacity', e.target.value)}
         />
+        {waitlistLimitReady && (
+          <Input
+            label="Waitlist limit"
+            type="number"
+            min={1}
+            step={1}
+            placeholder="No limit"
+            value={values.waitlist_limit}
+            onChange={(e) => set('waitlist_limit', e.target.value)}
+            disabled={values.capacity.trim() === ''}
+          />
+        )}
         <Input
           label="Cost (dollars)"
           type="number"

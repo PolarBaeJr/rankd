@@ -32,6 +32,49 @@ export interface MyWaitlistState {
   myPosition: number | null;
   /** No room for one more entrant, by the slot rule enter_tournament_event uses. */
   full: boolean;
+  /** How many members may wait at once (00312), or null for no limit. */
+  limit: number | null;
+  /** As many members are waiting as the limit allows: nobody else can join. */
+  waitlistLimitReached: boolean;
+}
+
+/**
+ * The event's waitlist limit (00312), read on its own so a database without
+ * the column is "no limit". Never throws: any failed read is no limit too, and
+ * join_event_waitlist still refuses under its lock.
+ */
+async function readWaitlistLimit(client: SupabaseClient, eventId: string): Promise<number | null> {
+  try {
+    const { data, error } = await client
+      .from('tournament_events')
+      .select('waitlist_limit' as never)
+      .eq('id', eventId)
+      .maybeSingle();
+    if (error) return null;
+    return (data as { waitlist_limit?: number | null } | null)?.waitlist_limit ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the event's waitlist is at its limit (00312). Never throws: false on
+ * any failed read, so it only ever changes what a refusal says.
+ */
+export async function waitlistLimitReached(client: SupabaseClient, eventId: string): Promise<boolean> {
+  try {
+    const limit = await readWaitlistLimit(client, eventId);
+    if (limit === null) return false;
+    const { count, error } = await client
+      .from('tournament_event_waitlist')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', eventId)
+      .eq('status', 'waiting');
+    if (error) return false;
+    return (count ?? 0) >= limit;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -98,12 +141,15 @@ export async function getMyWaitlistState(
   const queue = (rows ?? []) as Array<{ player_id: string }>;
   const index = playerId ? queue.findIndex((r) => r.player_id === playerId) : -1;
   const enabled = settings.waitlist_enabled === true;
+  const limit = await readWaitlistLimit(client, eventId);
   return {
     enabled,
     autoPromote: settings.waitlist_auto_promote !== false,
     waitingCount: queue.length,
     myPosition: index >= 0 ? index + 1 : null,
     full: enabled ? await eventIsFull(client, eventId, entry.max, entry.doubles) : false,
+    limit,
+    waitlistLimitReached: limit !== null && queue.length >= limit,
   };
 }
 

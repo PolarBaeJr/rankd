@@ -82,6 +82,16 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
   const event = eventData as EventRow | null;
   if (!event) notFound();
 
+  // 00312's column, read on its own so the page still loads before the
+  // migration: the read fails, and the form leaves the limit out.
+  const { data: limitData, error: limitError } = await adminClient
+    .from('club_events')
+    .select('waitlist_limit' as never)
+    .eq('id', id)
+    .maybeSingle();
+  const waitlistLimitReady = !limitError;
+  const waitlistLimit = limitError ? null : ((limitData as { waitlist_limit?: number | null } | null)?.waitlist_limit ?? null);
+
   // Non-members a Google Form signed up (00284) take places too, and their rows
   // RESTRICT the event's delete, so Delete must not be offered while any exist.
   // Before 00284 the table is missing and the count is simply members.
@@ -303,6 +313,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
     signup_opens_at: event.signup_opens_at ? utcToClubWallClock(event.signup_opens_at) : '',
     signup_closes_at: event.signup_closes_at ? utcToClubWallClock(event.signup_closes_at) : '',
     capacity: event.capacity === null ? '' : String(event.capacity),
+    waitlist_limit: waitlistLimit === null ? '' : String(waitlistLimit),
     cost_dollars: event.cost_cents === null ? '' : (event.cost_cents / 100).toFixed(2),
     publish: event.status === 'published',
   };
@@ -371,11 +382,19 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                 label="Capacity"
                 value={event.capacity === null ? `No limit, ${taken} signed up` : `${taken} of ${event.capacity} places taken`}
               />
+              <DetailRow label="Waitlist limit" value={waitlistLimit === null ? 'No limit' : String(waitlistLimit)} />
               <DetailRow label="Cost" value={cost} />
               {cancelled && <DetailRow label="Cancel reason" value={event.cancelled_reason} mono={false} wide />}
             </DetailList>
           }
-          form={<ClubEventForm key={event.id} eventId={event.id} initial={initial} />}
+          form={
+            <ClubEventForm
+              key={event.id}
+              eventId={event.id}
+              initial={initial}
+              waitlistLimitReady={waitlistLimitReady}
+            />
+          }
         />
 
         {(linked || !cancelled) && (

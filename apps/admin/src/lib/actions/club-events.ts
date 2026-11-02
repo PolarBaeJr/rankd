@@ -59,7 +59,10 @@ async function createImpl(input: ClubEventInput): Promise<{ id: string }> {
     })
     .select('id')
     .maybeSingle();
-  if (error) throw new Error(`The event was not written: ${error.message}`);
+  if (error) {
+    if (waitlistLimitMissing(parsed, error)) throw new ExpectedError(WAITLIST_LIMIT_MIGRATION_MISSING);
+    throw new Error(`The event was not written: ${error.message}`);
+  }
   const id = (data as { id: string } | null)?.id;
   if (!id) throw new Error('The event was not written.');
 
@@ -121,7 +124,10 @@ async function updateImpl(id: string, input: ClubEventInput, reason?: string): P
     // matching nothing here is read as a refusal below, not as a success.
     .neq('status', 'cancelled')
     .select('id');
-  if (error) throw new Error(`The event was not saved: ${error.message}`);
+  if (error) {
+    if (waitlistLimitMissing(parsed, error)) throw new ExpectedError(WAITLIST_LIMIT_MIGRATION_MISSING);
+    throw new Error(`The event was not saved: ${error.message}`);
+  }
   if ((data ?? []).length === 0) {
     throw new ExpectedError('That event was cancelled or no longer exists.');
   }
@@ -134,7 +140,12 @@ async function updateImpl(id: string, input: ClubEventInput, reason?: string): P
       target_type: 'club_event',
       target_id: id,
       old_value: { title: current.title, status: current.status },
-      new_value: { title: parsed.title, kind: parsed.kind, status: nextStatus },
+      new_value: {
+        title: parsed.title,
+        kind: parsed.kind,
+        status: nextStatus,
+        ...(parsed.waitlist_limit !== undefined ? { waitlist_limit: parsed.waitlist_limit } : {}),
+      },
       reason: why || `Club event "${parsed.title}" edited`,
     },
     { eventId: id },
@@ -383,8 +394,18 @@ function eventColumns(parsed: ParsedEvent) {
     signup_opens_at: parsed.signup_opens_at ? toInstant(parsed.signup_opens_at) : null,
     signup_closes_at: parsed.signup_closes_at ? toInstant(parsed.signup_closes_at) : null,
     capacity: parsed.capacity,
+    // 00312. Only when sent: the bot's /event edit leaves it out, and must not
+    // clear a limit the console set.
+    ...(parsed.waitlist_limit !== undefined ? { waitlist_limit: parsed.waitlist_limit } : {}),
     cost_cents: parsed.cost_cents,
   };
+}
+
+const WAITLIST_LIMIT_MIGRATION_MISSING = 'Run migration 00312 first';
+
+/** A write that named waitlist_limit before 00312 added the column. */
+function waitlistLimitMissing(parsed: ParsedEvent, error: { code?: string }): boolean {
+  return parsed.waitlist_limit !== undefined && (error.code === 'PGRST204' || error.code === '42703');
 }
 
 function toInstant(wallClock: string): string {
