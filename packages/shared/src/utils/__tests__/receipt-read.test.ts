@@ -159,11 +159,7 @@ describe('decideAutoConfirm', () => {
       detail: 'The receipt does not show the Main Campus',
     });
     // The phone receipt's items are below the fold: an order number alone is not enough.
-    expect(decideAutoConfirm(parseReceiptText(REC_PHONE), DUES)).toMatchObject({
-      confirm: false,
-      flag: 'program_mismatch',
-      detail: 'The receipt does not show which club it pays for',
-    });
+    expect(decideAutoConfirm(parseReceiptText(REC_PHONE), DUES)).toMatchObject({ confirm: false, flag: 'amount_unreadable' });
   });
 
   it('reads an amount printed with no dollar sign', () => {
@@ -287,6 +283,9 @@ describe('decideAutoConfirm', () => {
     ['name_mismatch', REC_PHONE, { ...DUES, payerName: 'Ben Park' }, ''],
     ['amount_mismatch', REC_DESKTOP, { ...DUES, amountCents: 2000 }, 'Receipt shows $25.00, the fee is $20.00'],
     ['program_mismatch', REC_DESKTOP.replace('Badminton Club', 'Climbing Club'), DUES, ''],
+    // Another campus's fee, even with the program and campus misread as ours.
+    ['amount_mismatch', REC_DESKTOP.replace(/\$25\.00/g, '$40.00'), DUES, 'Receipt shows $40.00, the fee is $25.00'],
+    ['amount_unreadable', REC_DESKTOP.replace('Total Before Tax: $25.00', ''), DUES, ''],
     ['amount_unreadable', ETRANSFER.replace('$15.00', 'fifteen'), etransfer, ''],
     ['amount_mismatch', ETRANSFER, { ...etransfer, amountCents: 2500 }, 'Receipt shows $15.00, the fee is $25.00'],
     ['payee_mismatch', ETRANSFER.replace('Riverside Smash Club', 'Someone Else'), etransfer, ''],

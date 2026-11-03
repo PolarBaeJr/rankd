@@ -339,7 +339,10 @@ export function decideAutoConfirm(read: ReceiptReadout, ctx: AutoConfirmContext)
     if (read.payerName && ctx.payerName && !namesMatch(read.payerName, ctx.payerName)) {
       return hold('name_mismatch', "The name on the receipt is not the member's");
     }
-    if (read.amountCents != null && read.amountCents !== ctx.amountCents) {
+    // Each campus's club charges its own fee, so the price is a second check
+    // on whose dues these are: it must be shown, and be ours.
+    if (read.amountCents == null) return hold('amount_unreadable');
+    if (read.amountCents !== ctx.amountCents) {
       return hold('amount_mismatch', `Receipt shows ${dollars(read.amountCents)}, the fee is ${dollars(ctx.amountCents)}`);
     }
     if (read.programName && !/badminton club/i.test(read.programName)) {
