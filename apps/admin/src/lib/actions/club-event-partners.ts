@@ -70,7 +70,7 @@ export async function setClubEventPartnerChoice(
   eventId: string,
   who: PartnerWho,
   choice: PartnerChoice,
-): Promise<ActionResult> {
+): Promise<ActionResult<{ paired: boolean }>> {
   return runAction(async () => {
     const actor = await requireCapability('events.signups.checkin.write');
     parseOrThrow(uuid, eventId);
@@ -133,7 +133,21 @@ export async function setClubEventPartnerChoice(
       { eventId },
     );
 
+    // The desk's pick is the team: when the event runs as a tournament and
+    // both people are still waiting for a partner there, pair them now rather
+    // than leaving the tournament to be paired a second time by hand.
+    let paired = false;
+    if (target.kind === 'member' && picked.kind === 'member' && event.tournament_event_id) {
+      const board = await loadPartnerBoard(adminClient, eventId);
+      if (board.linkedEventId && board.pool.has(target.id) && board.pool.has(picked.id)) {
+        const result = await addPairToEvent(board.linkedEventId, target.id, picked.id);
+        if (!result.ok) throw new ExpectedError(`The partner is saved, but the tournament team was not made: ${result.error}`);
+        paired = true;
+      }
+    }
+
     await revalidateBoth(adminClient, eventId, event.tournament_event_id ?? null);
+    return { paired };
   });
 }
 
