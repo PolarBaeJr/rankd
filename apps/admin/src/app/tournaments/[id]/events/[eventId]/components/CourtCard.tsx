@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '@badminton/ui';
+import { Button, useConfirm } from '@badminton/ui';
 import {
   courtLabel,
   describeStageScoring,
@@ -10,7 +10,7 @@ import {
   type FormatConfig,
   type TournamentCourt,
 } from '@badminton/shared';
-import { enterMatchResult, setMatchCourt, setMatchLive } from '@/lib/tournament-actions';
+import { enterMatchResult, setMatchCourt, setMatchLive, skipMatchForNow } from '@/lib/tournament-actions';
 import {
   autoCallFailureText,
   inlineScoreVerdict,
@@ -94,6 +94,7 @@ export function CourtCard({
               save={save}
             />
           )}
+          {isLive && canEnterResult && <SkipForNow row={onCourt} courtName={name} />}
         </div>
       ) : (
         !busyElsewhere && isLive && canManageCourts && next && <PutOnCourt row={next} court={court} />
@@ -243,5 +244,42 @@ function PutOnCourt({ row, court }: { row: CourtDeskRow; court: TournamentCourt 
       </Button>
       {error && <p role="alert" className="text-sm text-[var(--color-danger)]">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * A team is not at the court (00314): the match goes behind every other match
+ * this court can take, and the next one goes on. It comes back once nothing
+ * else is waiting.
+ */
+function SkipForNow({ row, courtName }: { row: CourtDeskRow; courtName: string }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const confirm = useConfirm();
+  const [pending, setPending] = useState(false);
+
+  async function skip() {
+    const ok = await confirm({
+      title: 'Skip this match for now?',
+      message: `${row.a.label} vs ${row.b.label} goes to the back of ${courtName}'s queue, and the next match goes on. It comes back when nothing else is waiting.`,
+      confirmLabel: 'Skip for now',
+    });
+    if (!ok) return;
+    setPending(true);
+    const res = await skipMatchForNow(row.match.id);
+    setPending(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const failure = autoCallFailureText(res.data?.autoCall);
+    if (failure) toast(failure, 'error');
+    else if (res.data?.back) toast(`Nothing else can go on ${courtName}, so this match is back on.`, 'success');
+    else if ((res.data?.autoCall?.called ?? []).length > 0) toast(`Skipped. ${courtName}: next match is on`, 'success');
+    else toast('Skipped for now.', 'success');
+    router.refresh();
+  }
+
+  return (
+    <Button type="button" variant="secondary" size="sm" loading={pending} disabled={pending} onClick={skip}>
+      Skip for now
+    </Button>
   );
 }

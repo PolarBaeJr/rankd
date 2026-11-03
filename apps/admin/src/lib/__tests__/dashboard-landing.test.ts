@@ -157,7 +157,7 @@ describe('the narrowed dashboard', () => {
   // role-shaped ones that would each look like a decision about that role.
   it('opens every section for an officer, whichever role they hold', () => {
     const everything = [
-      '/matches', '/tournaments', '/events', '/sessions', '/announcements',
+      '/matches', '/tournaments', '/events', '/my-courts', '/sessions', '/announcements',
       '/seasons', '/fees', '/finances', '/players', '/club-changes',
       '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent', '/settings',
     ];
@@ -174,13 +174,13 @@ describe('the narrowed dashboard', () => {
   // "pick a role" as the way somebody ends up on this page.
   it('narrows to what is left when the section pages are revoked', () => {
     expect(signpost('exec', 'external', ALL_PAGES.filter((p) => p !== 'announcements.page')))
-      .toEqual(['/announcements', '/settings']);
+      .toEqual(['/my-courts', '/announcements', '/settings']);
   });
 
   // A hand-picked person with everything revoked still gets a link rather than a
-  // blank card: /settings belongs to no area and every console user keeps it,
-  // so the signpost can never itself be empty.
+  // blank card: /my-courts and /settings belong to no area and every console
+  // user keeps them, so the signpost can never itself be empty.
   it('still names a door for somebody revoked down to nothing at all', () => {
-    expect(signpost('exec', 'custom', ALL_PAGES)).toEqual(['/settings']);
+    expect(signpost('exec', 'custom', ALL_PAGES)).toEqual(['/my-courts', '/settings']);
   });
 });
