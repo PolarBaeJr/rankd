@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Capability } from '../permissions';
+import type { ExpenseReceiptType } from '@badminton/shared';
 
 // The two non-fee money ledgers (00073): other income in, club expenses out —
 // plus reimbursement of whoever fronted an expense (00077).
@@ -23,6 +24,8 @@ const store = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   seq: 0,
   actor: { id: 'admin-1', role: 'admin' } as { id: string; role: string; is_exec?: boolean;
+    /** The auth.uid() a receipt's folder is named after. */
+    user_id?: string;
     // The three permission columns, because the gate mock resolves them now —
     // an officer's writes come from a permission_role, not from is_exec.
     permission_role?: string;
@@ -33,11 +36,15 @@ const store = vi.hoisted(() => ({
   swallowDeletes: false,
   /** Same, for updates: PostgREST cannot tell "matched nothing" from success. */
   swallowUpdates: false,
+  /** Makes the next save_club_expense_details call fail outright. */
+  failRpc: false,
 }));
 
 const makeClient = vi.hoisted(() => () => {
   function query(table: string) {
     const filters: Array<[string, unknown]> = [];
+    const sets: Array<[string, unknown[]]> = [];
+    let orderBy: string | null = null;
     let op: Op = 'select';
     let payload: Row = {};
     let selected = false;
@@ -49,10 +56,14 @@ const makeClient = vi.hoisted(() => () => {
     // match no rows at all and the reimbursement tests would pass for the wrong
     // reason.
     const NULLISH = Symbol('is-null');
-    const matching = () =>
-      (store.db[table] ?? []).filter((r) =>
-        filters.every(([c, v]) => (v === NULLISH ? r[c] == null : r[c] === v)),
+    const matching = () => {
+      const hit = (store.db[table] ?? []).filter(
+        (r) =>
+          filters.every(([c, v]) => (v === NULLISH ? r[c] == null : r[c] === v)) &&
+          sets.every(([c, vs]) => vs.includes(r[c])),
       );
+      return orderBy ? hit.sort((a, b) => Number(a[orderBy!]) - Number(b[orderBy!])) : hit;
+    };
 
     const run = (): { data: Row[] | null; error: { message: string } | null } => {
       if (op === 'insert') {
@@ -76,6 +87,13 @@ const makeClient = vi.hoisted(() => () => {
         if (store.swallowDeletes) return { data: [], error: null };
         const hit = matching();
         store.db[table] = (store.db[table] ?? []).filter((r) => !hit.includes(r));
+        // ON DELETE CASCADE from the three child tables (00313).
+        if (table === 'club_ledger') {
+          const gone = hit.map((r) => r.id);
+          for (const child of ['club_expense_receipts', 'club_expense_items', 'club_expense_tax_lines']) {
+            store.db[child] = (store.db[child] ?? []).filter((r) => !gone.includes(r.ledger_id));
+          }
+        }
         // `.select()` is what makes the deleted rows come back at all. Without
         // it PostgREST returns no rows even on a successful delete, so a caller
         // that skipped it could never tell the two apart.
@@ -95,6 +113,8 @@ const makeClient = vi.hoisted(() => () => {
       update(p: Row) { op = 'update'; payload = p; return api; },
       delete() { op = 'delete'; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
+      in(c: string, vs: unknown[]) { sets.push([c, vs]); return api; },
+      order(c: string) { orderBy = c; return api; },
       // `.is(col, null)` is load-bearing, not incidental: it is what makes
       // marking an already-reimbursed row match zero rows instead of silently
       // re-dating a settlement that happened weeks ago.
@@ -111,7 +131,35 @@ const makeClient = vi.hoisted(() => () => {
     };
     return api;
   }
-  return { from: (table: string) => query(table) };
+  // save_club_expense_details (00313), doing what the SQL does: refuse a
+  // settled row, write the share, the vendor, the printed total and the
+  // mirrored receipt_path, and replace the three child lists wholesale.
+  async function rpc(name: string, args: Record<string, unknown>) {
+    if (name !== 'save_club_expense_details') return { data: null, error: { message: `no ${name}` } };
+    if (store.failRpc) return { data: null, error: { message: 'rpc failed' } };
+    const id = args.p_ledger_id;
+    const row = (store.db.club_ledger ?? []).find((r) => r.id === id && r.direction === 'expense');
+    if (!row) return { data: 'not_found', error: null };
+    if (row.reimbursed_at) return { data: 'settled', error: null };
+    const receipts = args.p_receipts as Row[];
+    Object.assign(row, {
+      amount_cents: args.p_amount_cents,
+      vendor: args.p_vendor,
+      receipt_total_cents: args.p_receipt_total_cents,
+      receipt_path: receipts[0]?.path ?? null,
+    });
+    for (const [table, list] of [
+      ['club_expense_receipts', receipts],
+      ['club_expense_items', args.p_items as Row[]],
+      ['club_expense_tax_lines', args.p_tax_lines as Row[]],
+    ] as const) {
+      store.db[table] = (store.db[table] ?? [])
+        .filter((r) => r.ledger_id !== id)
+        .concat(list.map((x) => ({ ledger_id: id, ...x })));
+    }
+    return { data: 'ok', error: null };
+  }
+  return { from: (table: string) => query(table), rpc };
 });
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
@@ -222,6 +270,7 @@ beforeEach(() => {
   store.actor = { ...ADMIN };
   store.swallowDeletes = false;
   store.swallowUpdates = false;
+  store.failRpc = false;
   store.db = {
     club_ledger: [],
     audit_logs: [],
@@ -762,5 +811,156 @@ describe('updateExpense', () => {
     await expect(updateExpense({
       id: '00000000-0000-4000-8000-000000009999', category: 'shuttles', description: 'x', amount_cents: 1,
     })).rejects.toThrow(/not found/i);
+  });
+});
+
+// ============================================================
+// RECEIPT FILES, ITEMS AND THE CLUB'S SHARE (00313)
+// ============================================================
+describe('receipts and items', () => {
+  const ADMIN_UID = '66666666-6666-4666-8666-666666666666';
+  const EXEC_UID = '77777777-7777-4777-8777-777777777777';
+  const own = (name: string, type: ExpenseReceiptType = 'image/jpeg') => ({ path: `${ADMIN_UID}/${name}`, content_type: type });
+  // G is GST only, P is GST and PST, as this made-up receipt's legend says.
+  const TAX_LINES = [
+    { label: 'GST', rate_ppm: 50000, printed_cents: 300, codes: ['G', 'P'] },
+    { label: 'PST', rate_ppm: 70000, printed_cents: 280, codes: ['P'] },
+  ];
+  const ITEMS = [
+    { description: 'Shuttle tubes', line_total_cents: 2000, tax_code: 'G', is_club: true },
+    { description: 'Running shoes', line_total_cents: 4000, tax_code: 'P', is_club: false },
+  ];
+  const receiptsOf = (id: string) => (store.db.club_expense_receipts ?? []).filter((r) => r.ledger_id === id);
+  const itemsOf = (id: string) => (store.db.club_expense_items ?? []).filter((r) => r.ledger_id === id);
+
+  beforeEach(() => {
+    store.actor = { ...ADMIN, user_id: ADMIN_UID };
+  });
+
+  it('keeps every file in the order given', async () => {
+    const id = await recordExpense({ receipts: [own('b.jpg'), own('a.heic', 'image/heic'), own('c.pdf', 'application/pdf')] });
+
+    expect(receiptsOf(id).map((r) => [r.position, r.path])).toEqual([
+      [1, `${ADMIN_UID}/b.jpg`],
+      [2, `${ADMIN_UID}/a.heic`],
+      [3, `${ADMIN_UID}/c.pdf`],
+    ]);
+    // Mirrored, so a reader still on receipt_path sees the first page.
+    expect(expenses()[0]!.receipt_path).toBe(`${ADMIN_UID}/b.jpg`);
+  });
+
+  it('refuses a file outside the uploader\'s own folder, one that climbs out, or one whose type lies', async () => {
+    await expect(recordExpense({ receipts: [{ path: `${EXEC_UID}/x.jpg`, content_type: 'image/jpeg' as const }] }))
+      .rejects.toThrow(/could not be attached/);
+    await expect(recordExpense({ receipts: [own('../x.jpg')] })).rejects.toThrow(/could not be attached/);
+    await expect(recordExpense({ receipts: [own('x.jpg', 'application/pdf')] })).rejects.toThrow(/could not be attached/);
+    await expect(recordExpense({ receipts: [own('x.jpg'), own('x.jpg')] })).rejects.toThrow(/could not be attached/);
+    expect(expenses()).toHaveLength(0);
+  });
+
+  it('works out the club\'s share itself and ignores the amount the client sent', async () => {
+    // Club: 20.00 G, GST 5% = 1.00. The shoes are personal.
+    const id = await recordExpense({ amount_cents: 99999, items: ITEMS, tax_lines: TAX_LINES, receipt_total_cents: 6580 });
+
+    const row = expenses().find((r) => r.id === id)!;
+    expect(row.amount_cents).toBe(2100);
+    expect(row.receipt_total_cents).toBe(6580);
+  });
+
+  it('stores an unticked item as "Personal item", keeping its amount and code', async () => {
+    const id = await recordExpense({ items: ITEMS, tax_lines: TAX_LINES });
+
+    expect(itemsOf(id).map((r) => [r.description, r.line_total_cents, r.tax_code, r.is_club])).toEqual([
+      ['Shuttle tubes', 2000, 'G', true],
+      ['Personal item', 4000, 'P', false],
+    ]);
+    expect(JSON.stringify(store.db)).not.toContain('Running shoes');
+  });
+
+  it('takes the row back out when the receipts cannot be attached', async () => {
+    store.failRpc = true;
+
+    await expect(recordExpense({ receipts: [own('a.jpg')] })).rejects.toThrow(/Nothing was recorded/);
+    expect(expenses()).toHaveLength(0);
+    expect(audits().some((a) => a.action_type === 'expense_added')).toBe(false);
+  });
+
+  it('lets an admin keep an exec\'s files when editing', async () => {
+    store.actor = { ...EXEC, user_id: EXEC_UID };
+    const id = await recordExpense({ receipts: [{ path: `${EXEC_UID}/a.jpg`, content_type: 'image/jpeg' as const }] });
+    store.actor = { ...ADMIN, user_id: ADMIN_UID };
+
+    await updateExpense({
+      id, category: 'shuttles', description: '6 tubes', amount_cents: 8400,
+      receipts: [{ path: `${EXEC_UID}/a.jpg`, content_type: 'image/jpeg' as const }, own('b.png', 'image/png')],
+    });
+    expect(receiptsOf(id).map((r) => r.path)).toEqual([`${EXEC_UID}/a.jpg`, `${ADMIN_UID}/b.png`]);
+  });
+
+  it('freezes the files, items and ticks of a settled expense, and still lets its description be fixed', async () => {
+    const id = await recordExpense({ paid_by: OTHER_EXEC, receipts: [own('a.jpg')], items: ITEMS, tax_lines: TAX_LINES });
+    await markExpenseReimbursed(id, { amountCents: 2100, paidBy: OTHER_EXEC });
+    const base = {
+      id, category: 'shuttles' as const, description: '6 tubes', amount_cents: 2100, paid_by: OTHER_EXEC,
+      receipts: [own('a.jpg')], items: ITEMS, tax_lines: TAX_LINES,
+    };
+
+    await expect(updateExpense({ ...base, receipts: [own('a.jpg'), own('b.jpg')] })).rejects.toThrow(/receipts and items/);
+    await expect(updateExpense({ ...base, receipts: [] })).rejects.toThrow(/receipts and items/);
+    await expect(updateExpense({ ...base, items: [ITEMS[0]!, { ...ITEMS[1]!, is_club: true }] }))
+      .rejects.toThrow(/already been reimbursed/);
+    await expect(updateExpense({ ...base, items: [{ ...ITEMS[0]!, tax_code: 'P' }, ITEMS[1]!] }))
+      .rejects.toThrow(/already been reimbursed/);
+    expect(itemsOf(id).map((r) => r.is_club)).toEqual([true, false]);
+
+    // The untouched resend compares equal, personal description and all.
+    await updateExpense({ ...base, description: '6 tubes (corrected)' });
+    expect(expenses()[0]!.description).toBe('6 tubes (corrected)');
+    expect(expenses()[0]!.receipt_path).toBe(`${ADMIN_UID}/a.jpg`);
+  });
+
+  it('audits the files, the item count and the share, and never an item\'s description', async () => {
+    const id = await recordExpense({ receipts: [own('a.jpg')], items: ITEMS, tax_lines: TAX_LINES, vendor: 'NORTHWIND WAREHOUSE' });
+    await updateExpense({
+      id, category: 'shuttles', description: '6 tubes', amount_cents: 1,
+      receipts: [own('a.jpg')], items: ITEMS, tax_lines: TAX_LINES, vendor: 'NORTHWIND WAREHOUSE',
+    });
+    await removeExpense(id);
+
+    const removed = audits().find((a) => a.action_type === 'expense_removed')!;
+    expect(removed.old_value).toMatchObject({
+      receipts: [`${ADMIN_UID}/a.jpg`],
+      vendor: 'NORTHWIND WAREHOUSE',
+      item_count: 2,
+      club_share_cents: 2100,
+    });
+    const added = audits().find((a) => a.action_type === 'expense_added')!;
+    expect(added.new_value).toMatchObject({ item_count: 2, club_share_cents: 2100 });
+    const logged = JSON.stringify(audits());
+    expect(logged).not.toContain('Shuttle tubes');
+    expect(logged).not.toContain('Running shoes');
+    expect(logged).not.toContain('Personal item');
+    // And the delete cascaded to the children, as the foreign keys do.
+    expect(receiptsOf(id)).toHaveLength(0);
+  });
+
+  it('keeps a receipt that is only in receipt_path when the row is edited', async () => {
+    store.actor = { ...EXEC, user_id: EXEC_UID };
+    const id = await recordExpense();
+    // As the old console writes it: the column, and no child row.
+    expenses()[0]!.receipt_path = `${EXEC_UID}/old.jpg`;
+    store.actor = { ...ADMIN, user_id: ADMIN_UID };
+
+    await updateExpense({
+      id, category: 'shuttles', description: '6 tubes', amount_cents: 8400,
+      receipts: [{ path: `${EXEC_UID}/old.jpg`, content_type: 'image/jpeg' as const }],
+    });
+    expect(receiptsOf(id).map((r) => r.path)).toEqual([`${EXEC_UID}/old.jpg`]);
+    expect(expenses()[0]!.receipt_path).toBe(`${EXEC_UID}/old.jpg`);
+  });
+
+  it('reads a single receipt_path from a dialog opened before 00313 as one file', async () => {
+    const id = await recordExpense({ receipt_path: `${ADMIN_UID}/old.webp` });
+    expect(receiptsOf(id).map((r) => [r.path, r.content_type])).toEqual([[`${ADMIN_UID}/old.webp`, 'image/webp']]);
   });
 });

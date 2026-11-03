@@ -40,7 +40,13 @@ async function decoded(file: Blob): Promise<Blob | HTMLCanvasElement> {
   }
 }
 
-export async function readReceiptReference(file: Blob): Promise<ExtractedReference | null> {
+/**
+ * The text of one image, read in this tab, or null. Never throws, and gives up
+ * after OCR_TIMEOUT_MS. The text is the caller's to parse and drop: it is never
+ * logged here. Shared by the form receipt's reference (below) and an expense's
+ * receipt pages (expense-receipt-reader.ts, 00313).
+ */
+export async function recognizeText(file: Blob): Promise<string | null> {
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -56,7 +62,7 @@ export async function readReceiptReference(file: Blob): Promise<ExtractedReferen
       try {
         if (timedOut) return null;
         const { data } = await worker.recognize(await decoded(file));
-        return extractEtransferReference(data.text);
+        return data.text;
       } finally {
         worker.terminate().catch(() => undefined);
       }
@@ -76,4 +82,9 @@ export async function readReceiptReference(file: Blob): Promise<ExtractedReferen
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+export async function readReceiptReference(file: Blob): Promise<ExtractedReference | null> {
+  const text = await recognizeText(file);
+  return text === null ? null : extractEtransferReference(text);
 }

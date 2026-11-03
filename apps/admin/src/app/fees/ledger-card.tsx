@@ -18,6 +18,8 @@ import {
 } from './finance-actions';
 import { CardHeading } from './card-heading';
 import { LedgerCharts } from './ledger-charts';
+import { ExpenseReceiptViewer } from './expense-receipt-viewer';
+import type { StoredExpenseDetails } from './expense-details-fields';
 import { withBase } from '@/lib/base-path';
 
 /**
@@ -89,31 +91,25 @@ interface LedgerRow {
   reimbursed_by?: string | null;
   method: string | null;
   reference: string | null;
-  /** Object path of the receipt photo in the private bucket (00231). */
+  /** Object path of the first receipt file in the private bucket (00231). */
   receipt_path?: string | null;
+  /** The store and the printed total of its receipt (00313). */
+  vendor?: string | null;
+  receipt_total_cents?: number | null;
   created_at: string;
 }
 
 const INCOME_COLS = 'id, ref_no, category, description, amount_cents, paid_at, method, reference, created_at';
-// receipt_path CANNOT BE DEPLOYED BEFORE 00231 IS APPLIED. PostgREST refuses a
-// select naming an unknown column and this console reads a refused read as an
-// empty list, so the whole expense ledger would render EMPTY, on a money page,
-// with nothing in any log. The full note is in lib/actions/finance.ts's header.
-const EXPENSE_COLS = `${INCOME_COLS}, quantity, paid_by, reimbursed_at, reimbursed_by, receipt_path`;
+// vendor AND receipt_total_cents CANNOT BE DEPLOYED BEFORE 00313 IS APPLIED.
+// PostgREST refuses a select naming an unknown column and this console reads a
+// refused read as an empty list, so the whole expense ledger would render
+// EMPTY, on a money page, with nothing in any log. The full note is in
+// lib/actions/finance.ts's header. The receipt files are read from
+// club_expense_receipts below; receipt_path is still read for a row whose
+// receipt is only there (see detailsOf).
+const EXPENSE_COLS = `${INCOME_COLS}, quantity, paid_by, reimbursed_at, reimbursed_by, receipt_path, vendor, receipt_total_cents`;
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-
-/**
- * A plain <a> dressed as a ghost Button, because it has to be an anchor.
- *
- * Button renders a bare <button> with no href form, and this file is a SERVER
- * component: reaching for a client component to hold one link would ship a
- * bundle to every viewer of the ledger for something a link already does. The
- * classes are Button's ghost + sm, transcribed, so the control sits level with
- * the Edit and Delete beside it.
- */
-const RECEIPT_LINK_CLASS =
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-[var(--line)] bg-transparent px-3 min-h-[32px] text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink-2)] transition-all duration-150 hover:bg-[var(--surface-2)] hover:text-[var(--ink)]';
 
 /** Local date only — the time of day a shuttle order was paid is noise. */
 const day = (iso: string | null) =>
@@ -193,6 +189,87 @@ export async function LedgerCard({
   // exactly when this matters.
   const nameOf = (id: string | null | undefined) => (id ? nameById.get(id) ?? 'someone' : null);
 
+  // Each expense's receipt files, items and tax lines (00313), in ONE read per
+  // table across the whole ledger. Under the same canRead as the rows: a row
+  // that is not fetched has no children to show, and these are the rows.
+  const expenseIds = isIncome ? [] : rows.map((r) => r.id);
+  const detailsById = new Map<string, StoredExpenseDetails>();
+  if (expenseIds.length > 0) {
+    const [receipts, items, taxLines] = await Promise.all([
+      selectInChunks(expenseIds, (ids) =>
+        supabase
+          .from('club_expense_receipts')
+          .select('id, ledger_id, position, path, content_type')
+          .in('ledger_id', ids)
+          .order('position') as never,
+      ),
+      selectInChunks(expenseIds, (ids) =>
+        supabase
+          .from('club_expense_items')
+          .select(
+            'ledger_id, position, description, quantity, unit_price_cents, line_total_cents, discount_cents, tax_code, tax_code_source, is_club',
+          )
+          .in('ledger_id', ids)
+          .order('position') as never,
+      ),
+      selectInChunks(expenseIds, (ids) =>
+        supabase
+          .from('club_expense_tax_lines')
+          .select('ledger_id, position, label, rate_ppm, printed_cents, codes')
+          .in('ledger_id', ids)
+          .order('position') as never,
+      ),
+    ]);
+    const of = (id: string) => {
+      let d = detailsById.get(id);
+      if (!d) {
+        const row = rows.find((r) => r.id === id);
+        d = {
+          vendor: row?.vendor ?? null,
+          receipt_total_cents: row?.receipt_total_cents ?? null,
+          receipts: [],
+          items: [],
+          tax_lines: [],
+        };
+        detailsById.set(id, d);
+      }
+      return d;
+    };
+    type WithLedger<T> = T & { ledger_id: string };
+    for (const r of unwrap(receipts, 'FEE-101') as unknown as WithLedger<StoredExpenseDetails['receipts'][number]>[]) {
+      of(r.ledger_id).receipts.push(r);
+    }
+    for (const it of unwrap(items, 'FEE-101') as unknown as WithLedger<StoredExpenseDetails['items'][number]>[]) {
+      of(it.ledger_id).items.push(it);
+    }
+    for (const t of unwrap(taxLines, 'FEE-101') as unknown as WithLedger<StoredExpenseDetails['tax_lines'][number]>[]) {
+      of(t.ledger_id).tax_lines.push(t);
+    }
+    // Chunks come back in chunk order, not position order.
+    for (const d of detailsById.values()) {
+      d.receipts.sort((a, b) => a.position - b.position);
+      d.items.sort((a, b) => a.position - b.position);
+      d.tax_lines.sort((a, b) => a.position - b.position);
+    }
+  }
+  // A receipt in receipt_path with no club_expense_receipts row was written by
+  // a console still on 00231's code after 00313 was applied. It is shown as the
+  // row's one file (id '' : it has no attachment id) and opened by the old
+  // /fees/receipt/<ledger id> route; the next edit moves it into the table.
+  const detailsOf = (row: LedgerRow): StoredExpenseDetails => {
+    const d = detailsById.get(row.id) ?? {
+      vendor: row.vendor ?? null,
+      receipt_total_cents: row.receipt_total_cents ?? null,
+      receipts: [],
+      items: [],
+      tax_lines: [],
+    };
+    if (d.receipts.length > 0 || !row.receipt_path) return d;
+    const ext = row.receipt_path.split('.').pop()?.toLowerCase();
+    const content_type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    return { ...d, receipts: [{ id: '', path: row.receipt_path, content_type, position: 1 }] };
+  };
+
   // Who may be named as having fronted an expense: the people who can be in a
   // shop buying shuttles for the club. Execs and admins first — the same set the
   // console admits — because they are the ones with a way to be reimbursed
@@ -267,7 +344,47 @@ export async function LedgerCard({
   const subLine = (row: LedgerRow) => {
     const parts = [formatRef(row.ref_no), formatCategory(row.category), day(row.paid_at)];
     if (!isIncome && row.quantity != null) parts.push(`×${row.quantity}`);
+    if (!isIncome && row.vendor) parts.push(row.vendor);
     return parts.filter(Boolean).join(' · ');
+  };
+
+  /** "Receipt $T, club share $S", only when the club paid part of a receipt. */
+  const shareNote = (row: LedgerRow) =>
+    !isIncome && row.receipt_total_cents != null && row.receipt_total_cents !== row.amount_cents
+      ? `Receipt ${money(row.receipt_total_cents)}, club share ${money(row.amount_cents)}`
+      : null;
+
+  /** The receipt viewer, for a row that has a receipt or items. Expenses only. */
+  const viewer = (row: LedgerRow) => {
+    if (isIncome) return null;
+    const d = detailsOf(row);
+    if (d.receipts.length === 0 && d.items.length === 0) return null;
+    return (
+      <ExpenseReceiptViewer
+        title={`${formatRef(row.ref_no)} ${row.description}`}
+        // Without the paths: the route resolves an attachment by id, and the
+        // uploader's folder is nobody's business here.
+        details={{
+          ...d,
+          receipts: d.receipts.map((r) => {
+            const href = withBase(r.id ? `/fees/expense-receipt/${r.id}` : `/fees/receipt/${row.id}`);
+            return {
+              key: r.id || row.id,
+              href,
+              imageSrc: r.id ? `${href}?inline=1` : href,
+              content_type: r.content_type,
+              position: r.position,
+            };
+          }),
+        }}
+        amountCents={row.amount_cents}
+        reimburse={
+          canWrite.reimburse && row.paid_by && !row.reimbursed_at
+            ? { id: row.id, payerId: row.paid_by, payerName: nameOf(row.paid_by)! }
+            : undefined
+        }
+      />
+    );
   };
 
   /** The props EditExpense needs, straight off the row. Expenses only. */
@@ -283,10 +400,10 @@ export async function LedgerCard({
     reimbursed_at: row.reimbursed_at ?? null,
     method: row.method,
     reference: row.reference,
-    // Carried into the dialog so an edit RESENDS it. updateExpense's patch is a
-    // full replacement, so a dialog that forgot this field would silently NULL
-    // the receipt on every save of an unrelated one.
-    receipt_path: row.receipt_path ?? null,
+    // Carried into the dialog so an edit RESENDS them. The save replaces the
+    // receipt files, items and tax lines wholesale, so a dialog that forgot
+    // them would silently drop the receipt on every save of an unrelated field.
+    details: detailsOf(row),
   });
 
   return (
@@ -341,6 +458,9 @@ export async function LedgerCard({
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-[var(--text-primary)]">{row.description}</p>
                   <p className="text-xs font-normal text-[var(--text-muted)]">{subLine(row)}</p>
+                  {shareNote(row) && (
+                    <p className="text-xs font-normal text-[var(--text-muted)]">{shareNote(row)}</p>
+                  )}
                 </div>
               }
               // Atomic because TableCard sets [overflow-wrap:anywhere] on the
@@ -374,22 +494,9 @@ export async function LedgerCard({
                   {/* Somebody who can only READ this ledger sees the state —
                       that is the point of the feature for them — and no control
                       that would reject them. */}
-                  {/* Gated on canRead alone, not on any write flag: looking at
-                      the receipt is reading the row, and the exec who is owed
-                      the money is exactly who needs to check it. withBase
-                      because Next does not prefix a raw string, and an
-                      unprefixed /fees/... here is a LIVE ROUTE ON THE PLAYER
-                      APP rather than a 404. */}
-                  {!isIncome && row.receipt_path && (
-                    <a
-                      href={withBase(`/fees/receipt/${row.id}`)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={RECEIPT_LINK_CLASS}
-                    >
-                      Receipt
-                    </a>
-                  )}
+                  {/* Rows reach here only under canRead, and looking at the
+                      receipt is reading the row: no write flag gates it. */}
+                  {viewer(row)}
                   {canWrite.update && !isIncome && (
                     <EditExpense expense={editable(row)} payerOptions={payerOptions} />
                   )}
@@ -442,6 +549,12 @@ export async function LedgerCard({
                   </td>
                   <td className="px-4 py-3">
                     <p className="text-sm font-medium text-[var(--text-primary)]">{row.description}</p>
+                    {!isIncome && row.vendor && (
+                      <span className="block text-xs text-[var(--text-muted)]">{row.vendor}</span>
+                    )}
+                    {shareNote(row) && (
+                      <span className="block text-xs text-[var(--text-muted)]">{shareNote(row)}</span>
+                    )}
                     {!row.paid_at && (
                       <Badge variant="warning">Not recorded</Badge>
                     )}
@@ -480,18 +593,8 @@ export async function LedgerCard({
                   )}
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {/* See the card form above for why this is canRead-only
-                          and why the href goes through withBase. */}
-                      {!isIncome && row.receipt_path && (
-                        <a
-                          href={withBase(`/fees/receipt/${row.id}`)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={RECEIPT_LINK_CLASS}
-                        >
-                          Receipt
-                        </a>
-                      )}
+                      {/* See the card form above for why this is canRead-only. */}
+                      {viewer(row)}
                       {canWrite.update && !isIncome && (
                         <EditExpense expense={editable(row)} payerOptions={payerOptions} />
                       )}

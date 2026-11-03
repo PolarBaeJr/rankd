@@ -16,10 +16,12 @@ import { inlineProof } from '../fee-submissions';
 
 const STORED = new Uint8Array([1, 2, 3, 4]);
 
+const buckets: string[] = [];
+
 function fakeAdmin() {
   const admin = {
     storage: {
-      from: () => ({
+      from: (bucket: string) => (buckets.push(bucket), {
         download: async () => ({ data: new Blob([STORED]), error: null }),
       }),
     },
@@ -47,6 +49,13 @@ describe('inlineProof', () => {
     expect(response.headers.get('Content-Type')).toBe('image/png');
     expect(response.headers.get('Content-Disposition')).toBe('inline');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(STORED);
+  });
+
+  it('reads fee-proofs unless told the expense-receipts bucket', async () => {
+    buckets.length = 0;
+    await inlineProof(fakeAdmin(), 'p/sub-1.png');
+    await inlineProof(fakeAdmin(), 'u/receipt.heic', 'expense-receipts');
+    expect(buckets).toEqual(['fee-proofs', 'expense-receipts']);
   });
 
   it('answers a PDF as not found', async () => {

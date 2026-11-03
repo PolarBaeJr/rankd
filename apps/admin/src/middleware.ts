@@ -351,10 +351,12 @@ export const config = {
   // tesseract/ is the self-hosted OCR (app/fees/receipt-ocr.ts): a worker and
   // its wasm fetched by the browser, public files with nothing to gate, and a
   // redirect to the login page in their place would only break the read.
+  // pdfjs/ is the same for the self-hosted PDF renderer's worker
+  // (app/fees/pdf-pages.ts), which turns a PDF receipt into pages to read.
   //
   // Paths here are basePath-RELATIVE: Next strips /admin before matching.
   // No sw.js entry: the console registers no service worker (see app/layout.tsx).
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/|tesseract/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/|pdfjs/|tesseract/).*)',
   ],
 };

@@ -442,6 +442,138 @@ export type Database = {
           },
         ]
       }
+      club_expense_items: {
+        Row: {
+          description: string
+          direction: string
+          discount_cents: number
+          id: string
+          is_club: boolean
+          ledger_id: string
+          line_total_cents: number
+          position: number
+          quantity: number | null
+          tax_code: string | null
+          tax_code_source: string
+          unit_price_cents: number | null
+        }
+        Insert: {
+          description: string
+          direction?: string
+          discount_cents?: number
+          id?: string
+          is_club?: boolean
+          ledger_id: string
+          line_total_cents: number
+          position: number
+          quantity?: number | null
+          tax_code?: string | null
+          tax_code_source?: string
+          unit_price_cents?: number | null
+        }
+        Update: {
+          description?: string
+          direction?: string
+          discount_cents?: number
+          id?: string
+          is_club?: boolean
+          ledger_id?: string
+          line_total_cents?: number
+          position?: number
+          quantity?: number | null
+          tax_code?: string | null
+          tax_code_source?: string
+          unit_price_cents?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_expense_items_ledger_fkey"
+            columns: ["ledger_id", "direction"]
+            isOneToOne: false
+            referencedRelation: "club_ledger"
+            referencedColumns: ["id", "direction"]
+          },
+        ]
+      }
+      club_expense_receipts: {
+        Row: {
+          content_type: string
+          created_at: string
+          direction: string
+          id: string
+          ledger_id: string
+          path: string
+          position: number
+        }
+        Insert: {
+          content_type: string
+          created_at?: string
+          direction?: string
+          id?: string
+          ledger_id: string
+          path: string
+          position: number
+        }
+        Update: {
+          content_type?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          ledger_id?: string
+          path?: string
+          position?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_expense_receipts_ledger_fkey"
+            columns: ["ledger_id", "direction"]
+            isOneToOne: false
+            referencedRelation: "club_ledger"
+            referencedColumns: ["id", "direction"]
+          },
+        ]
+      }
+      club_expense_tax_lines: {
+        Row: {
+          codes: string[]
+          direction: string
+          id: string
+          label: string
+          ledger_id: string
+          position: number
+          printed_cents: number | null
+          rate_ppm: number | null
+        }
+        Insert: {
+          codes?: string[]
+          direction?: string
+          id?: string
+          label: string
+          ledger_id: string
+          position: number
+          printed_cents?: number | null
+          rate_ppm?: number | null
+        }
+        Update: {
+          codes?: string[]
+          direction?: string
+          id?: string
+          label?: string
+          ledger_id?: string
+          position?: number
+          printed_cents?: number | null
+          rate_ppm?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_expense_tax_lines_ledger_fkey"
+            columns: ["ledger_id", "direction"]
+            isOneToOne: false
+            referencedRelation: "club_ledger"
+            referencedColumns: ["id", "direction"]
+          },
+        ]
+      }
       club_fees: {
         Row: {
           amount_cents: number | null
@@ -546,11 +678,13 @@ export type Database = {
           paid_by: string | null
           quantity: number | null
           receipt_path: string | null
+          receipt_total_cents: number | null
           ref_no: number
           reference: string | null
           reimbursed_at: string | null
           reimbursed_by: string | null
           season_id: string
+          vendor: string | null
         }
         Insert: {
           amount_cents: number
@@ -565,11 +699,13 @@ export type Database = {
           paid_by?: string | null
           quantity?: number | null
           receipt_path?: string | null
+          receipt_total_cents?: number | null
           ref_no?: number
           reference?: string | null
           reimbursed_at?: string | null
           reimbursed_by?: string | null
           season_id: string
+          vendor?: string | null
         }
         Update: {
           amount_cents?: number
@@ -584,11 +720,13 @@ export type Database = {
           paid_by?: string | null
           quantity?: number | null
           receipt_path?: string | null
+          receipt_total_cents?: number | null
           ref_no?: number
           reference?: string | null
           reimbursed_at?: string | null
           reimbursed_by?: string | null
           season_id?: string
+          vendor?: string | null
         }
         Relationships: [
           {
@@ -5085,6 +5223,18 @@ export type Database = {
           p_results: Json
         }
         Returns: Json
+      }
+      save_club_expense_details: {
+        Args: {
+          p_amount_cents: number
+          p_items: Json
+          p_ledger_id: string
+          p_receipt_total_cents: number
+          p_receipts: Json
+          p_tax_lines: Json
+          p_vendor: string
+        }
+        Returns: string
       }
       scrub_deleted_identity: {
         Args: Record<PropertyKey, never>

@@ -731,6 +731,45 @@ export const otherIncomeSchema = z.object({
   ),
 });
 
+// THE RECEIPT FILES, ITEMS AND TAX LINES OF AN EXPENSE (00313). Shaped like
+// the child tables; finance.ts re-checks every path against the uploader,
+// assigns positions from array order and recomputes the club's share.
+export const EXPENSE_RECEIPT_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+] as const;
+export type ExpenseReceiptType = (typeof EXPENSE_RECEIPT_TYPES)[number];
+
+export const expenseReceiptFileSchema = z.object({
+  path: z.string().min(3).max(512),
+  content_type: z.enum(EXPENSE_RECEIPT_TYPES as unknown as [ExpenseReceiptType, ...ExpenseReceiptType[]]),
+});
+
+const taxCodeSchema = z.string().regex(/^[A-Z0-9]{1,3}$/);
+
+export const expenseItemSchema = z.object({
+  description: z.string().trim().min(1).max(120),
+  quantity: z.number().positive().optional(),
+  unit_price_cents: z.number().int().optional(),
+  // As printed; a refund line is negative.
+  line_total_cents: z.number().int(),
+  discount_cents: z.number().int().max(0).optional(),
+  tax_code: taxCodeSchema.nullable().optional(),
+  tax_code_source: z.enum(['receipt', 'exec']).optional(),
+  is_club: z.boolean(),
+});
+
+export const expenseTaxLineSchema = z.object({
+  label: z.string().trim().min(1).max(24),
+  rate_ppm: z.number().int().min(0).max(500000).nullable().optional(),
+  printed_cents: z.number().int().nonnegative().nullable().optional(),
+  codes: z.array(taxCodeSchema).max(10),
+});
+
 export const clubExpenseSchema = z.object({
   ...ledgerEntryFields,
   category: z.enum(
@@ -764,7 +803,18 @@ export const clubExpenseSchema = z.object({
   // re-checks it against the uploader's own auth.uid(), because the service-role
   // client that signs it bypasses RLS and an arbitrary path would otherwise be a
   // read primitive for the whole bucket.
+  //
+  // KEPT FOR ONE RELEASE ONLY (00313). The console now sends `receipts`; a
+  // dialog still open from before the deploy may send this, and the action
+  // reads it as a one-file `receipts`.
   receipt_path: z.string().max(512).optional(),
+  // In order, first page first. Optional like receipt_path, for the same reason.
+  receipts: z.array(expenseReceiptFileSchema).max(20).optional(),
+  vendor: z.string().trim().min(1).max(80).optional(),
+  // As printed. With items, amount_cents is the club's share of it.
+  receipt_total_cents: z.number().int().nonnegative().optional(),
+  items: z.array(expenseItemSchema).max(500).optional(),
+  tax_lines: z.array(expenseTaxLineSchema).max(10).optional(),
 });
 
 /**
@@ -943,6 +993,9 @@ export type ReinstatementPaymentInput = z.infer<typeof reinstatementPaymentSchem
 export type OtherIncomeInput = z.infer<typeof otherIncomeSchema>;
 export type ClubExpenseInput = z.infer<typeof clubExpenseSchema>;
 export type ClubExpenseUpdateInput = z.infer<typeof clubExpenseUpdateSchema>;
+export type ExpenseItemInput = z.infer<typeof expenseItemSchema>;
+export type ExpenseTaxLineInput = z.infer<typeof expenseTaxLineSchema>;
+export type ExpenseReceiptFileInput = z.infer<typeof expenseReceiptFileSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;

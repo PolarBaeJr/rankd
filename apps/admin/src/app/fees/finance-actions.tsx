@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, DatePicker, useConfirm } from '@badminton/ui';
 import {
@@ -12,6 +12,7 @@ import {
   OTHER_INCOME_CATEGORIES,
   type ExpenseCategory,
   type OtherIncomeCategory,
+  type PurchaseReadout,
 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -28,7 +29,16 @@ import {
   EMPTY_PAYMENT_METHOD,
   type PaymentMethodState,
 } from './payment-method-fields';
-import { createClient } from '@/lib/supabase-browser';
+import {
+  ExpenseDetailsFields,
+  EMPTY_DETAILS,
+  detailsFromStored,
+  detailsInvalid,
+  detailsPayload,
+  detailsShare,
+  type ExpenseDetailsState,
+  type StoredExpenseDetails,
+} from './expense-details-fields';
 
 /**
  * Dialogs for the two non-fee ledgers (00073).
@@ -39,56 +49,8 @@ import { createClient } from '@/lib/supabase-browser';
  * different ideas of what a money entry is.
  */
 
-// THE RECEIPT PHOTO (00231). All three mirror the bucket's own configuration,
-// and they are checked here as well so a wrong-typed or oversized file is
-// refused instantly, next to the picker, rather than after an upload storage was
-// always going to reject. The bucket is the boundary; this is the courtesy.
-const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
-
-const RECEIPT_EXTENSIONS: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-};
-
-/**
- * Upload a picked receipt and return the path the action should store.
- *
- * STRAIGHT FROM THE BROWSER TO STORAGE, never through a server action: a
- * multi-megabyte photo posted to an action would cross the single Node thread
- * that renders every other page in the console. There is no multipart route and
- * no FormData anywhere in this repo, and this deliberately does not add the
- * first one.
- *
- * The folder is the UPLOADER'S auth.uid(), because that is the only thing
- * storage RLS can see and it is what 00231's INSERT policy checks. It is
- * frequently not the payer: an admin writing up an exec's texted receipt uploads
- * it under their own id while the exec is the one owed the money. addExpense
- * re-checks the path against the uploader for the same reason.
- *
- * Returns null when the upload failed, having already said so: the caller must
- * STOP rather than file the expense with the receipt silently missing.
- */
-async function uploadReceipt(file: File, fail: (message: string) => void): Promise<string | null> {
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    fail('Your session expired. Sign in again and try once more.');
-    return null;
-  }
-
-  const path = `${user.id}/${crypto.randomUUID()}.${RECEIPT_EXTENSIONS[file.type] ?? 'jpg'}`;
-  const { error } = await supabase.storage
-    .from('expense-receipts')
-    .upload(path, file, { contentType: file.type, upsert: false });
-
-  if (error) {
-    fail(`The receipt could not be uploaded (${error.message}). Remove it and save again, or use a smaller photo.`);
-    return null;
-  }
-  return path;
-}
+// THE RECEIPT FILES, ITEMS AND TAX LINES (00231, 00313) are drawn, uploaded
+// and read by expense-details-fields.tsx.
 
 /**
  * Dollars typed into a text box -> integer cents.
@@ -212,7 +174,7 @@ function EntryDialog({
   setPayment,
   quantityLabel,
   payerOptions,
-  receipt,
+  details,
   settledNote,
   onSubmit,
   isPending,
@@ -238,23 +200,18 @@ function EntryDialog({
    * refuses them regardless; this is the explanation, not the boundary.
    */
   /**
-   * Present = this ledger takes a receipt photo (00231). Expenses do; income
-   * does not, and passing nothing is what keeps the picker off the income
-   * dialog entirely rather than hiding it with a flag.
+   * Present = this ledger takes a receipt (00231, 00313): its files, items and
+   * tax lines. Expenses do; income does not, and passing nothing is what keeps
+   * the picker off the income dialog entirely rather than hiding it with a flag.
    *
-   * The File itself is held by the CALLER, not in EntryFormState: that shape is
-   * shared with the income ledger, and a File on it would be a field one of the
-   * two dialogs could never fill.
+   * Held by the CALLER, not in EntryFormState: that shape is shared with the
+   * income ledger, and a receipt on it would be a field one of the two dialogs
+   * could never fill.
    */
-  receipt?: {
-    /** Picked in this dialog and not yet uploaded. */
-    file: File | null;
-    setFile: (next: File | null) => void;
-    /** A receipt already stored on the row. Edit dialog only; null on Add. */
-    storedPath: string | null;
-    /** Detach: drop both the picked file and the stored path. */
-    onClear: () => void;
-    /** Settled row: the receipt is frozen, so the picker is shown read-only. */
+  details?: {
+    value: ExpenseDetailsState;
+    setValue: React.Dispatch<React.SetStateAction<ExpenseDetailsState>>;
+    /** Settled row: the receipt, items and tax are frozen, so all are read-only. */
     disabled?: boolean;
   };
   settledNote?: string;
@@ -262,55 +219,29 @@ function EntryDialog({
   isPending: boolean;
   submitLabel: string;
 }) {
-  // Hooks run unconditionally even on the income dialog, where `receipt` is
-  // undefined: a hook behind a condition is a hook that changes order between
-  // renders. With no receipt the file is always null and the effect never
-  // allocates anything.
-  const receiptFile = receipt?.file ?? null;
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
-  const [receiptError, setReceiptError] = useState<string | null>(null);
-  const receiptInput = useRef<HTMLInputElement>(null);
+  // A read lands after an await, by which time `form` in this closure may be
+  // a keystroke old; the ref is the form as it is now.
+  const formRef = useRef(form);
+  formRef.current = form;
 
-  // Previewed from the LOCAL File, never read back from storage. 00231 gives the
-  // bucket no read policy at all, so there is nothing to fetch. It also shows
-  // the photo before it is uploaded, which is what somebody attaching a receipt
-  // wants to see. Revoked on cleanup so a dialog opened repeatedly does not leak
-  // an object URL per open.
-  useEffect(() => {
-    if (!receiptFile) {
-      setReceiptPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(receiptFile);
-    setReceiptPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [receiptFile]);
+  // With items, the amount is the club's share of them and is not typed.
+  const share = details ? detailsShare(details.value) : null;
 
-  function pickReceipt(e: React.ChangeEvent<HTMLInputElement>) {
-    const picked = e.target.files?.[0];
-    if (!picked) return;
-    setReceiptError(null);
-
-    if (!RECEIPT_TYPES.includes(picked.type)) {
-      setReceiptError('A receipt needs to be a JPEG, PNG or WebP image.');
-      return;
-    }
-    if (picked.size > MAX_RECEIPT_BYTES) {
-      setReceiptError('That photo is over 8 MB. Try a smaller one, or a photo of just the receipt.');
-      return;
-    }
-    receipt?.setFile(picked);
+  function fillFromReadout(readout: PurchaseReadout) {
+    const now = formRef.current;
+    setForm({
+      ...now,
+      description: now.description || (readout.store ?? '').slice(0, 120),
+      day: now.day || (readout.date ?? ''),
+      // Only when no items were read: with items the amount is their share.
+      amount:
+        now.amount || readout.items.length > 0 || readout.totalCents === null
+          ? now.amount
+          : (readout.totalCents / 100).toFixed(2),
+    });
   }
 
-  function clearReceipt() {
-    setReceiptError(null);
-    // The input's own value has to be cleared too, or picking the SAME file
-    // again fires no change event and the picker looks broken.
-    if (receiptInput.current) receiptInput.current.value = '';
-    receipt?.onClear();
-  }
-
-  const cents = toCents(form.amount);
+  const cents = share ? share.clubShareCents : toCents(form.amount);
   // Amount is required and must parse. An entry with no figure is not a ledger
   // line, and a blank one submitted as 0 would look like a recorded $0.00.
   //
@@ -318,13 +249,15 @@ function EntryDialog({
   // why there is no default to fall back on.
   const invalid =
     !form.description.trim() ||
-    form.amount.trim() === '' ||
+    (!share && form.amount.trim() === '') ||
     cents === null ||
+    cents < 0 ||
+    (details !== undefined && detailsInvalid(details.value)) ||
     (payerOptions !== undefined && form.paidBy === '') ||
     paymentMethodInvalid(payment);
 
   return (
-    <Dialog open={open} onClose={onClose} title={title}>
+    <Dialog open={open} onClose={onClose} title={title} size={details ? 'wide' : 'default'}>
       <div className="space-y-4">
         <p className="text-sm text-[var(--text-secondary)]">{intro}</p>
         {settledNote && (
@@ -345,16 +278,35 @@ function EntryDialog({
           value={form.category}
           onChange={(e) => setForm({ ...form, category: e.target.value })}
         />
-        <Input
-          label="Amount $"
-          type="number"
-          step="0.01"
-          min="0"
-          value={form.amount}
-          onChange={(e) => setForm({ ...form, amount: e.target.value })}
-          placeholder="e.g. 84.00"
-          disabled={isPending || Boolean(settledNote)}
-        />
+        {share && details ? (
+          <div className="space-y-1">
+            <Input label="Amount $ (the club's share of the items)" value={(share.clubShareCents / 100).toFixed(2)} readOnly disabled />
+            {!details.disabled && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setForm({ ...form, amount: (share.clubShareCents / 100).toFixed(2) });
+                  details.setValue((d) => ({ ...d, items: [] }));
+                }}
+                disabled={isPending}
+              >
+                Type the amount instead
+              </Button>
+            )}
+          </div>
+        ) : (
+          <Input
+            label="Amount $"
+            type="number"
+            step="0.01"
+            min="0"
+            value={form.amount}
+            onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            placeholder="e.g. 84.00"
+            disabled={isPending || Boolean(settledNote)}
+          />
+        )}
         {quantityLabel && (
           <Input
             label={quantityLabel}
@@ -388,79 +340,13 @@ function EntryDialog({
             </p>
           </>
         )}
-        {receipt && (
-          <div className="space-y-2">
-            <span className="block text-sm font-medium text-[var(--text-primary)]">
-              Receipt (optional)
-            </span>
-            <input
-              ref={receiptInput}
-              type="file"
-              accept={RECEIPT_TYPES.join(',')}
-              onChange={pickReceipt}
-              className="hidden"
-              disabled={isPending || receipt.disabled}
-            />
-
-            {receiptPreview ? (
-              <div className="space-y-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={receiptPreview}
-                  alt="Receipt to be attached"
-                  className="max-h-60 max-w-full border border-[var(--border)]"
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearReceipt}
-                  disabled={isPending || receipt.disabled}
-                >
-                  Remove
-                </Button>
-              </div>
-            ) : receipt.storedPath ? (
-              // A receipt already on the row. It is NOT previewed: the bucket has
-              // no read policy, so the only way to show it would be to sign a URL
-              // per dialog render. The ledger row's own Receipt link opens it.
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-[var(--text-secondary)]">A receipt is attached.</span>
-                {!receipt.disabled && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => receiptInput.current?.click()}
-                      disabled={isPending}
-                    >
-                      Replace
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={clearReceipt} disabled={isPending}>
-                      Remove
-                    </Button>
-                  </>
-                )}
-              </div>
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => receiptInput.current?.click()}
-                disabled={isPending || receipt.disabled}
-              >
-                Add a photo
-              </Button>
-            )}
-
-            {receiptError && (
-              <p role="alert" className="text-xs text-[var(--color-danger)]">
-                {receiptError}
-              </p>
-            )}
-            <p className="text-xs text-[var(--text-muted)]">
-              JPEG, PNG or WebP, up to 8 MB. Only people who can see this ledger can open it.
-            </p>
-          </div>
+        {details && (
+          <ExpenseDetailsFields
+            value={details.value}
+            setValue={details.setValue}
+            disabled={isPending || Boolean(details.disabled)}
+            onRead={fillFromReadout}
+          />
         )}
         <DatePicker
           label="Date (optional — defaults to today)"
@@ -564,29 +450,21 @@ export function AddExpense({
   const [form, setForm] = useState<EntryFormState>(emptyForm(DEFAULT_CATEGORY));
   const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
   // Held here rather than in EntryFormState, which the income dialog shares.
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [details, setDetails] = useState<ExpenseDetailsState>(EMPTY_DETAILS);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
 
   function handleAdd() {
-    const cents = toCents(form.amount);
+    // With items the server works the share out again and stores its own.
+    const share = detailsShare(details);
+    const cents = share ? share.clubShareCents : toCents(form.amount);
     if (cents === null) return;
     const qty = form.quantity.trim() === '' ? undefined : Number.parseInt(form.quantity, 10);
     startTransition(async () => {
       try {
-        // THE UPLOAD HAPPENS FIRST, AND A FAILURE STOPS THE WHOLE THING. Filing
-        // the expense anyway would record the spend with the receipt silently
-        // missing, and the person who attached it would have no way of knowing:
-        // they would see "Expense recorded" and a row with no receipt on it.
-        // Better to say so and let them save again or drop the photo.
-        let receipt_path: string | undefined;
-        if (receiptFile) {
-          const uploaded = await uploadReceipt(receiptFile, (message) => toast(message, 'error'));
-          if (!uploaded) return;
-          receipt_path = uploaded;
-        }
-
+        // The receipt files were uploaded when they were picked, and a failed
+        // upload was never added to the list, so every path sent here exists.
         await addExpense({
           season_id: seasonId,
           category: form.category as ExpenseCategory,
@@ -599,13 +477,13 @@ export function AddExpense({
           paid_at: dateToIso(form.day),
           method: resolvePaymentMethod(payment.method, payment.customMethod),
           reference: payment.reference.trim() || undefined,
-          receipt_path,
+          ...detailsPayload(details),
         });
         toast('Expense recorded', 'success');
         setOpen(false);
         setForm(emptyForm(DEFAULT_CATEGORY));
         setPayment(EMPTY_PAYMENT_METHOD);
-        setReceiptFile(null);
+        setDetails(EMPTY_DETAILS);
         router.refresh();
       } catch (err) {
         toast(errorToastText(err, 'FEE', 'Failed to record expense'), 'error');
@@ -633,13 +511,7 @@ export function AddExpense({
         setPayment={setPayment}
         quantityLabel="Quantity (optional — e.g. tubes)"
         payerOptions={payerOptions}
-        receipt={{
-          file: receiptFile,
-          setFile: setReceiptFile,
-          // Nothing is stored yet on an Add, so there is only ever a picked file.
-          storedPath: null,
-          onClear: () => setReceiptFile(null),
-        }}
+        details={{ value: details, setValue: setDetails }}
         onSubmit={handleAdd}
         isPending={isPending}
         submitLabel="Add expense"
@@ -662,12 +534,13 @@ export interface EditableExpense {
   method: string | null;
   reference: string | null;
   /**
-   * The stored receipt (00231). Present on the interface so the dialog can
-   * RESEND it: updateExpense's patch is a full replacement, so a field the
-   * dialog forgets is a field the save erases. Exactly the trap paymentFromStored
+   * The stored receipt files, items and tax lines (00231, 00313), with the
+   * store and the printed total. Present on the interface so the dialog can
+   * RESEND them: the save replaces them wholesale, so anything the dialog
+   * forgets is something the save erases. Exactly the trap paymentFromStored
    * exists to avoid one column over.
    */
-  receipt_path: string | null;
+  details: StoredExpenseDetails;
 }
 
 /**
@@ -701,11 +574,9 @@ export function EditExpense({
   const [payment, setPayment] = useState<PaymentMethodState>(() =>
     paymentFromStored(expense.method, expense.reference),
   );
-  // A newly picked photo, and the path to SEND. The second is seeded from the
-  // stored row so an edit that never touches the receipt still resends it;
-  // clearing sets it to null, which the action stores as "no receipt".
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [receiptPath, setReceiptPath] = useState<string | null>(expense.receipt_path);
+  // Seeded from the stored row so an edit that never touches the receipt
+  // still resends it.
+  const [details, setDetails] = useState<ExpenseDetailsState>(() => detailsFromStored(expense.details));
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
@@ -719,28 +590,20 @@ export function EditExpense({
     // doc comment: an admin who opened one row, changed something, cancelled and
     // opened another must not be shown the first row's receipt over the second
     // row's data.
-    setReceiptFile(null);
-    setReceiptPath(expense.receipt_path);
+    setDetails(detailsFromStored(expense.details));
     setOpen(true);
   }
 
   function handleSave() {
-    const cents = toCents(form.amount);
+    const share = detailsShare(details);
+    const cents = share ? share.clubShareCents : toCents(form.amount);
     if (cents === null) return;
     const qty = form.quantity.trim() === '' ? undefined : Number.parseInt(form.quantity, 10);
     startTransition(async () => {
       try {
-        // A replacement photo is uploaded as a NEW object rather than
-        // overwriting the old one: the old path may still be named by an audit
+        // A new file was uploaded as a NEW object when picked rather than
+        // overwriting an old one: the old path may still be named by an audit
         // row, and overwriting would rewrite history that another row points at.
-        // Same rule as the Add dialog: a failed upload stops the save.
-        let nextReceiptPath = receiptPath;
-        if (receiptFile) {
-          const uploaded = await uploadReceipt(receiptFile, (message) => toast(message, 'error'));
-          if (!uploaded) return;
-          nextReceiptPath = uploaded;
-        }
-
         await updateExpense({
           id: expense.id,
           category: form.category as ExpenseCategory,
@@ -754,10 +617,10 @@ export function EditExpense({
           paid_at: dateToIso(form.day),
           method: resolvePaymentMethod(payment.method, payment.customMethod),
           reference: payment.reference.trim() || undefined,
-          // ALWAYS RESENT, never omitted. The patch is a full replacement, so an
-          // omission here would NULL the receipt on every save of an unrelated
-          // field: silently, on a row somebody may be owed money against.
-          receipt_path: nextReceiptPath ?? undefined,
+          // ALWAYS RESENT, never omitted. The save replaces them wholesale, so
+          // an omission here would drop the receipt on every save of an
+          // unrelated field: silently, on a row somebody may be owed money against.
+          ...detailsPayload(details),
         });
         toast(`${expense.ref} updated`, 'success');
         setOpen(false);
@@ -783,21 +646,16 @@ export function EditExpense({
         setPayment={setPayment}
         quantityLabel="Quantity (optional — e.g. tubes)"
         payerOptions={payerOptions}
-        receipt={{
-          file: receiptFile,
-          setFile: setReceiptFile,
-          storedPath: receiptPath,
-          onClear: () => {
-            setReceiptFile(null);
-            setReceiptPath(null);
-          },
+        details={{
+          value: details,
+          setValue: setDetails,
           // Frozen once settled, like the amount and the payer, and explained by
           // the settledNote below rather than left as mysterious greying.
           disabled: settled,
         }}
         settledNote={
           settled
-            ? 'The club has already reimbursed this expense, so the amount, the payer and the receipt are what was settled and cannot be changed. If the reimbursement itself was wrong, delete this entry and re-record it.'
+            ? 'The club has already reimbursed this expense, so the amount, the payer, the receipts and items are what was settled and cannot be changed. If the reimbursement itself was wrong, delete this entry and re-record it.'
             : undefined
         }
         onSubmit={handleSave}

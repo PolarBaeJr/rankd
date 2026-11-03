@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { browserReachableSignedUrl } from '@/lib/signed-url';
+import { withBase } from '@/lib/base-path';
 
 /**
  * Open the receipt attached to an expense (00231).
@@ -46,6 +47,12 @@ import { browserReachableSignedUrl } from '@/lib/signed-url';
 
 const RECEIPT_URL_TTL_SECONDS = 60;
 
+// SINCE 00313 an expense keeps every file of its receipt in
+// club_expense_receipts and the ledger opens each through
+// ../../expense-receipt/[attachmentId]. This route stays so a link to it still
+// works: it sends the browser to the expense's first file, and falls back to
+// signing receipt_path itself for a row that has none there.
+
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   await requireCapability('fees.expenses.read');
 
@@ -71,6 +78,22 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   // the two it was would serve no purpose beyond confirming that some id exists.
   if (!row?.receipt_path) {
     return new NextResponse('Not found', { status: 404 });
+  }
+
+  const { data: first } = await adminClient
+    .from('club_expense_receipts')
+    .select('id')
+    .eq('ledger_id', row.id)
+    .order('position')
+    .limit(1)
+    .maybeSingle();
+  if (first) {
+    // A relative Location, so the redirect stays on whatever host the browser
+    // used rather than the one this process sees behind the proxy.
+    return new NextResponse(null, {
+      status: 302,
+      headers: { Location: withBase(`/fees/expense-receipt/${first.id}`), 'Cache-Control': 'private, no-store' },
+    });
   }
 
   const { data, error } = await adminClient.storage

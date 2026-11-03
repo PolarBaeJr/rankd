@@ -23,6 +23,7 @@
     "heic-decode": "2.1.0",
     "lucide-react": "^1.7.0",
     "next": "15.5.28",
+    "pdfjs-dist": "6.4.299",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

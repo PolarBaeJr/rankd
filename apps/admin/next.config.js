@@ -57,6 +57,9 @@ const nextConfig = {
   outputFileTracingIncludes: {
     '/api/cron/registration-form-poll': [...TESSERACT_FILES, ...HEIC_FILES],
     '/fees/proof/*': HEIC_FILES,
+    // An expense's receipt files (00313): the view and pending routes both
+    // answer a HEIC converted.
+    '/fees/expense-receipt/*': HEIC_FILES,
     '/tournaments/*/fees/proof/*': HEIC_FILES,
   },
   serverExternalPackages: ['tesseract.js', 'tesseract.js-core', 'heic-decode', 'libheif-js'],

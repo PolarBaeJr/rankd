@@ -61,6 +61,7 @@ describe('parseReceiptText', () => {
       reference: 'CA1Q7r2Kp9Xb',
       amountCents: 1500,
       programName: null,
+      campus: null,
       payerName: null,
       payeeName: 'Riverside Smash Club',
       payeeEmail: null,
@@ -82,6 +83,16 @@ describe('parseReceiptText', () => {
     expect(read.reference).toBe('O-600857');
     expect(read.amountCents).toBe(2500);
     expect(read.programName).toBe('Badminton Club');
+    expect(read.campus).toBe('main');
+  });
+
+  it('reads the program and campus from the receipt\'s table, headings over values', () => {
+    const table = REC_DESKTOP.replace(
+      'Program Name: Badminton Club\nOffering/Instance: Main Campus Fall 2026 - Casual',
+      'Program Name Offering/Instance\nBadminton Club Main Campus Fall 2026 - Casual',
+    );
+    expect(parseReceiptText(table)).toMatchObject({ programName: 'Badminton Club', campus: 'main' });
+    expect(parseReceiptText(table.replace('Main Campus', 'Surrey'))).toMatchObject({ campus: 'other' });
   });
 
   it('classifies the phone SFU Rec receipt and reads the name beside the ID', () => {
@@ -131,9 +142,24 @@ describe('decideAutoConfirm', () => {
     });
   });
 
-  it('confirms a clean SFU Rec receipt, desktop and phone', () => {
+  it('confirms a clean SFU Rec receipt that shows the club at Main Campus', () => {
     expect(decideAutoConfirm(parseReceiptText(REC_DESKTOP), DUES)).toMatchObject({ confirm: true, reference: 'O-600857' });
-    expect(decideAutoConfirm(parseReceiptText(REC_PHONE), DUES)).toMatchObject({ confirm: true, reference: 'O-601558' });
+  });
+
+  it('holds an SFU Rec receipt for another campus, or one that does not show the club and campus', () => {
+    // Surrey sells a Badminton Club membership on the same site.
+    expect(decideAutoConfirm(parseReceiptText(REC_DESKTOP.replace('Main Campus', 'Surrey')), DUES)).toMatchObject({
+      confirm: false,
+      flag: 'program_mismatch',
+      detail: "The receipt is for another campus's club",
+    });
+    expect(decideAutoConfirm(parseReceiptText(REC_DESKTOP.replace('Main Campus Fall', 'Fall')), DUES)).toMatchObject({
+      confirm: false,
+      flag: 'program_mismatch',
+      detail: 'The receipt does not show the Main Campus',
+    });
+    // The phone receipt's items are below the fold: an order number alone is not enough.
+    expect(decideAutoConfirm(parseReceiptText(REC_PHONE), DUES)).toMatchObject({ confirm: false, flag: 'amount_unreadable' });
   });
 
   it('reads an amount printed with no dollar sign', () => {
@@ -257,6 +283,9 @@ describe('decideAutoConfirm', () => {
     ['name_mismatch', REC_PHONE, { ...DUES, payerName: 'Ben Park' }, ''],
     ['amount_mismatch', REC_DESKTOP, { ...DUES, amountCents: 2000 }, 'Receipt shows $25.00, the fee is $20.00'],
     ['program_mismatch', REC_DESKTOP.replace('Badminton Club', 'Climbing Club'), DUES, ''],
+    // Another campus's fee, even with the program and campus misread as ours.
+    ['amount_mismatch', REC_DESKTOP.replace(/\$25\.00/g, '$40.00'), DUES, 'Receipt shows $40.00, the fee is $25.00'],
+    ['amount_unreadable', REC_DESKTOP.replace('Total Before Tax: $25.00', ''), DUES, ''],
     ['amount_unreadable', ETRANSFER.replace('$15.00', 'fifteen'), etransfer, ''],
     ['amount_mismatch', ETRANSFER, { ...etransfer, amountCents: 2500 }, 'Receipt shows $15.00, the fee is $25.00'],
     ['payee_mismatch', ETRANSFER.replace('Riverside Smash Club', 'Someone Else'), etransfer, ''],

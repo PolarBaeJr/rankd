@@ -1067,6 +1067,28 @@ describe('otherIncomeSchema / clubExpenseSchema', () => {
     expect('receipt_path' in parsed).toBe(false);
   });
 
+  // Several files, items and tax lines (00313), each bounded like its table.
+  it('bounds the receipt files, items and tax lines of an expense', () => {
+    const file = { path: `${UUID_B}/${UUID_A}.heic`, content_type: 'image/heic' };
+    const item = { description: 'Shuttle tube', line_total_cents: 2997, tax_code: 'J', is_club: true };
+    const tax = { label: 'GST', rate_ppm: 50000, printed_cents: 150, codes: ['J'] };
+    const ok = (over: object) => clubExpenseSchema.safeParse({ ...expense, ...over }).success;
+
+    expect(ok({ receipts: [file, { ...file, content_type: 'application/pdf' }], items: [item], tax_lines: [tax] })).toBe(true);
+    expect(ok({ receipts: Array.from({ length: 21 }, () => file) })).toBe(false);
+    expect(ok({ receipts: [{ ...file, content_type: 'image/gif' }] })).toBe(false);
+    expect(ok({ items: [{ ...item, description: '' }] })).toBe(false);
+    expect(ok({ items: [{ ...item, description: 'x'.repeat(121) }] })).toBe(false);
+    expect(ok({ items: [{ ...item, discount_cents: 100 }] })).toBe(false);
+    expect(ok({ items: [{ ...item, tax_code: 'gst' }] })).toBe(false);
+    expect(ok({ items: [{ ...item, line_total_cents: -500 }] })).toBe(true);
+    expect(ok({ tax_lines: [{ ...tax, rate_ppm: 500001 }] })).toBe(false);
+    expect(ok({ tax_lines: Array.from({ length: 11 }, () => tax) })).toBe(false);
+    expect(ok({ tax_lines: [{ ...tax, label: 'x'.repeat(25) }] })).toBe(false);
+    expect(ok({ vendor: 'x'.repeat(81) })).toBe(false);
+    expect(ok({ receipt_total_cents: -1 })).toBe(false);
+  });
+
   // The date the money moved, which is not the date the entry was typed: an
   // exec writing up September's receipts in October has to be able to say
   // September. It never changes which season the row counts toward.

@@ -51,6 +51,12 @@ export interface ReceiptReadout {
   amountCents: number | null;
   /** SFU Rec desktop only: "Program Name: ...". */
   programName: string | null;
+  /**
+   * SFU Rec only: the campus in "Offering/Instance". Every campus's clubs sell
+   * their dues on the same site, and Surrey has a Badminton Club too, so the
+   * program's name alone does not say the dues are ours.
+   */
+  campus: 'main' | 'other' | null;
   /** SFU Rec phone only: the name beside "ID #". */
   payerName: string | null;
   /** E-transfer: who it was sent to, and their address when shown. */
@@ -172,6 +178,7 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
     reference: null,
     amountCents: null,
     programName: null,
+    campus: null,
     payerName: null,
     payeeName: null,
     payeeEmail: null,
@@ -186,7 +193,17 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
   const collapsed = lines.join(' ');
   const kind = receiptKind(tidy, collapsed);
   if (kind === 'sfu_rec') {
-    const program = lines.map((l) => /^program name\s*:?\s*(.*)$/i.exec(l)).find(Boolean);
+    const programAt = lines.findIndex((l) => /^program name\b/i.test(l));
+    let programName = programAt >= 0 ? lines[programAt]!.replace(/^program name\s*:?\s*/i, '').trim() : '';
+    // The receipt's table reads as a row of headings over a row of values:
+    // "Program Name Offering/Instance", then "Badminton Club Main Campus ...".
+    if (/^offering/i.test(programName)) programName = /^(.*?\bclub)\b/i.exec(lines[programAt + 1] ?? '')?.[1] ?? '';
+    // Another campus anywhere on the receipt wins over Main Campus.
+    const campus = /\b(surrey|vancouver|harbour centre)\b/i.test(collapsed)
+      ? 'other'
+      : /\b(main campus|burnaby)\b/i.test(collapsed)
+        ? 'main'
+        : null;
     const payer = lines
       .map((l) => /^(.*?)\s+(?:[|Il1]\s+)?ID\s*#\s*:?\s*\d{6,}/.exec(l))
       .find((m) => m && /[A-Za-z]{2,}/.test(m[1]!));
@@ -195,7 +212,8 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
       kind,
       reference: extractSfuRecOrder(tidy),
       amountCents: amountAfter(collapsed, new RegExp(String.raw`total before tax\s*:?\s*\$?\s*${MONEY}`, 'i')),
-      programName: program?.[1]?.trim() || null,
+      programName: programName || null,
+      campus,
       payerName: payer ? payer[1]!.trim() : null,
     };
   }
@@ -321,12 +339,20 @@ export function decideAutoConfirm(read: ReceiptReadout, ctx: AutoConfirmContext)
     if (read.payerName && ctx.payerName && !namesMatch(read.payerName, ctx.payerName)) {
       return hold('name_mismatch', "The name on the receipt is not the member's");
     }
-    if (read.amountCents != null && read.amountCents !== ctx.amountCents) {
+    // Each campus's club charges its own fee, so the price is a second check
+    // on whose dues these are: it must be shown, and be ours.
+    if (read.amountCents == null) return hold('amount_unreadable');
+    if (read.amountCents !== ctx.amountCents) {
       return hold('amount_mismatch', `Receipt shows ${dollars(read.amountCents)}, the fee is ${dollars(ctx.amountCents)}`);
     }
     if (read.programName && !/badminton club/i.test(read.programName)) {
       return hold('program_mismatch', 'The program on the receipt is not the Badminton Club');
     }
+    // An order number alone says nothing about which club or campus it paid,
+    // so a receipt that does not show both goes to an exec.
+    if (!read.programName) return hold('program_mismatch', 'The receipt does not show which club it pays for');
+    if (read.campus === 'other') return hold('program_mismatch', "The receipt is for another campus's club");
+    if (read.campus !== 'main') return hold('program_mismatch', 'The receipt does not show the Main Campus');
     return { confirm: true, method: 'sfu_rec', reference: read.reference, amountCents: read.amountCents };
   }
 
