@@ -345,7 +345,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
               }`}
             >
               {tab.icon}
-              <span className="hidden sm:inline">{tab.label}</span>
+              <span className={activeTab === tab.id ? 'inline' : 'hidden sm:inline'}>{tab.label}</span>
             </button>
           ))}
         </div>

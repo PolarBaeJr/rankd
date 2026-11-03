@@ -1094,8 +1094,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   return (
     <div className="space-y-4">
       {/* Actions bar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm text-[var(--text-muted)]">
             {activeEntries.length} {isDoubles ? 'pairs' : 'players'}
             {/* Counted separately and never folded into the bracket figure —
@@ -1129,7 +1129,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         {/* Three buttons, three separate capabilities — a seeding desk without
             the roster is a real shape the club can hand out, so these are not
             one flag. */}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {controls.clearSeeds && (
             <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={async () => {
               setLoading(true);
