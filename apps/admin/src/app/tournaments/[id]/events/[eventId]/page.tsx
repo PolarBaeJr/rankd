@@ -18,6 +18,7 @@ import { ArrowLeft, Printer } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { LiveTournament } from '../../../live-tournament';
+import { RefreshOnReturn } from '../../../../my-courts/refresh-on-return';
 import { readTournamentBonusSettingsForDisplay } from '@/lib/platform-settings';
 import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes } from '@/lib/private-notes';
 import { hasResultsTab } from '@/lib/event-tabs';
@@ -493,6 +494,9 @@ export default async function EventPage({
         eventIds={[eventId]}
         draw
       />
+      {/* Realtime's fallback on the desk too: a dropped channel or a phone
+          that slept still catches up within seconds. */}
+      <RefreshOnReturn />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
           href={`/tournaments/${tournamentId}`}
