@@ -96,6 +96,17 @@ export async function callMatchOnCourt(
   return 'called';
 }
 
+const MATCH_COLUMNS = 'id, status, is_bye, phase, stage, pool_number, group_number, slot, match_label, round_number, round_name, match_number, bracket_position, court, court_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id';
+
+/** The event's matches, with when each was skipped (00314) once that column exists. */
+async function readCallableMatches(client: AdminClient, eventId: string) {
+  const read = (columns: string) => client.from('tournament_matches').select(columns).eq('event_id', eventId);
+  const withSkips = await read(`${MATCH_COLUMNS}, deferred_at`);
+  // Before 00314 there is no deferred_at, and the queue is the draw's order alone.
+  if (withSkips.error?.code === '42703') return read(MATCH_COLUMNS);
+  return withSkips;
+}
+
 /**
  * Every free court of the tournament given its next match from this event.
  * null when the event is not a staged one being played. A court that fails is
@@ -114,14 +125,11 @@ export async function fillFreeCourts(
   }
   const busy = busyCourtIds(courts, (await readLiveCourtUse(client, event.tournament_id)) ?? []);
 
-  const { data: matches, error } = await client
-    .from('tournament_matches')
-    .select('id, status, is_bye, phase, stage, pool_number, group_number, slot, match_label, round_number, round_name, match_number, bracket_position, court, court_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
-    .eq('event_id', event.id);
+  const { data: matches, error } = await readCallableMatches(client, event.id);
   if (error) throw new Error(`Could not read the event's matches: ${error.message}`);
 
   const rows = deskRows(
-    (matches ?? []) as DeskMatch[],
+    (matches ?? []) as unknown as DeskMatch[],
     (id) => ({ entryId: id }),
     isDoublesEvent(event.event_type as TournamentEventType),
   );

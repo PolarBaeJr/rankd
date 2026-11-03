@@ -112,6 +112,8 @@ describe('the console nav', () => {
       '/tournaments',
       // Both read by level since 2026-10-23 ("read to everything").
       '/events',
+      // A court helper's page, open to every console user (00310).
+      '/my-courts',
       '/sessions',
       '/announcements',
       '/seasons',
@@ -127,8 +129,8 @@ describe('the console nav', () => {
     ]);
   });
 
-  it('shows an unrestricted trainer only the roster and their own settings', () => {
+  it('shows an unrestricted trainer only the roster, their courts and their own settings', () => {
     const visible = ITEMS.filter((i) => canAccess('trainer', UNRESTRICTED, i.href)).map((i) => i.href);
-    expect(visible).toEqual(['/dashboard', '/players', '/settings']);
+    expect(visible).toEqual(['/dashboard', '/my-courts', '/players', '/settings']);
   });
 });

@@ -3480,6 +3480,7 @@ export type Database = {
           court: string | null
           court_id: string | null
           created_at: string | null
+          deferred_at: string | null
           draw_generation_id: string | null
           elo_snapshot: Json | null
           event_id: string
@@ -3528,6 +3529,7 @@ export type Database = {
           court?: string | null
           court_id?: string | null
           created_at?: string | null
+          deferred_at?: string | null
           draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id: string
@@ -3576,6 +3578,7 @@ export type Database = {
           court?: string | null
           court_id?: string | null
           created_at?: string | null
+          deferred_at?: string | null
           draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id?: string

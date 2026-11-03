@@ -421,6 +421,16 @@ describe('the next match for a court', () => {
     expect(nextMatchForCourt(rows, court(1), courts, groups, { busyEntries: liveEntrants(rows, 'live') })?.match.id).toBe('next');
   });
 
+  it('puts a match skipped for now behind the rest, the longest-skipped first', () => {
+    const rows = rowsOf([
+      group('first', 1, 1, 1, 'a', 'b', { deferred_at: '2026-11-03T19:40:00Z' }),
+      group('second', 1, 1, 2, 'c', 'd', { deferred_at: '2026-11-03T19:35:00Z' }),
+      group('third', 1, 1, 3, 'e', 'f'),
+    ]);
+    expect(nextMatchForCourt(rows, court(1), courts, groups)?.match.id).toBe('third');
+    expect(nextMatchForCourt(rows.slice(0, 2), court(1), courts, groups)?.match.id).toBe('second');
+  });
+
   it('keeps a pool with two courts to the court each match was drawn on', () => {
     const rows = rowsOf([group('on1', 1, 1, 1, 'a', 'b'), group('on1b', 1, 1, 2, 'c', 'd')]);
     expect(nextMatchForCourt(rows, court(2), courts, twoCourtPool)).toBeNull();

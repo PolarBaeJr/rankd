@@ -49,6 +49,8 @@ export interface DeskMatch {
   participant_b_id: string | null;
   pair_a_id: string | null;
   pair_b_id: string | null;
+  /** When a court last skipped it for now (00314); absent before that migration. */
+  deferred_at?: string | null;
 }
 
 export interface DeskRow<M extends DeskMatch, S extends { entryId: string | null }> {
@@ -445,6 +447,7 @@ export function liveEntrants(rows: readonly CourtRow[], exceptMatchId?: string |
 /**
  * THE MATCH A FREE COURT TAKES NEXT, in the desk's order: the first callable
  * row whose stage allows the court and whose entrants are not already on court.
+ * Matches skipped for now come after the rest.
  *
  * A groups stage with courts keeps to the court each row was drawn on, so a
  * pool's second court never takes its first court's queue. Anywhere else a row
@@ -459,7 +462,13 @@ export function nextMatchForCourt<R extends CourtRow>(
 ): R | null {
   if (!court.active) return null;
   const busyEntries = opts.busyEntries ?? liveEntrants(rows);
-  for (const r of rows) {
+  // A match skipped for now (00314) waits behind every match never skipped,
+  // and the longest-skipped of them goes first.
+  const queue = [
+    ...rows.filter((r) => !r.match.deferred_at),
+    ...rows.filter((r) => r.match.deferred_at).sort((x, y) => x.match.deferred_at!.localeCompare(y.match.deferred_at!)),
+  ];
+  for (const r of queue) {
     if (r.state !== 'callable' || opts.exclude?.has(r.match.id)) continue;
     if ((r.a.entryId && busyEntries.has(r.a.entryId)) || (r.b.entryId && busyEntries.has(r.b.entryId))) continue;
     const allowed = allowedTournamentCourts(courts, stageCourtLabels(cfg, r.match));
@@ -534,7 +543,7 @@ export function inlineScoreVerdict(
   return verdict.ok ? { winner: verdict.winner, error: null, scores } : { winner: null, error: verdict.error, scores };
 }
 
-export type AutoCallTrigger = 'result' | 'start' | 'draw';
+export type AutoCallTrigger = 'result' | 'start' | 'draw' | 'skip';
 
 /**
  * What putting the next matches on court did after a result, a Start or a
