@@ -161,7 +161,12 @@ export function ClubEventSignupsTable({
       )}
       <ul className="divide-y divide-[var(--line)]">
         {sortEntries(rows, order, { id: (r) => r.key, signedUpAt: (r) => r.created_at, name: (r) => r.name }).map((row) => (
-          <li key={row.key} className="flex items-center justify-between gap-3 px-5 py-3">
+          // Three columns on a wide screen: who and what they paid, then the
+          // partner check, then the buttons. A phone stacks them.
+          <li
+            key={row.key}
+            className="grid gap-x-6 gap-y-2 px-5 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center"
+          >
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm text-[var(--ink)]">{row.name}</span>
@@ -173,10 +178,6 @@ export function ClubEventSignupsTable({
               {row.kind === 'guest' && row.email && (
                 <div className="truncate text-xs text-[var(--ink-2)]">{row.email}</div>
               )}
-              <PartnerCheckLine
-                advice={partners[row.key]}
-                onResolve={canPair && row.kind === 'member' ? () => setResolvingFor(row) : undefined}
-              />
               {row.kind === 'member' &&
                 row.answers &&
                 Object.entries(row.answers).map(([question, answer]) => (
@@ -197,7 +198,13 @@ export function ClubEventSignupsTable({
                 )}
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="min-w-0 max-md:empty:hidden">
+              <PartnerCheckLine
+                advice={partners[row.key]}
+                onResolve={canPair && row.kind === 'member' ? () => setResolvingFor(row) : undefined}
+              />
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
               {canPair && partners[row.key]?.mutualPair && (
                 <Button
                   variant="secondary"
