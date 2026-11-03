@@ -115,6 +115,8 @@ export interface ExpenseDetailsState {
   items: ItemState[];
   taxLines: TaxLineState[];
   flags: PurchaseFlag[];
+  /** What the last read put in vendor and receiptTotal, so a re-read can replace it. */
+  lastRead?: { vendor: string; receiptTotal: string };
   /** An upload or a read is running: saving waits for it. */
   busy: boolean;
 }
@@ -219,12 +221,33 @@ export function detailsFromStored(stored: StoredExpenseDetails): ExpenseDetailsS
   };
 }
 
-/** Fill only what is still empty, so a read never overwrites what was typed. */
+/**
+ * A field a read may fill: one still empty, or still holding what the last read
+ * put there. So reading again (a better page, a second PDF) corrects an earlier
+ * misread, and never overwrites what the exec typed.
+ */
+export function readFill(current: string, lastRead: string | undefined, read: string): string {
+  if (!read) return current;
+  return current === '' || current === lastRead ? read : current;
+}
+
+/**
+ * Fill what is empty or still the last read's, so a read never overwrites what
+ * was typed. Items and tax lines fill only when there are none: the exec's
+ * ticks and codes on them are kept.
+ */
 function applyReadout(state: ExpenseDetailsState, readout: PurchaseReadout): ExpenseDetailsState {
+  const vendor = readFill(state.vendor, state.lastRead?.vendor, (readout.store ?? '').slice(0, 80));
+  const receiptTotal = readFill(
+    state.receiptTotal,
+    state.lastRead?.receiptTotal,
+    readout.totalCents == null ? '' : centsText(readout.totalCents),
+  );
   return {
     ...state,
-    vendor: state.vendor || (readout.store ?? '').slice(0, 80),
-    receiptTotal: state.receiptTotal || (readout.totalCents == null ? '' : centsText(readout.totalCents)),
+    vendor,
+    receiptTotal,
+    lastRead: { vendor, receiptTotal },
     items:
       state.items.length > 0
         ? state.items
