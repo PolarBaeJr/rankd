@@ -529,7 +529,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             grew to the height of a neighbour's button AND its caption — which is
             why Lock Draw stood taller than Finalize Tournament with a gap of
             dead border underneath it. */}
-        <div className="flex items-start gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           {settingsEditable && (
             <Button
               variant="ghost"
@@ -678,8 +678,9 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         })}
       </div>
       <div className="flex justify-between text-[10px] text-[var(--text-muted)] uppercase tracking-wider px-1">
+        {/* A phone has room for the current stage's name only. */}
         {STATUS_STEPS.map((step) => (
-          <span key={step} className={step === status ? 'text-[var(--text-primary)] font-semibold' : ''}>
+          <span key={step} className={step === status ? 'text-[var(--text-primary)] font-semibold' : 'hidden sm:inline'}>
             {statusLabel(step)}
           </span>
         ))}

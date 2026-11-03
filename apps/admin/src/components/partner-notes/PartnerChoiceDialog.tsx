@@ -66,7 +66,7 @@ export function PartnerChoiceDialog({
       const [kind, id] = personKey.split(':') as ['member' | 'guest', string];
       const result = await setClubEventPartnerChoice(clubEventId, { kind, id }, choiceOf(value));
       if (!result.ok) return setError(result.error);
-      toast(`${name}'s partner is saved.`, 'success');
+      toast(result.data?.paired ? `${name} is paired in the tournament.` : `${name}'s partner is saved.`, 'success');
       onClose();
       router.refresh();
     } finally {
