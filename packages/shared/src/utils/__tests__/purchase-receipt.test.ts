@@ -151,6 +151,20 @@ describe('parsePurchaseReceipt', () => {
     expect(r.flags).toEqual([]);
   });
 
+  it('reads a tax amount OCR split after the point', () => {
+    const r = read([
+      'TEST WAREHOUSE',
+      '10/30/2026 14:31',
+      'SHUTTLECOCKS 45.99 G',
+      'WATER 5.49',
+      'SUBTOTAL 51.48',
+      'GST 5% 3. 30',
+      'TOTAL 54.78',
+    ]);
+    expect(r.taxLines).toEqual([{ label: 'GST', ratePpm: 50000, printedCents: 330, codes: ['G'] }]);
+    expect(r.flags).not.toContain('subtotal_tax_total_mismatch');
+  });
+
   it('flags two totals that disagree, and still answers the last', () => {
     const r = read(['SOME CAFE', 'Latte 50.00', 'TOTAL 50.00', 'TOTAL 55.00']);
     expect(r.totalCents).toBe(5500);

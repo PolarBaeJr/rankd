@@ -67,8 +67,9 @@ export interface PurchaseReadout {
 }
 
 // An amount: "4.99", "$1,234.50", "-3.00", "3.00-". Not a digit or a point on
-// either side, so "5.000 %" is a rate and not $5.00.
-const MONEY_SOURCE = String.raw`(?<![\d.,])(-)?\$?\s?(\d{1,3}(?:,\d{3})+|\d+)\.(\d{2})(?![\d])(-)?`;
+// either side, so "5.000 %" is a rate and not $5.00. OCR of thermal print can
+// put a space after the point ("3. 30"), so one space there is still cents.
+const MONEY_SOURCE = String.raw`(?<![\d.,])(-)?\$?\s?(\d{1,3}(?:,\d{3})+|\d+)\. ?(\d{2})(?![\d])(-)?`;
 const MONEY_ONLY = new RegExp(`^${MONEY_SOURCE}$`);
 
 interface Money {

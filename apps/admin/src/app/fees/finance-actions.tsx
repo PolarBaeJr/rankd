@@ -32,6 +32,7 @@ import {
 import {
   ExpenseDetailsFields,
   EMPTY_DETAILS,
+  readFill,
   detailsFromStored,
   detailsInvalid,
   detailsPayload,
@@ -227,18 +228,23 @@ function EntryDialog({
   // With items, the amount is the club's share of them and is not typed.
   const share = details ? detailsShare(details.value) : null;
 
+  // What the last read filled in, so a re-read replaces it unless it was edited.
+  const lastReadRef = useRef<{ description: string; day: string; amount: string } | null>(null);
+
   function fillFromReadout(readout: PurchaseReadout) {
     const now = formRef.current;
-    setForm({
-      ...now,
-      description: now.description || (readout.store ?? '').slice(0, 120),
-      day: now.day || (readout.date ?? ''),
+    const last = lastReadRef.current;
+    const filled = {
+      description: readFill(now.description, last?.description, (readout.store ?? '').slice(0, 120)),
+      day: readFill(now.day, last?.day, readout.date ?? ''),
       // Only when no items were read: with items the amount is their share.
       amount:
-        now.amount || readout.items.length > 0 || readout.totalCents === null
+        readout.items.length > 0 || readout.totalCents === null
           ? now.amount
-          : (readout.totalCents / 100).toFixed(2),
-    });
+          : readFill(now.amount, last?.amount, (readout.totalCents / 100).toFixed(2)),
+    };
+    lastReadRef.current = filled;
+    setForm({ ...now, ...filled });
   }
 
   const cents = share ? share.clubShareCents : toCents(form.amount);
