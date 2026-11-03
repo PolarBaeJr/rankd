@@ -935,6 +935,12 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   seasons: 'The club\'s seasons. A club-wide object.',
   tournament_fee_tiers: 'Tournament price tiers. A club-wide object.',
   tournament_courts: 'The courts of a tournament (00273). A venue object, with no player reference.',
+  club_expense_receipts:
+    'The receipt files of a club expense, in order (00313). Each hangs off a club_ledger expense row and is the club\'s record of what was bought; it holds no player column. The storage paths are covered under Stored files.',
+  club_expense_items:
+    'The item lines of a club expense\'s receipt (00313), each ticked as the club\'s or personal. It hangs off a club_ledger expense row and holds no player column; an item ticked personal is stored as "Personal item", with no description of what was bought.',
+  club_expense_tax_lines:
+    'The tax lines printed on a club expense\'s receipt (00313). It hangs off a club_ledger expense row and holds no player column.',
   registration_import_receipts:
     'The download state of a file a Google Form response uploaded (00288): a Drive file id, a storage path, a status and a retry count. It holds no player column; it is keyed to the response, which is one join from a member\'s own registration_imports row. A receipt it files reaches that member\'s export as their fee_submissions row, with screenshot_held; one that never filed (too large, the wrong type, no fee to match) is not in the export.',
   managed_registration_forms:
@@ -1025,7 +1031,7 @@ export const DECLARED_GAPS: readonly { gap: string; detail: string }[] = [
   {
     gap: 'Stored files',
     detail:
-      'The export carries the PATHS of your profile photo (players.avatar_url), your officer photo (players.exec_photo_url), any screenshot attached to feedback you filed (feedback_reports.image_path, 00174) and any receipt attached to an expense you paid (club_ledger.receipt_path, 00231), and whether the club holds the screenshot you sent with an e-transfer receipt (fee_submissions.screenshot_path, 00248, shown as screenshot_held). A photograph of you is personal information. The binaries themselves are not embedded in this file, because that would turn kilobytes of JSON into megabytes of base64; they are available on request.',
+      'The export carries the PATHS of your profile photo (players.avatar_url), your officer photo (players.exec_photo_url), any screenshot attached to feedback you filed (feedback_reports.image_path, 00174) and the first file of any receipt attached to an expense you paid (club_ledger.receipt_path, 00231), and whether the club holds the screenshot you sent with an e-transfer receipt (fee_submissions.screenshot_path, 00248, shown as screenshot_held). A photograph of you is personal information. The binaries themselves are not embedded in this file, because that would turn kilobytes of JSON into megabytes of base64; they are available on request, as are the further files of a receipt with several pages (club_expense_receipts.path, 00313).',
   },
   {
     gap: 'History under a merged-away account id',

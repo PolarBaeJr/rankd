@@ -283,7 +283,9 @@ member is personal information, so they are available on request.
 
 - `players.avatar_url` and `players.exec_photo_url`
 - `feedback_reports.image_path` (00174)
-- `club_ledger.receipt_path` (00231)
+- `club_ledger.receipt_path` (00231), the first file of a receipt
+- `club_expense_receipts.path` (00313), every file of a receipt with several
+  pages, keyed by `ledger_id` to the member's own expense rows (`paid_by`)
 
 Fetch each path out of the storage bucket by hand and attach the files to the
 response.

@@ -66,14 +66,20 @@ const INLINE_TYPES: Record<string, string> = {
  * safe: a preview shows instead of downloading. A HEIC or HEIF is converted to
  * a JPEG (heic.ts), because no desktop browser but Safari renders HEIC.
  */
-export async function inlineProof(admin: AdminClient, path: string): Promise<Response> {
+export async function inlineProof(
+  admin: AdminClient,
+  path: string,
+  // An expense's receipt photo (00313) is answered the same way, from its own
+  // private bucket, behind the expense route's own gate.
+  bucket: 'fee-proofs' | 'expense-receipts' = 'fee-proofs',
+): Promise<Response> {
   const contentType = INLINE_TYPES[path.split('.').pop()?.toLowerCase() ?? ''];
   if (!contentType) return new Response('Not found', { status: 404 });
-  const { data, error } = await admin.storage.from('fee-proofs').download(path);
+  const { data, error } = await admin.storage.from(bucket).download(path);
   if (error || !data) {
     // Same reading as the proof routes: an object that is gone is not on file.
     if (error && /not found/i.test(error.message)) return new Response('Not found', { status: 404 });
-    console.error('[fees] could not read a payment screenshot:', error?.message);
+    console.error(`[fees] could not read a file from ${bucket}:`, error?.message);
     return new Response('Could not open that screenshot', { status: 502 });
   }
   let body: BodyInit = data;

@@ -3,6 +3,7 @@
   "skip": [
     "package-lock.json",
     "apps/*/public/tesseract/**",
+    "apps/*/public/pdfjs/**",
     "apps/*/src/fonts/**"
   ],
   "rules": [
