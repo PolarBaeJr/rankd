@@ -10,7 +10,9 @@ import { join } from 'node:path';
  */
 
 const MIGRATIONS_DIR = join(__dirname, '../../../../supabase/migrations');
-const migrationFiles = () => readdirSync(MIGRATIONS_DIR).filter((f) => /^\d+_.*\.sql$/.test(f)).sort();
+// Up to 00315 only: 00318 restates all three behind the check_in_after_draw
+// kill switch, and release-flag-migration.test.ts holds that version.
+const migrationFiles = () => readdirSync(MIGRATIONS_DIR).filter((f) => /^\d+_.*\.sql$/.test(f) && f < '00316').sort();
 
 /** The latest CREATE of a function across the directory, body bounded by its own dollar tag. */
 function latestBody(name: string): { file: string; body: string } | null {

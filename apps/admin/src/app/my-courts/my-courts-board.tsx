@@ -23,6 +23,10 @@ interface Props {
   courtIds: string[];
   busyCourtIds: string[];
   events: BoardEvent[];
+  /** Kill switch desk_helper_void; off, the card has no Void. */
+  courtVoid?: boolean;
+  /** Kill switch auto_call_skips_absent; off, Next up skips nobody, like auto-call. */
+  skipAbsent?: boolean;
 }
 
 const save: CourtScoreSave = (matchId, scores) => enterCourtHelperResult(matchId, scores);
@@ -32,7 +36,7 @@ const voidMatch: CourtVoid = (matchId, reason) => voidCourtHelperMatch(matchId, 
  * One tournament's courts for a helper. Each court shows the event whose match
  * is on it, else the event with a match waiting for it, else a free court.
  */
-export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props) {
+export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoid = true, skipAbsent = true }: Props) {
   const boards = useMemo(
     () =>
       events.flatMap((e) => {
@@ -41,7 +45,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props)
         const entries: Array<ParticipantWithPlayer | PairWithPlayers> = e.isDoubles ? e.pairs : e.participants;
         const nameMap: Record<string, string> = {};
         for (const entry of entries) nameMap[entry.id] = getName(entry, e.isDoubles);
-        const absent = absentEntryIds(entries);
+        const absent = absentEntryIds(entries, skipAbsent);
         const sideOf = (entryId: string | null) =>
           entryId && nameMap[entryId] !== undefined
             ? { entryId, label: nameMap[entryId]!, absent: absent.has(entryId) }
@@ -49,7 +53,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props)
         const rows: CourtDeskRow[] = deskRows(e.matches, sideOf, e.isDoubles);
         return [{ eventId: e.event.id, cfg, rows }];
       }),
-    [events],
+    [events, skipAbsent],
   );
   const courtsInUse = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
   const mine = courts.filter((c) => c.active && courtIds.includes(c.id));
@@ -96,7 +100,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props)
             canManageCourts={false}
             busyElsewhere={courtsInUse.has(court.id) && !onCourt(board)}
             save={save}
-            voidMatch={voidMatch}
+            voidMatch={courtVoid ? voidMatch : undefined}
           />
         );
       })}

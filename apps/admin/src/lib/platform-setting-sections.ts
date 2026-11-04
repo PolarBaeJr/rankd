@@ -13,7 +13,8 @@
 // middleware bundle.
 // 'club' is drawn on /accounts too, as its own "Club links" card: they are
 // links the club publishes, not rules about what an account may do.
-export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club' | 'pages';
+// 'release' is the Kill switches card on /accounts.
+export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club' | 'pages' | 'release';
 
 // Declaration order is also RENDER order within each page, so the reading order
 // is decided here too rather than by the database's alphabetical `order('key')`.
@@ -31,6 +32,9 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
   // /accounts: filed among the account rules, nobody found them. No migration
   // seeds this row; see SEEDABLE_SETTINGS in platform-setting-fields.ts.
   features: 'pages',
+  // The release kill switches: their own card, not among the member pages.
+  // Seeded on first save like features.
+  release_flags: 'release',
   challenge_rules: 'accounts',
   repeat_opponent_caps: 'accounts',
   session_caps: 'accounts',

@@ -29,6 +29,7 @@ import { PlatformSettingsForm } from '@/components/platform-settings-form';
 import { settingsForSection } from '@/lib/platform-setting-sections';
 import { withSeededSettings } from '@/lib/platform-setting-fields';
 import { FEATURES, FEATURES_SETTING_KEY, parseFeatureFlags } from '@badminton/shared/src/utils/features';
+import { RELEASE_FLAGS, RELEASE_FLAGS_SETTING_KEY, parseReleaseFlags } from '@badminton/shared/src/utils/release-flags';
 import { DataApiKeysCard } from './DataApiKeysCard';
 import { AccountsRail, type AccountsRailSection } from './accounts-rail';
 
@@ -287,6 +288,8 @@ export default async function AccountsPage() {
   // feature on, exactly as the member app reads it.
   const featureFlags = parseFeatureFlags(settings?.find((row) => row.key === FEATURES_SETTING_KEY)?.value ?? null);
   const featuresOn = FEATURES.filter((f) => featureFlags[f.id]).length;
+  const releaseFlags = parseReleaseFlags(settings?.find((row) => row.key === RELEASE_FLAGS_SETTING_KEY)?.value ?? null);
+  const releaseOn = RELEASE_FLAGS.filter((f) => releaseFlags[f.id]).length;
 
   // The rail lists what is actually on the page, so a withheld section never
   // leaves a link to nothing.
@@ -299,6 +302,13 @@ export default async function AccountsPage() {
             sub: 'Switch pages on or off',
             badge: `${featuresOn} / ${FEATURES.length} on`,
             tone: featuresOn === FEATURES.length ? ('success' as const) : ('warning' as const),
+          },
+          {
+            id: 'kill-switches',
+            label: 'Kill switches',
+            sub: 'Undo a new console change',
+            badge: `${releaseOn} / ${RELEASE_FLAGS.length} on`,
+            tone: releaseOn === RELEASE_FLAGS.length ? ('success' as const) : ('warning' as const),
           },
         ]
       : []),
@@ -364,6 +374,24 @@ export default async function AccountsPage() {
                 <div className="px-6 pt-5">
                   <PlatformSettingsForm
                     settings={settingsForSection(withSeededSettings(settings ?? []), 'pages')}
+                    layout="tiles"
+                  />
+                </div>
+              </Card>
+            </section>
+          )}
+
+          {showPlatformSettings && (
+            <section id="kill-switches" className="scroll-mt-32">
+              <Card className="overflow-hidden p-0">
+                <SectionCardHeader
+                  title="Kill switches"
+                  sub="If a new console change breaks on the day, switch it off and the console goes back to what it did before. Each switch says what off falls back to."
+                  aside="Saved with a reason, logged"
+                />
+                <div className="px-6 pt-5">
+                  <PlatformSettingsForm
+                    settings={settingsForSection(withSeededSettings(settings ?? []), 'release')}
                     layout="tiles"
                   />
                 </div>

@@ -26,6 +26,7 @@ import {
   type FeatureDefinition,
   type FeatureId,
 } from '@badminton/shared/src/utils/features';
+import { RELEASE_FLAGS, RELEASE_FLAGS_SETTING_KEY } from '@badminton/shared/src/utils/release-flags';
 import { CLUB_SOCIALS_SETTING_KEY } from '@badminton/shared/src/utils/club-socials';
 import { MEMBERSHIP_PAYMENTS_SETTING_KEY } from '@badminton/shared/src/utils/membership-settings';
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
@@ -57,6 +58,7 @@ export type ClubChangeGroup =
   | 'Account rules'
   | 'Member pages'
   | 'Club links'
+  | 'Kill switches'
   | 'Officer roles'
   | 'Added by hand';
 
@@ -94,6 +96,12 @@ const FEATURE_PHRASES: Record<string, Phrase> = Object.fromEntries(
     featureField(feature.id as FeatureId),
     toggle(`Member pages: ${feature.label}`),
   ]),
+);
+
+// A kill switch is console-only, but its row has the same trigger as every
+// other setting, so a flip drafts a line here too; an admin discards it.
+const RELEASE_FLAG_PHRASES: Record<string, Phrase> = Object.fromEntries(
+  RELEASE_FLAGS.map((flag) => [flag.id, toggle(`Kill switch: ${flag.label}`)]),
 );
 
 export const CHANGE_PHRASES: Record<string, Record<string, Phrase>> = {
@@ -173,6 +181,7 @@ export const CHANGE_PHRASES: Record<string, Record<string, Phrase>> = {
     default_duration_minutes: num('Default session length', 'minutes'),
   },
   [FEATURES_SETTING_KEY]: FEATURE_PHRASES,
+  [RELEASE_FLAGS_SETTING_KEY]: RELEASE_FLAG_PHRASES,
   [CLUB_SOCIALS_SETTING_KEY]: {
     instagram_url: { kind: 'link', label: 'Instagram link' },
     show_discord: toggle('Discord links'),
@@ -190,6 +199,7 @@ const SECTION_GROUP: Record<PlatformSettingsSection, ClubChangeGroup> = {
   accounts: 'Account rules',
   pages: 'Member pages',
   club: 'Club links',
+  release: 'Kill switches',
 };
 
 /** Value equality as the database sees it: 24 and 24.0 are the same. */

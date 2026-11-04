@@ -25,6 +25,7 @@ import { hasResultsTab } from '@/lib/event-tabs';
 import { laterSignup } from '@/lib/entry-sort';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import { readMyCourts, type MyCourt } from '@/lib/court-helpers';
+import { getReleaseFlags } from '@/lib/release-flags';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import { loadPartnerBoard } from '@/lib/partner-board';
 import { partnerAdvice } from '@/lib/partner-check';
@@ -345,6 +346,7 @@ export default async function EventPage({
       : Promise.resolve([] as MyCourt[]),
   ]);
   const helperCourtIds = myCourts.filter((c) => c.tournament_id === tournamentId).map((c) => c.court_id);
+  const releaseFlags = await getReleaseFlags();
   const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
   for (const row of importRows) {
     if (row.pair_id) imported[row.pair_id] = row.status;
@@ -546,6 +548,7 @@ export default async function EventPage({
         partners={partners}
         viewerId={viewer.id}
         helperCourtIds={helperCourtIds}
+        releaseFlags={releaseFlags}
       />
     </div>
   );

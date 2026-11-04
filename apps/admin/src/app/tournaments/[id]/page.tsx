@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
 import { openEventCount } from '@/lib/tournament-close';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { LiveTournament } from '../live-tournament';
 import { CourtsEditor } from './courts-editor';
 import { COURTS_MIGRATION_MISSING, readTournamentCourts, readUsedCourtLabels } from '@/lib/tournament-courts';
@@ -59,13 +60,14 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // The tournament's courts (00273), null before that migration, and the courts
   // already typed on its matches for the editor's one-tap import.
   // Court helpers (00310) are read only for a viewer who may change them.
-  const [courts, usedCourtLabels, featureFlags, courtHelpers, helperCandidates, viewerCourts] = await Promise.all([
+  const [courts, usedCourtLabels, featureFlags, courtHelpers, helperCandidates, viewerCourts, releaseFlags] = await Promise.all([
     readTournamentCourts(supabase, id),
     readUsedCourtLabels(supabase, id).catch(() => [] as string[]),
     readFeatureFlags(supabase),
     canEditCourts ? readCourtHelpers(supabase, id).catch(() => null) : Promise.resolve(null as CourtHelper[] | null),
     canEditCourts ? readHelperCandidates(supabase).catch(() => [] as HelperCandidate[]) : Promise.resolve([] as HelperCandidate[]),
     readMyCourts(supabase, viewer.id as string).catch(() => []),
+    getReleaseFlags(),
   ]);
   const showMyCourts = accessLevelFor(viewer) === 'admin' || viewerCourts.some((c) => c.tournament_id === id);
   const formImports = canSeeImports
@@ -224,6 +226,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                 suspendedAt={tournament.suspended_at}
                 suspensionReason={tournament.suspension_reason}
                 openEvents={openEventCount((events ?? []).map((ev) => ev.status as string))}
+                autoClose={releaseFlags.auto_close_tournament}
               />
             </>
           }

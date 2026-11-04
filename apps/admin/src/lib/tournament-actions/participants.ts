@@ -29,6 +29,8 @@ import {
   type TournamentEventType,
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
+import { releaseFlagOn } from '../release-flags';
+import { checkInWindow } from '../participant-controls';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -466,7 +468,45 @@ export async function removeParticipantFromEvent(participantId: string) {
 }
 
 export async function checkInParticipant(participantId: string): Promise<ActionResult> {
-  return runAction(() => checkInParticipantCore(participantId));
+  return runAction(async () => {
+    await requireCapability('tournaments.draw.checkin.mark.write');
+    await assertCheckInWindow({ entryId: participantId, isPair: false }, 'checkIn');
+    return checkInParticipantCore(participantId);
+  });
+}
+
+/**
+ * KILL SWITCH check_in_after_draw. Off, the desk's check-in closes at the draw
+ * and its undo is taken only during check-in, as before 00315 (checkInWindow).
+ * Asked by the desk's actions only, after their capability check; Add on the
+ * spot checks in through the core, under its own switch.
+ */
+async function assertCheckInWindow(
+  of: { entryId: unknown; isPair: boolean } | { eventId: unknown },
+  kind: 'checkIn' | 'undo',
+): Promise<void> {
+  if (await releaseFlagOn('check_in_after_draw')) return;
+  const adminClient = createAdminClient();
+  let eventId = 'eventId' in of ? of.eventId : null;
+  if (!('eventId' in of)) {
+    if (typeof of.entryId !== 'string') return;
+    const { data: entry, error } = await adminClient.from(of.isPair ? 'tournament_pairs' : 'tournament_participants')
+      .select('event_id').eq('id', of.entryId).maybeSingle();
+    if (error) throw new Error(`Could not read the entry: ${error.message}`);
+    // Not found is the action's own refusal, below.
+    if (!entry) return;
+    eventId = entry.event_id;
+  }
+  if (typeof eventId !== 'string') return;
+  const { data: event, error } = await adminClient.from('tournament_events').select('status').eq('id', eventId).maybeSingle();
+  if (error) throw new Error(`Could not read the event: ${error.message}`);
+  if (!event) return;
+  const window = checkInWindow(event.status as string, false);
+  if (kind === 'checkIn' ? !window.canCheckIn : !window.canUndo) {
+    throw new ExpectedError(kind === 'checkIn'
+      ? 'Check-in closed at the draw. A team that turns up now is added as a late entry.'
+      : 'A check-in or a no-show can be taken back only while check-in is open.');
+  }
 }
 
 
@@ -1370,7 +1410,11 @@ async function removeFromWaitlistImpl(waitlistId: string): Promise<void> {
 }
 
 export async function checkInPair(pairId: string): Promise<ActionResult> {
-  return runAction(() => checkInPairCore(pairId));
+  return runAction(async () => {
+    await requireCapability('tournaments.draw.checkin.mark.write');
+    await assertCheckInWindow({ entryId: pairId, isPair: true }, 'checkIn');
+    return checkInPairCore(pairId);
+  });
 }
 
 
@@ -1394,6 +1438,7 @@ async function setPairMemberHereImpl(pairId: string, slot: number, here: boolean
   const admin = await requireCapability('tournaments.draw.checkin.mark.write');
   // A client-controlled POST field, so the slot is checked here and again in the RPC.
   if (slot !== 1 && slot !== 2) throw new ExpectedError('A team has two people. Pick the first or the second.');
+  await assertCheckInWindow({ entryId: pairId, isPair: true }, here ? 'checkIn' : 'undo');
   const adminClient = createAdminClient();
 
   const { data: pair } = await adminClient.from('tournament_pairs')
@@ -1478,6 +1523,7 @@ export async function markPairNoShow(pairId: string) {
 export async function undoCheckIn(entryId: string, isPair: boolean): Promise<ActionResult> {
   return runAction(async () => {
     const admin = await requireCapability('tournaments.draw.checkin.mark.write');
+    await assertCheckInWindow({ entryId, isPair: !!isPair }, 'undo');
     await returnEntryToWaiting(entryId, isPair, 'checked_in', admin.id);
   });
 }
@@ -1485,6 +1531,7 @@ export async function undoCheckIn(entryId: string, isPair: boolean): Promise<Act
 export async function undoNoShow(entryId: string, isPair: boolean): Promise<ActionResult> {
   return runAction(async () => {
     const admin = await requireCapability('tournaments.draw.noshow.write');
+    await assertCheckInWindow({ entryId, isPair: !!isPair }, 'undo');
     await returnEntryToWaiting(entryId, isPair, 'no_show', admin.id);
   });
 }
@@ -1577,6 +1624,7 @@ async function bulkCheckInImpl(
   type: 'participants' | 'pairs',
 ): Promise<BulkCheckInResult> {
   const admin = await requireCapability('tournaments.draw.checkin.mark.write');
+  await assertCheckInWindow({ eventId }, 'checkIn');
   const adminClient = createAdminClient();
 
   const table = type === 'pairs' ? 'tournament_pairs' : 'tournament_participants';

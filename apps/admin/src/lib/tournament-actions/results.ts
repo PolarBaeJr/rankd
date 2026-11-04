@@ -59,6 +59,7 @@ import { fillFreeCourts, type AutoCallEvent, type AutoCallReport } from './auto-
 import { requireConsoleUser } from '../court-helper-gate';
 import { courtHelperDecision, hasHelperRow, normaliseVoidReason } from '../court-helpers';
 import { permits } from '../permissions';
+import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
 
 // ============================================================
 // Score Entry & Advancement
@@ -1039,7 +1040,8 @@ async function voidMatchImpl(
   // A live staged match leaving its court frees it, so the next match goes
   // on, that court first. The void is saved whatever happens here.
   let autoCall: AutoCallReport | undefined;
-  if (match.status === 'live' && match.stage != null && event.format === 'staged') {
+  // Kill switch desk_helper_void: off, a void frees the court and nothing more.
+  if (match.status === 'live' && match.stage != null && event.format === 'staged' && await releaseFlagOn('desk_helper_void')) {
     try {
       autoCall = (await fillFreeCourts(adminClient, {
         event: event as unknown as AutoCallEvent,
@@ -2040,6 +2042,7 @@ export async function voidCourtHelperMatch(
   return runAction(async () => {
     const text = normaliseVoidReason(reason);
     const { viewer, level, permissions } = await requireConsoleUser();
+    await assertReleaseFlag('desk_helper_void');
     if (permits(level, permissions, 'tournaments.results.void.write')) {
       return voidMatchImpl(matchId, text);
     }
@@ -2141,6 +2144,7 @@ async function voidEach(
 async function voidOpenMatchesForEntryImpl(eventId: unknown, entryId: unknown, reason: unknown): Promise<BulkVoidResult> {
   await requireCapability('tournaments.results.void.write');
   await requireCapability('tournaments.draw.noshow.write');
+  await assertReleaseFlag('did_not_come');
   const text = normaliseVoidReason(reason);
   if (typeof entryId !== 'string' || entryId === '') throw new ExpectedError('That entry is not in this event.');
   const adminClient = createAdminClient();
@@ -2190,6 +2194,7 @@ async function voidUnplayedMatchesImpl(
   reason: unknown,
 ): Promise<BulkVoidResult> {
   await requireCapability('tournaments.results.void.write');
+  await assertReleaseFlag('void_unplayed');
   const text = normaliseVoidReason(reason);
   const whole = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1;
   if (!whole(stage) || (pool != null && !whole(pool)) || (group != null && !whole(group))) {

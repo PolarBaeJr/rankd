@@ -39,8 +39,8 @@ describe('00309: set_pair_member_check_in', () => {
   const latest = latestBody('set_pair_member_check_in');
   const code = stripComments(latest?.body ?? '');
 
-  it('is defined in 00309, and restated last by 00315 (the undo past the draw)', () => {
-    expect(latest?.file).toMatch(/^00315_/);
+  it('is defined in 00309, and restated last by 00318 (the undo past the draw, behind its kill switch)', () => {
+    expect(latest?.file).toMatch(/^00318_/);
   });
 
   it('takes the field lock before its first row lock', () => {

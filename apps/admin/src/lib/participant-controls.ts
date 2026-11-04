@@ -470,9 +470,31 @@ export function regenerateDrawControl(
  * "Did not come": the no-show plus a void of the entry's unplayed matches, so
  * it needs the void key as well as the no-show key, and without both it is not
  * offered. Drawn but not started stays a plain no-show: a void is refused
- * before the start, and auto-call already skips an absent team.
+ * before the start, and auto-call already skips an absent team. With the
+ * kill switch did_not_come off it is always the plain no-show.
  */
-export function checkInNoShowPath(playingDrawnMatches: boolean, canVoidAndMarkNoShow: boolean): 'mark' | 'void' | null {
-  if (!playingDrawnMatches) return 'mark';
+export function checkInNoShowPath(
+  playingDrawnMatches: boolean,
+  canVoidAndMarkNoShow: boolean,
+  didNotCome = true,
+): 'mark' | 'void' | null {
+  // Kill switch did_not_come off: the X is the plain no-show it was.
+  if (!playingDrawnMatches || !didNotCome) return 'mark';
   return canVoidAndMarkNoShow ? 'void' : null;
+}
+
+/**
+ * When the Check-In tab takes a check-in, and the undo of one. `afterDraw` is
+ * the kill switch check_in_after_draw: on, both stay open until the event is
+ * completed (00315); off, check-in closes at the draw and the undo is taken
+ * only during check-in, as before. The desk's server actions ask the same.
+ */
+export function checkInWindow(eventStatus: string, afterDraw: boolean): { canCheckIn: boolean; canUndo: boolean } {
+  if (!afterDraw) {
+    return { canCheckIn: eventStatus === 'checkin' || eventStatus === 'registration', canUndo: eventStatus === 'checkin' };
+  }
+  return {
+    canCheckIn: eventStatus !== 'completed',
+    canUndo: eventStatus !== 'registration' && eventStatus !== 'completed',
+  };
 }

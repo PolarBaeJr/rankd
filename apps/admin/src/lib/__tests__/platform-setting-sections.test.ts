@@ -14,7 +14,8 @@ import { defaultFeaturesValue } from '@badminton/shared/src/utils/features';
 // neither in SETTING_SECTION nor caught by the default would simply stop
 // rendering, with no error anywhere. `features`, `club_socials` and
 // `membership_payments` are the exceptions: no migration seeds them, and the
-// console inserts each on its first save.
+// console inserts each on its first save. So is `release_flags`, the kill
+// switches, for the same reason.
 const PRODUCTION_KEYS = [
   'challenge_rules',
   'club_socials',
@@ -22,6 +23,7 @@ const PRODUCTION_KEYS = [
   'inactivity_rules',
   'membership_payments',
   'rating_defaults',
+  'release_flags',
   'repeat_opponent_caps',
   'season_settings',
   'session_attendance',
@@ -72,7 +74,8 @@ describe('platform settings section map', () => {
     const accounts = settingsForSection(rows, 'accounts');
     const club = settingsForSection(rows, 'club');
     const pages = settingsForSection(rows, 'pages');
-    expect(ratings.length + accounts.length + club.length + pages.length).toBe(rows.length);
+    const release = settingsForSection(rows, 'release');
+    expect(ratings.length + accounts.length + club.length + pages.length + release.length).toBe(rows.length);
     expect(ratings.some((r) => accounts.includes(r) || club.includes(r))).toBe(false);
     expect(accounts.some((r) => club.includes(r))).toBe(false);
   });
@@ -86,6 +89,10 @@ describe('platform settings section map', () => {
 
   it('puts the page switches in their own section', () => {
     expect(sectionForSettingKey('features')).toBe('pages');
+  });
+
+  it('puts the kill switches in their own section, not among the member pages', () => {
+    expect(sectionForSettingKey('release_flags')).toBe('release');
   });
 
   it('renders in map order, not the database’s alphabetical order', () => {
