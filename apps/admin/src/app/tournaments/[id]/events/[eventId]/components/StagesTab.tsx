@@ -24,7 +24,7 @@ import {
   type TournamentCourt,
   type TournamentEventStatus,
 } from '@badminton/shared';
-import { Layers, Plus, RefreshCw } from 'lucide-react';
+import { Layers, Plus, RefreshCw, UserX } from 'lucide-react';
 import {
   addStageRound,
   drawStage,
@@ -911,6 +911,7 @@ function GroupTable({
             <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">W</th>
             <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">L</th>
             <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-12">+/-</th>
+            {onAbsent && <th className="w-9" aria-label="Actions" />}
           </tr>
         </thead>
         <tbody>
@@ -928,22 +929,29 @@ function GroupTable({
                 <td className="px-3 py-1.5 text-sm font-medium text-[var(--text-primary)]">
                   {nameMap[r.id] ?? 'Unknown'}
                   {r.qualified && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-success)]">Through</span>}
-                  {onAbsent && hasOpen?.(r.id) && (
-                    <button
-                      type="button"
-                      onClick={() => onAbsent(r.id)}
-                      aria-label={`${nameMap[r.id] ?? 'This entry'} did not come`}
-                      className="ml-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)] hover:underline hover:text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
-                    >
-                      Did not come
-                    </button>
-                  )}
                 </td>
                 <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-success)]">{r.wins}</td>
                 <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-danger)]">{r.losses}</td>
                 <td className={`px-2 py-1.5 text-sm text-center font-mono ${diff > 0 ? 'text-[var(--color-success)]' : diff < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
                   {diff > 0 ? '+' : ''}{diff}
                 </td>
+                {/* An action, not a status: an icon button at the row's end, so
+                    it never reads as a label beside the name. */}
+                {onAbsent && (
+                  <td className="px-1 py-1.5 text-center">
+                    {hasOpen?.(r.id) && (
+                      <button
+                        type="button"
+                        onClick={() => onAbsent(r.id)}
+                        title="Mark as did not come"
+                        aria-label={`Mark ${nameMap[r.id] ?? 'this entry'} as did not come`}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                      >
+                        <UserX size={15} aria-hidden />
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}
