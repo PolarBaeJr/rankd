@@ -5,6 +5,7 @@ import { busyCourtIds, eventIsPlaying, isDoublesEvent, type TournamentEventType 
 import { createAdminClient } from '@/lib/supabase-server';
 import { requireConsoleUser } from '@/lib/court-helper-gate';
 import { readMyCourts } from '@/lib/court-helpers';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { PairWithPlayers, ParticipantWithPlayer, TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 import { LiveTournament } from '../tournaments/live-tournament';
@@ -34,6 +35,7 @@ export default async function MyCourtsPage() {
     );
   }
 
+  const releaseFlags = await getReleaseFlags();
   const byTournament = new Map<string, { name: string; courtIds: string[] }>();
   for (const row of mine) {
     const entry = byTournament.get(row.tournament_id) ?? { name: row.tournament_name, courtIds: [] };
@@ -107,6 +109,8 @@ export default async function MyCourtsPage() {
             courtIds={section.courtIds}
             busyCourtIds={section.busyCourtIds}
             events={section.events}
+            courtVoid={releaseFlags.desk_helper_void}
+            skipAbsent={releaseFlags.auto_call_skips_absent}
           />
         </section>
       ))}

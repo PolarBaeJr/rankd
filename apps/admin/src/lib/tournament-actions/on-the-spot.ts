@@ -6,6 +6,7 @@ import { ExpectedError, isDoublesEvent, parseOrThrow } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
+import { assertReleaseFlag } from '../release-flags';
 import { onTheSpotChecksIn, onTheSpotFeePath } from '../on-the-spot';
 import { assertEventWaiverSigned, requireCapability, revalidateEventPaths } from './_internal';
 import {
@@ -52,6 +53,7 @@ export interface OnTheSpotResult {
 
 async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
   const admin = await requireCapability('tournaments.draw.participants.add.write');
+  await assertReleaseFlag('add_on_the_spot');
   const input = parseOrThrow(inputSchema, raw);
   const adminClient = createAdminClient();
 

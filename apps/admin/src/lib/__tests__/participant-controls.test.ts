@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   checkInNoShowPath,
+  checkInWindow,
   participantControls,
   regenerateDrawControl,
   type DrawCapabilities,
@@ -477,5 +478,30 @@ describe('checkInNoShowPath: the Check-In tab no-show X', () => {
   it('voids their unplayed matches once the event is playing, and only with both keys', () => {
     expect(checkInNoShowPath(true, true)).toBe('void');
     expect(checkInNoShowPath(true, false)).toBeNull();
+  });
+});
+
+describe('kill switches on the Check-In tab', () => {
+  it('did_not_come off: the X is always the plain no-show', () => {
+    expect(checkInNoShowPath(true, true, false)).toBe('mark');
+    expect(checkInNoShowPath(true, false, false)).toBe('mark');
+    expect(checkInNoShowPath(true, true, true)).toBe('void');
+  });
+
+  it('check_in_after_draw on: check-in and its undo stay open until completed', () => {
+    expect(checkInWindow('registration', true)).toEqual({ canCheckIn: true, canUndo: false });
+    expect(checkInWindow('checkin', true)).toEqual({ canCheckIn: true, canUndo: true });
+    expect(checkInWindow('bracket_generated', true)).toEqual({ canCheckIn: true, canUndo: true });
+    expect(checkInWindow('live', true)).toEqual({ canCheckIn: true, canUndo: true });
+    expect(checkInWindow('completed', true)).toEqual({ canCheckIn: false, canUndo: false });
+  });
+
+  it('check_in_after_draw off: check-in locks at the draw, the undo only during check-in', () => {
+    expect(checkInWindow('registration', false)).toEqual({ canCheckIn: true, canUndo: false });
+    expect(checkInWindow('checkin', false)).toEqual({ canCheckIn: true, canUndo: true });
+    expect(checkInWindow('bracket_generated', false)).toEqual({ canCheckIn: false, canUndo: false });
+    expect(checkInWindow('live', false)).toEqual({ canCheckIn: false, canUndo: false });
+    expect(checkInWindow('pool_live', false)).toEqual({ canCheckIn: false, canUndo: false });
+    expect(checkInWindow('completed', false)).toEqual({ canCheckIn: false, canUndo: false });
   });
 });

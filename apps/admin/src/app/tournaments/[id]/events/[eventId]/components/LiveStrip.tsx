@@ -45,6 +45,8 @@ interface Props {
   courts: TournamentCourt[] | null;
   busyCourtIds: string[];
   onOpenCourts: () => void;
+  /** Kill switch auto_call_skips_absent; off, NEXT skips nobody, like auto-call. */
+  skipAbsent?: boolean;
 }
 
 export function LiveStrip({
@@ -57,6 +59,7 @@ export function LiveStrip({
   courts,
   busyCourtIds,
   onOpenCourts,
+  skipAbsent = true,
 }: Props) {
   const { nameMap, seedMap, placeableEntries } = useMemo(() => {
     const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
@@ -65,13 +68,13 @@ export function LiveStrip({
 
   const rows = useMemo(() => {
     // The absentees auto-call skips, so NEXT never names a match it will pass over.
-    const absent = absentEntryIds(isDoubles ? pairs : participants);
+    const absent = absentEntryIds(isDoubles ? pairs : participants, skipAbsent);
     const sideOf = (entryId: string | null) =>
       entryId && nameMap[entryId] !== undefined
         ? { entryId, label: nameMap[entryId]!, absent: absent.has(entryId) }
         : { entryId: null, label: 'TBD' };
     return deskRows(matches, sideOf, isDoubles);
-  }, [matches, nameMap, isDoubles, pairs, participants]);
+  }, [matches, nameMap, isDoubles, pairs, participants, skipAbsent]);
 
   // HELD AS AN ID AND LOOKED UP IN `matches`, THE UNFILTERED LIST, for the reason
   // the courts tab gives: a score makes the match `completed`, which drops it out

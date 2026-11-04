@@ -20,6 +20,7 @@ import {
   eventIsPlaying,
   isDoublesEvent,
   parseFormatConfig,
+  readReleaseFlags,
   type TournamentCourt,
   type TournamentEventType,
 } from '@badminton/shared';
@@ -130,12 +131,17 @@ export async function fillFreeCourts(
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
   // A no-show, or a team not checked in while others are, is not called.
-  const { data: entries, error: entriesError } = await client
-    .from(doubles ? 'tournament_pairs' : 'tournament_participants')
-    .select('id, status')
-    .eq('event_id', event.id);
-  if (entriesError) throw new Error(`Could not read the event's entries: ${entriesError.message}`);
-  const absent = absentEntryIds((entries ?? []) as Array<{ id: string; status: string | null }>);
+  // Kill switch auto_call_skips_absent: off, nobody is skipped and the
+  // entries are not read at all, as before.
+  let absent = new Set<string>();
+  if ((await readReleaseFlags(client)).auto_call_skips_absent) {
+    const { data: entries, error: entriesError } = await client
+      .from(doubles ? 'tournament_pairs' : 'tournament_participants')
+      .select('id, status')
+      .eq('event_id', event.id);
+    if (entriesError) throw new Error(`Could not read the event's entries: ${entriesError.message}`);
+    absent = absentEntryIds((entries ?? []) as Array<{ id: string; status: string | null }>);
+  }
 
   const rows = deskRows(
     (matches ?? []) as unknown as DeskMatch[],

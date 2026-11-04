@@ -64,6 +64,12 @@ describe('drawField', () => {
     expect(field.map((x) => x.id)).toEqual(['a', 'c']);
     expect(leftOut.map((x) => x.id)).toEqual(['b']);
   });
+
+  it('with check_in_after_draw off, draws everyone registered or checked in, as before 00315', () => {
+    const { field, leftOut } = drawField([e('a', 'checked_in'), e('b', 'registered'), e('c', 'checked_in'), e('d', 'no_show')], false);
+    expect(field.map((x) => x.id)).toEqual(['a', 'b', 'c']);
+    expect(leftOut).toEqual([]);
+  });
 });
 
 describe('drawLeftOutMessage', () => {
