@@ -938,8 +938,28 @@ const server = createServer(async (req, res) => {
 
     // The count button on a trap channel's warning: the stats, only to whoever
     // pressed it. trap:stats is disjoint from every other prefix.
+    //
+    // DEFERRED. The stats read the pins of every trap channel in every server
+    // plus this server's audit log, which ran past Discord's 3 second window
+    // and showed "didn't respond in time". So acknowledge at once, ephemeral
+    // (visibility is fixed at the deferral), and edit the answer in.
     if (isTrapStatsButton(customId)) {
-      return send(res, 200, await handleTrapStatsButton({ guildId: interaction.guild_id ?? null }));
+      const { application_id: appId, token: interactionToken } = interaction;
+      send(res, 200, { type: 5, data: { flags: 64 } });
+      void (async () => {
+        if (!appId || !interactionToken) {
+          console.error('[bot] trap stats finished but had no interaction token');
+          return;
+        }
+        try {
+          const response = await handleTrapStatsButton({ guildId: interaction.guild_id ?? null });
+          await editDeferredReply(appId, interactionToken, (response as { data?: unknown }).data ?? response);
+        } catch (error) {
+          console.error('[bot] deferred trap stats failed:', error);
+          await editDeferredReply(appId, interactionToken, { content: 'Something went wrong. Please try again.' });
+        }
+      })();
+      return;
     }
 
     // The guide message's buttons. The same two fields as above and no role
