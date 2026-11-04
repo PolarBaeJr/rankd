@@ -19,7 +19,7 @@
 # faithful copy is the wrong answer for both:
 #   - Discord config is staging's own, never prod's (see the capture/scrub pair
 #     below) — inheriting prod's would aim the staging bot at the real guild.
-#   - $STAGING_ADMIN_EMAILS are re-granted admin on staging, because prod roles
+#   - $STAGING_ADMIN_EMAILS are re-granted super admin (admin before 00321) on staging, because prod roles
 #     leave the owner unable to use the staging admin console at all.
 #   - THE MEMBERS ARE SCRUBBED. Names, emails, phones, bios, officer notes,
 #     audit diffs and every bearer token are replaced or deleted at the end of
@@ -976,7 +976,13 @@ WITH t AS (
    WHERE btrim(e) <> ''
 ), upd AS (
   UPDATE public.players p
-     SET role = 'admin', is_exec = TRUE, active_flag = TRUE, inactive_since = NULL
+     -- Super admin once 00321 has replayed, so the staging account reaches
+     -- /platform; plain admin before it. Cast at run time: a literal
+     -- 'super_admin'::user_role fails to parse where the label does not exist.
+     SET role = (CASE WHEN EXISTS (SELECT 1 FROM pg_enum en JOIN pg_type ty ON ty.oid = en.enumtypid
+                                    WHERE ty.typname = 'user_role' AND en.enumlabel = 'super_admin')
+                      THEN 'super_admin' ELSE 'admin' END)::public.user_role,
+         is_exec = TRUE, active_flag = TRUE, inactive_since = NULL
     FROM t
    WHERE p.email = t.email
   RETURNING p.email
