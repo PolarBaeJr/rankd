@@ -115,7 +115,7 @@ describe('00316: get_leaderboard counts doubles points', () => {
     expect(bodyOf(down)).toBeDefined();
     expect(bodyOf(down)).toBe(bodyOf(original));
     expect(down).toContain('GRANT EXECUTE ON FUNCTION public.get_leaderboard() TO authenticated, anon, service_role;');
-    expect(down).not.toContain('—');
+    expect(down).not.toContain('\u2014');
   });
 
   it('has no top-level COMMIT and reloads the PostgREST schema', () => {
