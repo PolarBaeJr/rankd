@@ -104,6 +104,13 @@ export const RELEASE_FLAGS = [
     off: 'Off: no Add on the spot; entries are added from the Participants tab as before.',
     since: '1.1.8',
   },
+  {
+    id: 'quiet_refresh',
+    label: 'Quiet live refresh',
+    description: 'The event page and My courts check for a change every few seconds and re-read only when there is one, and never while someone is typing, has a dialog or menu open, or is saving.',
+    off: 'Off: the event page and My courts re-read every 15 seconds, and on every live update, whatever is on screen.',
+    since: '1.1.8',
+  },
   // Asked by the database only: 00316 (the ladder fix) reads it through
   // release_flag_on, on its own branch.
   {

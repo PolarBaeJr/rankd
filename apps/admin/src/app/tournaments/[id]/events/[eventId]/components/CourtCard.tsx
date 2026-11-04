@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
+import { ChevronDown } from 'lucide-react';
+import { Button, Dialog, Dropdown, Input, useConfirm } from '@badminton/ui';
 import {
   courtLabel,
   describeStageScoring,
@@ -13,6 +14,7 @@ import {
 import { enterMatchResult, setMatchCourt, setMatchLive, skipMatchForNow } from '@/lib/tournament-actions';
 import {
   autoCallFailureText,
+  courtCardOptions,
   inlineScoreVerdict,
   liveEntrants,
   nextMatchForCourt,
@@ -52,7 +54,7 @@ interface Props {
   canManageCourts: boolean;
   /** A match from another event is live on this court. */
   busyElsewhere: boolean;
-  /** Opens the full score dialog: cut short, walkover, void. Without it there is no "More options". */
+  /** Opens the full score dialog: cut short, walkover, void. Without it the Options menu has no "Cut short, walkover". */
   onMore?: (matchId: string) => void;
   /** Saves the score; enterMatchResult when not given. */
   save?: CourtScoreSave;
@@ -71,6 +73,18 @@ export function CourtCard({
   const onCourt = rows.find((r) => r.state === 'live' && r.match.court_id === court.id) ?? null;
   const next = nextMatchForCourt(rows, court, courts, cfg, { busyEntries: liveEntrants(rows, onCourt?.match.id) });
   const name = courtLabel(court.label) ?? court.label;
+  const optionIds = courtCardOptions({ more: !!onMore && canEnterResult, skip: canEnterResult, void: !!voidMatch });
+  // Keyed by match, so a void reason typed for one match never carries to the next on this court.
+  const options = onCourt && optionIds.length > 0 ? (
+    <CourtOptions
+      key={onCourt.match.id}
+      row={onCourt}
+      courtName={name}
+      optionIds={optionIds}
+      onMore={onMore ? () => onMore(onCourt.match.id) : undefined}
+      voidMatch={voidMatch}
+    />
+  ) : null;
 
   return (
     <div
@@ -94,21 +108,9 @@ export function CourtCard({
             {onCourt.a.label} <span className="text-sm font-normal text-[var(--text-muted)]">vs</span> {onCourt.b.label}
           </p>
           {isLive && canEnterResult && (
-            <InlineScore
-              key={onCourt.match.id}
-              row={onCourt}
-              cfg={cfg}
-              onMore={onMore ? () => onMore(onCourt.match.id) : undefined}
-              save={save}
-            />
+            <InlineScore key={onCourt.match.id} row={onCourt} cfg={cfg} save={save} options={options} />
           )}
-          {isLive && (canEnterResult || voidMatch) && (
-            <div className="flex flex-wrap items-center gap-2">
-              {canEnterResult && <SkipForNow row={onCourt} courtName={name} />}
-              {/* Keyed by match, so a reason typed for one match never carries to the next on this court. */}
-              {voidMatch && <VoidOnCourt key={onCourt.match.id} row={onCourt} courtName={name} voidMatch={voidMatch} />}
-            </div>
-          )}
+          {isLive && !canEnterResult && options && <div className="flex flex-wrap items-center gap-2">{options}</div>}
         </div>
       ) : (
         !busyElsewhere && isLive && canManageCourts && next && <PutOnCourt row={next} court={court} />
@@ -137,8 +139,8 @@ export function CourtCard({
 }
 
 function InlineScore({
-  row, cfg, onMore, save: saveScore,
-}: { row: CourtDeskRow; cfg: FormatConfig; onMore?: () => void; save?: CourtScoreSave }) {
+  row, cfg, options, save: saveScore,
+}: { row: CourtDeskRow; cfg: FormatConfig; options: ReactNode; save?: CourtScoreSave }) {
   const router = useRouter();
   const { toast } = useToast();
   const { match } = row;
@@ -219,15 +221,7 @@ function InlineScore({
             Add game
           </Button>
         )}
-        {onMore && (
-          <button
-            type="button"
-            onClick={onMore}
-            className="ml-auto text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
-          >
-            More options
-          </button>
-        )}
+        {options}
       </div>
     </form>
   );
@@ -262,17 +256,57 @@ function PutOnCourt({ row, court }: { row: CourtDeskRow; court: TournamentCourt 
 }
 
 /**
+ * The card's secondary actions in one menu beside Save score. Rendered keyed
+ * by the match on court, so the void dialog's typed reason belongs to one
+ * match. Inside the score form, so the trigger is type="button".
+ */
+function CourtOptions({
+  row, courtName, optionIds, onMore, voidMatch,
+}: {
+  row: CourtDeskRow;
+  courtName: string;
+  optionIds: ReturnType<typeof courtCardOptions>;
+  onMore?: () => void;
+  voidMatch?: CourtVoid;
+}) {
+  const skip = useSkipForNow(row, courtName);
+  const voiding = useVoidOnCourt(row, courtName, voidMatch);
+  const busy = skip.pending || voiding.pending;
+  const items = optionIds.flatMap((id) => {
+    if (id === 'more' && onMore) return [{ label: 'Cut short, walkover…', onClick: onMore, disabled: busy }];
+    if (id === 'skip') return [{ label: 'Skip for now', onClick: () => void skip.run(), disabled: busy }];
+    if (id === 'void' && voidMatch) return [{ label: 'Void match', onClick: voiding.ask, danger: true, disabled: busy }];
+    return [];
+  });
+
+  return (
+    <>
+      <Dropdown
+        trigger={
+          <Button type="button" variant="ghost" loading={skip.pending} aria-haspopup="menu">
+            Options
+            <ChevronDown className="w-4 h-4" aria-hidden />
+          </Button>
+        }
+        items={items}
+      />
+      {voiding.dialog}
+    </>
+  );
+}
+
+/**
  * A team is not at the court (00314): the match goes behind every other match
  * this court can take, and the next one goes on. It comes back once nothing
  * else is waiting.
  */
-function SkipForNow({ row, courtName }: { row: CourtDeskRow; courtName: string }) {
+function useSkipForNow(row: CourtDeskRow, courtName: string) {
   const router = useRouter();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [pending, setPending] = useState(false);
 
-  async function skip() {
+  async function run() {
     const ok = await confirm({
       title: 'Skip this match for now?',
       message: `${row.a.label} vs ${row.b.label} goes to the back of ${courtName}'s queue, and the next match goes on. It comes back when nothing else is waiting.`,
@@ -291,11 +325,7 @@ function SkipForNow({ row, courtName }: { row: CourtDeskRow; courtName: string }
     router.refresh();
   }
 
-  return (
-    <Button type="button" variant="secondary" size="sm" loading={pending} disabled={pending} onClick={skip}>
-      Skip for now
-    </Button>
-  );
+  return { pending, run };
 }
 
 /**
@@ -303,7 +333,7 @@ function SkipForNow({ row, courtName }: { row: CourtDeskRow; courtName: string }
  * takes its next match. A Dialog of its own rather than useConfirm, whose
  * message cannot hold a typed input.
  */
-function VoidOnCourt({ row, courtName, voidMatch }: { row: CourtDeskRow; courtName: string; voidMatch: CourtVoid }) {
+function useVoidOnCourt(row: CourtDeskRow, courtName: string, voidMatch: CourtVoid | undefined) {
   const router = useRouter();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -311,7 +341,7 @@ function VoidOnCourt({ row, courtName, voidMatch }: { row: CourtDeskRow; courtNa
   const [pending, setPending] = useState(false);
 
   async function submit() {
-    if (!reason.trim()) return;
+    if (!voidMatch || !reason.trim()) return;
     setPending(true);
     const res = await voidMatch(row.match.id, reason.trim());
     setPending(false);
@@ -325,37 +355,35 @@ function VoidOnCourt({ row, courtName, voidMatch }: { row: CourtDeskRow; courtNa
     router.refresh();
   }
 
-  return (
-    <>
-      <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => setOpen(true)}>
-        Void
-      </Button>
-      {open && (
-        <Dialog open onClose={() => { if (!pending) setOpen(false); }} title="Void this match?">
-          <form
-            className="space-y-4"
-            onSubmit={(e) => { e.preventDefault(); void submit(); }}
-          >
-            <p className="text-sm text-[var(--text-muted)]">
-              {row.a.label} vs {row.b.label} is voided and counts for neither side. {courtName} takes its next match.
-            </p>
-            <Input
-              label="Reason"
-              value={reason}
-              maxLength={500}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="For example: the other team did not come"
-              autoFocus
-            />
-            <div className="flex justify-between gap-2">
-              <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
-              <Button type="submit" variant="danger" loading={pending} disabled={!reason.trim() || pending}>
-                Void match
-              </Button>
-            </div>
-          </form>
-        </Dialog>
-      )}
-    </>
-  );
+  const dialog = open ? (
+    <Dialog open onClose={() => { if (!pending) setOpen(false); }} title="Void this match?">
+      <form
+        className="space-y-4"
+        // The dialog renders inside the score form's React tree, and a submit
+        // bubbles through the portal: without the stop, voiding would save the
+        // typed score too.
+        onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void submit(); }}
+      >
+        <p className="text-sm text-[var(--text-muted)]">
+          {row.a.label} vs {row.b.label} is voided and counts for neither side. {courtName} takes its next match.
+        </p>
+        <Input
+          label="Reason"
+          value={reason}
+          maxLength={500}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="For example: the other team did not come"
+          autoFocus
+        />
+        <div className="flex justify-between gap-2">
+          <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
+          <Button type="submit" variant="danger" loading={pending} disabled={!reason.trim() || pending}>
+            Void match
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  ) : null;
+
+  return { pending, ask: () => setOpen(true), dialog };
 }
