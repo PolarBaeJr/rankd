@@ -12,6 +12,9 @@ import {
   parseEloReview,
   eloReviewLabel,
   describePrivileges,
+  duplicatePairKey,
+  findPossibleDuplicates,
+  isWorthAsking,
 } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
@@ -21,6 +24,7 @@ import { PrivilegeReviewActions } from './privilege-review-actions';
 import { EloReviewActions } from './elo-review-actions';
 import { ConsoleAccessActions } from './console-access-actions';
 import { GuestActions } from './guest-actions';
+import { PossibleDuplicates, type DuplicateRow, type DuplicateSide } from './possible-duplicates';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RosterViewMenu } from './roster-view-menu';
 import { RowLink } from '@/components/row-link';
@@ -184,7 +188,7 @@ export default async function PlayersPage({
   // fewer people than its own counts claim.
   const query = supabase
     .from('players')
-    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_guest, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, last_seen_at, is_exec, is_trainer, fee_exempt, membership_type, is_guest, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(5000);
 
@@ -223,12 +227,54 @@ export default async function PlayersPage({
     ? await supabase
         .from('players')
         .select(
-          'id, full_name, handle, email, avatar_url, user_id, status, is_guest, is_banned, active_flag, onboarding_completed, privilege_claim_review',
+          'id, full_name, first_name, last_name, handle, member_code, email, phone, avatar_url, user_id, status, is_guest, is_banned, active_flag, onboarding_completed, privilege_claim_review, created_at',
         )
         .order('full_name')
         .limit(5000)
     : { data: null };
   const forCount = countRows ?? [];
+
+  // POSSIBLE DUPLICATES (00320), from the rows the count query already holds.
+  // For somebody who may merge, since the card's one action is the merge or its
+  // refusal; the pairs an officer said are two people are left out. The phone
+  // is compared here and never sent to the browser.
+  const { data: dismissals } = canMerge && canRead
+    ? await supabase.from('possible_duplicate_dismissals').select('player_a, player_b')
+    : { data: null };
+  const duplicateRows: DuplicateRow[] = canMerge && canRead
+    ? findPossibleDuplicates(
+        forCount,
+        new Set((dismissals ?? []).map((d) => duplicatePairKey(d.player_a, d.player_b))),
+      )
+        .filter((pair) => isWorthAsking(pair.strength))
+        .flatMap((pair) => {
+          const a = forCount.find((p) => p.id === pair.a);
+          const b = forCount.find((p) => p.id === pair.b);
+          if (!a || !b) return [];
+          // Keep the record with no login when only one has one: the merge
+          // keeps the kept record's own details and moves the login across.
+          // Otherwise keep the older record.
+          const keepA = (a.user_id === null) !== (b.user_id === null)
+            ? a.user_id === null
+            : (a.created_at ?? '') <= (b.created_at ?? '');
+          const sideOf = (p: typeof a): DuplicateSide => ({
+            id: p.id,
+            full_name: p.full_name?.trim() ? p.full_name : `No name yet · ${p.email ?? 'unknown address'}`,
+            handle: p.handle,
+            identifier: memberIdentifier(p),
+            email: p.email,
+            avatar_url: p.avatar_url,
+            has_login: p.user_id !== null,
+            status: p.status,
+          });
+          return [{
+            keep: sideOf(keepA ? a : b),
+            remove: sideOf(keepA ? b : a),
+            strength: pair.strength,
+            reasons: pair.reasons,
+          }];
+        })
+    : [];
   // 00132. Somebody who signed in and never finished setup: a real person with a
   // proved address, no name and no waiver. They are NOT a member of the club yet,
   // and the point of this predicate is that every headcount below can say so.
@@ -573,7 +619,9 @@ export default async function PlayersPage({
             {record ?? NONE}
           </td>
           <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">
-            {formatRelativeTime(player.last_active_at)}
+            {/* 00320: the last visit, else the older activity stamp for a record
+                nobody has signed in to since. */}
+            {formatRelativeTime(player.last_seen_at ?? player.last_active_at)}
           </td>
           {/* 44px on every control here, matching the phone layout: this is the
               same `actions` node TableCard renders, and a thumb does not get a
@@ -611,7 +659,7 @@ export default async function PlayersPage({
             { label: 'Singles', value: rating(r?.singles_elo, r?.singles_provisional) },
             { label: 'Doubles', value: rating(r?.doubles_elo, r?.doubles_provisional) },
             { label: 'Record', value: record ?? NONE },
-            { label: 'Last seen', value: formatRelativeTime(player.last_active_at) },
+            { label: 'Last seen', value: formatRelativeTime(player.last_seen_at ?? player.last_active_at) },
           ]}
           actions={actions}
         />
@@ -670,6 +718,8 @@ export default async function PlayersPage({
           </div>
         }
       />
+
+      {duplicateRows.length > 0 && <PossibleDuplicates rows={duplicateRows} />}
 
       {!canRead ? (
         <div data-tour="roster">

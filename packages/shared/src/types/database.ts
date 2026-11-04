@@ -187,6 +187,8 @@ export interface Player {
   media_consent_changed_at: string | null;
   joined_at: string;
   last_active_at: string;
+  /** 00320 - when the member last loaded a page of either app, at most fifteen minutes stale. Written only by touch_last_seen(). Display only; inactivity reads last_active_at. */
+  last_seen_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -7,6 +7,7 @@ import { Button, Dialog, Input, PlayerPicker, Select, Tabs, type PlayerOption } 
 import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, isReservedMethod, resolvePaymentMethod } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { addClubEventPersonByHand, loadClubEventHandQuestions } from '@/lib/actions/club-event-add';
+import type { ExistingMatch } from '@/lib/possible-matches';
 
 // Somebody added by hand (00306): a member, or a guest by name alone, who paid
 // at the door or does not use the app. Every answer is optional, the Form's
@@ -73,6 +74,9 @@ function AddPersonDialog({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 00320. People already on file by the name typed, offered before a second
+  // record is made.
+  const [matches, setMatches] = useState<ExistingMatch[] | null>(null);
 
   async function showQuestions() {
     setQuestionsNote('Reading the Form...');
@@ -85,10 +89,11 @@ function AddPersonDialog({
     setQuestionsNote(result.data.note ?? (result.data.questions.length === 0 ? 'The Form asks nothing else.' : null));
   }
 
-  async function save() {
+  async function save(choice?: { useId: string } | { createAnyway: true }) {
     setError(null);
-    if (kind === 'member' && !playerId) return setError('Pick a member.');
-    if (kind === 'guest' && !name.trim()) return setError('Type their name.');
+    const memberId = choice && 'useId' in choice ? choice.useId : kind === 'member' ? playerId : '';
+    if (!memberId && kind === 'member') return setError('Pick a member.');
+    if (!memberId && !name.trim()) return setError('Type their name.');
     const paidMethod =
       method === NOT_PAID ? undefined : resolvePaymentMethod(method, customMethod);
     if (method === PAYMENT_METHOD_CUSTOM && !paidMethod) return setError('Type how they paid.');
@@ -107,18 +112,22 @@ function AddPersonDialog({
     try {
       const result = await addClubEventPersonByHand(
         eventId,
-        kind === 'member'
-          ? { kind: 'member', playerId, ...common }
+        memberId
+          ? { kind: 'member', playerId: memberId, ...common }
           : {
               kind: 'guest',
               name: name.trim(),
               ...(email.trim() ? { email: email.trim() } : {}),
               ...(photos ? { mediaConsent: photos === 'yes' } : {}),
+              ...(choice && 'createAnyway' in choice ? { createAnyway: true } : {}),
               ...common,
             },
       );
       if (!result.ok) return setError(result.error);
-      const who = kind === 'member' ? (members.find((m) => m.id === playerId)?.name ?? 'The member') : name.trim();
+      if (result.data.matches) return setMatches(result.data.matches);
+      const who = memberId
+        ? (members.find((m) => m.id === memberId)?.name ?? matches?.find((m) => m.id === memberId)?.name ?? 'The member')
+        : name.trim();
       toast(result.data.paid ? `${who} is signed up and paid.` : `${who} is signed up.`, 'success');
       onClose();
       router.refresh();
@@ -137,7 +146,7 @@ function AddPersonDialog({
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={save} loading={saving}>
+          <Button onClick={() => save()} loading={saving}>
             <UserPlus className="h-3.5 w-3.5" /> Add
           </Button>
         </div>
@@ -150,6 +159,7 @@ function AddPersonDialog({
           onChange={(id) => {
             setKind(id as 'member' | 'guest');
             setError(null);
+            setMatches(null);
           }}
           tabs={[
             { id: 'guest', label: 'No account' },
@@ -169,7 +179,10 @@ function AddPersonDialog({
             <Input
               label="Name"
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                setMatches(null);
+              }}
               maxLength={120}
               autoComplete="off"
               placeholder="Their full name"
@@ -264,6 +277,27 @@ function AddPersonDialog({
           Everything but the name can be left empty. No waiver is asked for. If the event later runs as a
           tournament, they are entered in it like everybody else.
         </p>
+        {matches && matches.length > 0 && (
+          <div className="space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+            {matches.map((match) => (
+              <div key={match.id} className="flex flex-wrap items-center justify-between gap-2">
+                <p className="m-0 text-sm text-[var(--text-primary)]">
+                  Did you mean {match.name}
+                  {match.identifier ? ` (${match.identifier})` : ''}?
+                  <span className="block text-xs text-[var(--text-muted)]">{match.reasons.join(' · ')}</span>
+                </p>
+                <Button size="sm" variant="secondary" onClick={() => save({ useId: match.id })} disabled={saving}>
+                  Use this member
+                </Button>
+              </div>
+            ))}
+            <div className="flex justify-end">
+              <Button size="sm" variant="ghost" onClick={() => save({ createAnyway: true })} disabled={saving}>
+                Create anyway
+              </Button>
+            </div>
+          </div>
+        )}
         {error && <p className="text-sm text-[var(--color-danger)]">{error}</p>}
       </div>
     </Dialog>
