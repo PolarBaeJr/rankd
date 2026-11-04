@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, Dialog, Input, useConfirm } from '@badminton/ui';
+import { Badge, Button, Dialog, Input, Select, useConfirm } from '@badminton/ui';
 import {
   allowedTournamentCourts,
+  courtLabel,
   describeStageScoring,
   eventIsPlaying,
   formatResultsFrom,
@@ -23,17 +24,33 @@ import {
   type TournamentEventStatus,
 } from '@badminton/shared';
 import { Layers, Plus, RefreshCw } from 'lucide-react';
-import { addStageRound, drawStage, placeLateEntrant, redrawStage, voidCourtHelperMatch } from '@/lib/tournament-actions';
 import {
+  addStageRound,
+  drawStage,
+  placeLateEntrant,
+  redrawStage,
+  voidCourtHelperMatch,
+  voidOpenMatchesForEntry,
+  voidUnplayedMatches,
+  type BulkVoidResult,
+} from '@/lib/tournament-actions';
+import {
+  bulkVoidSummary,
+  drawField,
+  drawLeftOutMessage,
   lateEntrantConfirmMessage,
+  lateEntrantGroupOptions,
   lateEntryWindow,
+  openMatchesOfEntry,
   splitGroupMatches,
   stageDrawControl,
   stageExtendControl,
   uncategorisedWarning,
   unplacedLateEntries,
+  unplayedMatchesIn,
 } from '@/lib/stage-controls';
 import { absentEntryIds, autoCallFailureText, deskRows } from '@/lib/live-desk';
+import type { ActionResult } from '@/lib/action-result';
 import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { CourtCard, type CourtDeskRow } from './CourtCard';
@@ -60,8 +77,15 @@ interface Props {
   canEnterResult: boolean;
   /** Holds the void key; otherwise Void shows only on a court in helperCourtIds. */
   canVoid?: boolean;
+  /** Holds the no-show key: with canVoid, Did not come on a group's table. */
+  canMarkNoShow?: boolean;
   helperCourtIds?: string[];
 }
+
+/** What the void dialog is about to do: one entry's open matches, or a stage's or a group's. */
+type VoidAsk =
+  | { kind: 'entry'; entryId: string; title: string; count: number; live: number }
+  | { kind: 'scope'; stage: number; pool: number | null; group: number | null; title: string; count: number; live: number; skipped: number };
 
 const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named matches' } as const;
 
@@ -78,7 +102,7 @@ const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named ma
  */
 export function StagesTab({
   event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
-  canVoid = false, helperCourtIds = [],
+  canVoid = false, canMarkNoShow = false, helperCourtIds = [],
 }: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -86,6 +110,11 @@ export function StagesTab({
   const confirm = useConfirm();
   const [roundsFor, setRoundsFor] = useState<string | null>(null);
   const [roundCount, setRoundCount] = useState('1');
+  const [lateFor, setLateFor] = useState<{ view: StageView; entryId: string } | null>(null);
+  const [lateGroup, setLateGroup] = useState('');
+  const [lateCourt, setLateCourt] = useState('');
+  const [voidAsk, setVoidAsk] = useState<VoidAsk | null>(null);
+  const [voidReason, setVoidReason] = useState('');
   const router = useRouter();
   const status = event.status as TournamentEventStatus;
   // The server's rule (enterMatchResultImpl), not the legacy tabs' wider one:
@@ -114,8 +143,8 @@ export function StagesTab({
     [entries, nameMap],
   );
 
-  const { views, lateEntries } = useMemo(() => {
-    if (!cfg) return { views: [], lateEntries: [] };
+  const { views, lateEntries, results } = useMemo(() => {
+    if (!cfg) return { views: [], lateEntries: [], results: null };
     const results = formatResultsFrom(
       cfg,
       entries.map((e) => ({ id: e.id, seed: e.seed_number ?? null, status: e.status })),
@@ -139,8 +168,16 @@ export function StagesTab({
     return {
       views: stagesView(cfg, results),
       lateEntries: open && first.kind === 'groups' ? unplacedLateEntries(first, results, entries) : [],
+      results,
     };
   }, [cfg, entries, matches, isDoubles, canGenerate, event]);
+  // Once check-in is in use, the ones still only registered (drawField).
+  const notCheckedIn = useMemo(() => new Set(drawField(entries).leftOut.map((e) => e.id)), [entries]);
+  const sidedMatches = useMemo(
+    () => matches.map((m) => { const { a, b } = matchSides(m, isDoubles); return { ...m, a, b }; }),
+    [matches, isDoubles],
+  );
+  const canBulkVoid = isLive && canVoid;
   const roundsView = roundsFor ? views.find((v) => v.stage.key === roundsFor) ?? null : null;
   const roundCountValid = /^\d+$/.test(roundCount.trim()) && Number(roundCount) >= 1 && Number(roundCount) <= 10;
 
@@ -169,10 +206,22 @@ export function StagesTab({
   }
 
   async function press(view: StageView, action: 'draw' | 'redraw') {
+    // A redraw of stage 1 takes the field by the same rule, so it says who it drops too.
+    const leftOut = view.number === 1 && view.stage.entrants.from === 'field'
+      ? drawLeftOutMessage([...notCheckedIn].map((id) => nameMap[id] ?? 'Unknown'))
+      : null;
+    if (action === 'draw' && leftOut) {
+      const ok = await confirm({
+        title: `Draw ${view.stage.name} without them?`,
+        message: leftOut,
+        confirmLabel: 'Draw who is here',
+      });
+      if (!ok) return;
+    }
     if (action === 'redraw') {
       const ok = await confirm({
         title: `Redraw ${view.stage.name}?`,
-        message: `Every match in ${view.stage.name} is deleted and drawn again. Match numbers, courts and who plays whom can all change.`,
+        message: `Every match in ${view.stage.name} is deleted and drawn again. Match numbers, courts and who plays whom can all change.${leftOut ? ` ${leftOut}` : ''}`,
         confirmLabel: 'Redraw stage',
         danger: true,
       });
@@ -188,18 +237,46 @@ export function StagesTab({
     router.refresh();
   }
 
-  async function placeLate(view: StageView, entryId: string, message: string) {
-    const ok = await confirm({
-      title: `Place ${nameMap[entryId] ?? 'this entry'} in a group?`,
-      message,
-      confirmLabel: 'Place in a group',
-    });
-    if (!ok) return;
+  function openLate(view: StageView, entryId: string, pool: number, group: number) {
+    setLateFor({ view, entryId });
+    setLateGroup(`${pool}:${group}`);
+    setLateCourt('');
+  }
+
+  async function placeLate(view: StageView, entryId: string, pool: number, group: number) {
+    setLateFor(null);
     setBusy(`${view.stage.key}:late:${entryId}`);
-    const res = await placeLateEntrant(event.id, view.stage.key, entryId);
+    const res = await placeLateEntrant(event.id, view.stage.key, entryId, { pool, group, courtId: lateCourt || null });
     setBusy(null);
     if (!res.ok) { toast(res.error, 'error'); return; }
     toast(`${nameMap[entryId] ?? 'Entry'} placed, with ${res.data.matches} match${res.data.matches === 1 ? '' : 'es'} added`, 'success');
+    router.refresh();
+  }
+
+  function askVoidEntry(entryId: string) {
+    const { open, live } = openMatchesOfEntry(sidedMatches, entryId);
+    setVoidReason('');
+    setVoidAsk({ kind: 'entry', entryId, title: `${nameMap[entryId] ?? 'This entry'} did not come?`, count: open.length, live });
+  }
+
+  function askVoidScope(stage: number, pool: number | null, group: number | null, label: string) {
+    const { open, live, skipped } = unplayedMatchesIn(sidedMatches, { stage, pool, group });
+    setVoidReason('');
+    setVoidAsk({ kind: 'scope', stage, pool, group, title: `Void the unplayed matches of ${label}?`, count: open.length, live, skipped });
+  }
+
+  async function runVoid(ask: VoidAsk) {
+    const reason = voidReason.trim();
+    if (!reason) return;
+    setVoidAsk(null);
+    setBusy('void');
+    const res: ActionResult<BulkVoidResult> = ask.kind === 'entry'
+      ? await voidOpenMatchesForEntry(event.id, ask.entryId, reason)
+      : await voidUnplayedMatches(event.id, ask.stage, ask.pool, ask.group, reason);
+    setBusy(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const { text, ok } = bulkVoidSummary(res.data);
+    toast(ask.kind === 'entry' ? `Marked as a no-show. ${text}` : text, ok ? 'success' : 'error');
     router.refresh();
   }
 
@@ -312,6 +389,16 @@ export function StagesTab({
                 {status !== 'completed' && (
                   <div className="flex flex-col items-end gap-1">
                     <div className="flex flex-wrap justify-end gap-2">
+                      {canBulkVoid && view.drawn && !view.complete && unplayedMatchesIn(sidedMatches, { stage: view.number }).open.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          disabled={busy !== null}
+                          onClick={() => askVoidScope(view.number, null, null, view.stage.name)}
+                          className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                        >
+                          Void unplayed
+                        </Button>
+                      )}
                       {extend && (
                         <Button
                           variant="ghost"
@@ -364,22 +451,25 @@ export function StagesTab({
                 >
                   <p className="text-sm font-semibold text-[var(--text-primary)]">Not in a group yet</p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    Entered after the draw. Placing one adds only their matches; nothing already drawn moves.
+                    Entered or checked in after the draw. Placing one adds only their matches; nothing already drawn moves.
                   </p>
                   <ul className="space-y-1.5">
                     {lateEntries.map(({ id, plan }) => {
-                      const groupLabel = stageGroupLabel(view.stage as GroupsStage, plan.pool, plan.group);
-                      const message = lateEntrantConfirmMessage(plan, groupLabel, plan.opponents.map((o) => nameMap[o] ?? 'Unknown'));
                       const key = `${view.stage.key}:late:${id}`;
                       return (
                         <li key={id} className="flex items-center justify-between gap-3">
-                          <span className="text-sm text-[var(--text-primary)] truncate">{nameMap[id] ?? 'Unknown'}</span>
+                          <span className="text-sm text-[var(--text-primary)] truncate">
+                            {nameMap[id] ?? 'Unknown'}
+                            {notCheckedIn.has(id) && (
+                              <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-warning)]">Not checked in</span>
+                            )}
+                          </span>
                           <Button
                             size="sm"
                             variant="ghost"
                             loading={busy === key}
                             disabled={busy !== null && busy !== key}
-                            onClick={() => placeLate(view, id, message)}
+                            onClick={() => openLate(view, id, plan.pool, plan.group)}
                             className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                           >
                             Place in a group
@@ -409,6 +499,10 @@ export function StagesTab({
                   nameMap={nameMap}
                   courtCard={courtCard}
                   matchRow={(m) => matchRow(view, m)}
+                  onVoidGroup={canBulkVoid && busy === null
+                    ? (pool, group, label) => askVoidScope(view.number, pool, group, label)
+                    : undefined}
+                  onAbsent={canBulkVoid && canMarkNoShow && busy === null ? askVoidEntry : undefined}
                 />
               ) : (
                 view.pools.map((pool) => (
@@ -489,6 +583,100 @@ export function StagesTab({
         </Dialog>
       )}
 
+      {lateFor && results && lateFor.view.stage.kind === 'groups' && (() => {
+        const { view, entryId } = lateFor;
+        const stage = view.stage as GroupsStage;
+        const options = lateEntrantGroupOptions(stage, results, entries, entryId);
+        const plan = options.find((o) => `${o.pool}:${o.group}` === lateGroup) ?? options[0];
+        const name = nameMap[entryId] ?? 'this entry';
+        const groupLabel = plan ? stageGroupLabel(stage, plan.pool, plan.group) : '';
+        const courtChoices = plan && courts
+          ? (allowedTournamentCourts(courts, stageCourtLabels(cfg, { stage: view.number, pool_number: plan.pool })) ?? activeCourts)
+            .filter((c) => c.active)
+          : [];
+        return (
+          <Dialog open onClose={() => setLateFor(null)} title={`Place ${name} in a group`}>
+            <form
+              className="space-y-4"
+              onSubmit={(e) => { e.preventDefault(); if (plan) void placeLate(view, entryId, plan.pool, plan.group); }}
+            >
+              {notCheckedIn.has(entryId) && (
+                <p className="text-sm text-[var(--color-warning)]" role="status">
+                  {name} has not checked in, so no court will call their matches until they do.
+                </p>
+              )}
+              {options.length === 0 ? (
+                <p className="text-sm text-[var(--text-muted)]">There is no group to put them in. Reload the page.</p>
+              ) : (
+                <>
+                  <Select
+                    label="Group"
+                    value={plan ? `${plan.pool}:${plan.group}` : ''}
+                    options={options.map((o, i) => ({
+                      value: `${o.pool}:${o.group}`,
+                      label: stageGroupLabel(stage, o.pool, o.group),
+                      badge: i === 0 ? 'Suggested' : undefined,
+                    }))}
+                    onValueChange={(v) => { setLateGroup(v); setLateCourt(''); }}
+                  />
+                  {courtChoices.length > 0 && (
+                    <Select
+                      label="Court"
+                      value={lateCourt}
+                      options={[
+                        { value: '', label: 'Wherever the stage puts them' },
+                        ...courtChoices.map((c) => ({ value: c.id, label: courtLabel(c.label) ?? c.label })),
+                      ]}
+                      onValueChange={setLateCourt}
+                    />
+                  )}
+                  {plan && (
+                    <p className="text-sm text-[var(--text-muted)]">
+                      {lateEntrantConfirmMessage(plan, groupLabel, plan.opponents.map((o) => nameMap[o] ?? 'Unknown'))}
+                    </p>
+                  )}
+                </>
+              )}
+              <div className="flex justify-between gap-2">
+                <Button type="button" variant="ghost" onClick={() => setLateFor(null)}>Cancel</Button>
+                <Button type="submit" disabled={!plan}>Place in {groupLabel || 'a group'}</Button>
+              </div>
+            </form>
+          </Dialog>
+        );
+      })()}
+
+      {voidAsk && (
+        <Dialog open onClose={() => setVoidAsk(null)} title={voidAsk.title}>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); void runVoid(voidAsk); }}
+          >
+            <p className="text-sm text-[var(--text-muted)]">
+              {voidAsk.kind === 'entry'
+                ? `They are marked as a no-show and ${voidAsk.count === 1 ? 'their 1 unplayed match is' : `their ${voidAsk.count} unplayed matches are`} voided. A voided match counts for neither side.`
+                : `${voidAsk.count === 1 ? '1 unplayed match is' : `${voidAsk.count} unplayed matches are`} voided. A voided match counts for neither side.`}
+              {voidAsk.live > 0 && ` ${voidAsk.live === 1 ? '1 match is' : `${voidAsk.live} matches are`} on court now and left alone: void ${voidAsk.live === 1 ? 'it' : 'them'} from the court.`}
+              {voidAsk.kind === 'scope' && voidAsk.skipped > 0 && ` ${voidAsk.skipped === 1 ? '1 match is' : `${voidAsk.skipped} matches are`} still waiting on a side and left alone.`}
+            </p>
+            <Input
+              label="Reason"
+              value={voidReason}
+              maxLength={500}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder={voidAsk.kind === 'entry' ? 'For example: did not come' : 'For example: out of time'}
+              autoFocus
+            />
+            <div className="flex justify-between gap-2">
+              <Button type="button" variant="ghost" onClick={() => setVoidAsk(null)}>Cancel</Button>
+              <Button type="submit" variant="danger" disabled={!voidReason.trim()}>
+                {voidAsk.kind === 'entry' ? 'Mark no-show and void' : `Void ${voidAsk.count} match${voidAsk.count === 1 ? '' : 'es'}`}
+              </Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+
       {scoreMatch && (
         <ScoreEntryDialog
           match={scoreMatch}
@@ -518,7 +706,7 @@ const bySlot = (ms: TournamentMatchRow[]) =>
  * shared courts sit in one row above all the columns.
  */
 function GroupColumns({
-  view, stage, cfg, own, courts, activeCourts, isDoubles, nameMap, courtCard, matchRow,
+  view, stage, cfg, own, courts, activeCourts, isDoubles, nameMap, courtCard, matchRow, onVoidGroup, onAbsent,
 }: {
   view: StageView;
   stage: GroupsStage;
@@ -530,7 +718,12 @@ function GroupColumns({
   nameMap: Record<string, string>;
   courtCard: (court: TournamentCourt, groupName?: string | null) => React.ReactNode;
   matchRow: (m: TournamentMatchRow) => React.ReactNode;
+  /** Void unplayed on each group's table, while the desk may void. */
+  onVoidGroup?: (pool: number, group: number, label: string) => void;
+  /** Did not come on each row with a match still to play. */
+  onAbsent?: (entryId: string) => void;
 }) {
+  const sided = own.map((m) => ({ ...m, ...matchSides(m, isDoubles) }));
   const columns: Array<{ key: string; title: string; pool: number; group: number | null; groups: StageViewGroup[] }> =
     stage.pools > 1
       ? view.pools.map((p) => ({ key: `p${p.pool}`, title: p.label || (p.groups[0]?.label ?? ''), pool: p.pool, group: null, groups: p.groups }))
@@ -557,9 +750,21 @@ function GroupColumns({
                 <h4 className="text-sm font-bold text-[var(--text-primary)]">{col.title}</h4>
               )}
               {colCourts.map((c) => courtCard(c, col.title || null))}
-              {col.groups.map((g) => (
-                <GroupTable key={`${g.pool}-${g.group}`} group={g} isDoubles={isDoubles} nameMap={nameMap} />
-              ))}
+              {col.groups.map((g) => {
+                const groupMatches = sided.filter((m) => m.pool_number === g.pool && m.group_number === g.group);
+                const unplayed = unplayedMatchesIn(groupMatches, { stage: view.number }).open.length;
+                return (
+                  <GroupTable
+                    key={`${g.pool}-${g.group}`}
+                    group={g}
+                    isDoubles={isDoubles}
+                    nameMap={nameMap}
+                    onVoidUnplayed={onVoidGroup && unplayed > 0 ? () => onVoidGroup(g.pool, g.group, g.label) : undefined}
+                    onAbsent={onAbsent}
+                    hasOpen={(id) => openMatchesOfEntry(groupMatches, id).open.length > 0}
+                  />
+                );
+              })}
               {colMatches.length > 0 && (
                 <details className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
                   <summary className="cursor-pointer select-none px-3 py-2.5 text-sm font-medium text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded-lg">
@@ -580,7 +785,16 @@ function GroupColumns({
   );
 }
 
-function GroupTable({ group: g, isDoubles, nameMap }: { group: StageViewGroup; isDoubles: boolean; nameMap: Record<string, string> }) {
+function GroupTable({
+  group: g, isDoubles, nameMap, onVoidUnplayed, onAbsent, hasOpen,
+}: {
+  group: StageViewGroup;
+  isDoubles: boolean;
+  nameMap: Record<string, string>;
+  onVoidUnplayed?: () => void;
+  onAbsent?: (entryId: string) => void;
+  hasOpen?: (entryId: string) => boolean;
+}) {
   return (
     <div
       className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] overflow-hidden"
@@ -590,6 +804,15 @@ function GroupTable({ group: g, isDoubles, nameMap }: { group: StageViewGroup; i
       <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-sm font-semibold text-[var(--text-primary)]">{g.label}</span>
         {g.complete && <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Played out</span>}
+        {onVoidUnplayed && (
+          <button
+            type="button"
+            onClick={onVoidUnplayed}
+            className="text-xs text-[var(--text-muted)] font-medium hover:underline hover:text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
+          >
+            Void unplayed
+          </button>
+        )}
       </div>
       <table className="w-full" aria-label={`${g.label} standings table`}>
         <thead>
@@ -616,6 +839,16 @@ function GroupTable({ group: g, isDoubles, nameMap }: { group: StageViewGroup; i
                 <td className="px-3 py-1.5 text-sm font-medium text-[var(--text-primary)]">
                   {nameMap[r.id] ?? 'Unknown'}
                   {r.qualified && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-success)]">Through</span>}
+                  {onAbsent && hasOpen?.(r.id) && (
+                    <button
+                      type="button"
+                      onClick={() => onAbsent(r.id)}
+                      aria-label={`${nameMap[r.id] ?? 'This entry'} did not come`}
+                      className="ml-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)] hover:underline hover:text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
+                    >
+                      Did not come
+                    </button>
+                  )}
                 </td>
                 <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-success)]">{r.wins}</td>
                 <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-danger)]">{r.losses}</td>

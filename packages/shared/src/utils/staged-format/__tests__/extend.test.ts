@@ -327,6 +327,23 @@ describe('planLateEntrant', () => {
     expect(plan.anyOddGroup).toBe(false);
   });
 
+  it('plays the group the desk picked by the same rule, and refuses a group that is not there', () => {
+    const cfg = groupsConfig({ pools: 1, groupsPerPool: 2 });
+    const drawn = teams(9);
+    const rows = buildStageRows(cfg, 'groups', drawn, 'g', { rng: rngFrom(7), newId: idsFrom('m') });
+    const late = team(10);
+    const field = [...drawn, late];
+    const active = new Set(field.map((e) => e.id));
+    const results = resultsOf(cfg, field, rows);
+    const own = planLateEntrant(cfg.stages[0]!, results, active, late.id)!;
+    const other = own.group === 1 ? 2 : 1;
+    const picked = planLateEntrant(cfg.stages[0]!, results, active, late.id, { pool: 1, group: other })!;
+    expect(picked.group).toBe(other);
+    const members = results.groups.find((g) => g.pool === 1 && g.group === other)!.members;
+    expect([...picked.opponents].sort()).toEqual([...members].sort());
+    expect(planLateEntrant(cfg.stages[0]!, results, active, late.id, { pool: 1, group: 9 })).toBeNull();
+  });
+
   it('places nobody already in a group, and nobody before a draw', () => {
     const cfg = groupsConfig({ pools: 1, groupsPerPool: 1 });
     const field = teams(4);

@@ -79,13 +79,17 @@ function knockoutOrder(cfg: FormatConfig, stage: FormatStage, results: FormatRes
 }
 
 /**
- * Every entry's final place, 1..N with no ties.
+ * Every entry's final place, 1..N with no ties, for every entry that played.
  *
  *  1. explicit winnerPlace / loserPlace of finished 'matches' stage fixtures;
  *  2. everyone else after the last explicit place, those who went further
  *     (a later last stage) first, then by that stage's own order: knockout
  *     depth, group finishing place then record, or record in a 'matches' stage;
  *  3. still level: seed, then id, so the answer never depends on input order.
+ *
+ * An entry in no group and on no match of any stage was never drawn (left out
+ * for not checking in, say) and gets no place, so no ladder points. A no-show
+ * who was drawn is still placed, at the bottom of the last stage it reached.
  */
 export function finalPlacings(cfg: FormatConfig, results: FormatResults): Map<string, number> {
   const out = new Set(results.out ?? []);
@@ -114,15 +118,11 @@ export function finalPlacings(cfg: FormatConfig, results: FormatResults): Map<st
 
   const rest = participants.filter((id) => !placed.has(id));
   const order: string[] = [];
-  for (let si = cfg.stages.length - 1; si >= -1; si--) {
-    const ids = new Set(rest.filter((id) => (lastStage.get(id) ?? -1) === si));
+  for (let si = cfg.stages.length - 1; si >= 0; si--) {
+    const ids = new Set(rest.filter((id) => lastStage.get(id) === si));
     if (ids.size === 0) continue;
-    const stage = cfg.stages[si];
-    if (!stage) {
-      const seeds = seedMap(results);
-      order.push(...[...ids].sort((x, y) =>
-        (seeds.get(x) ?? Infinity) - (seeds.get(y) ?? Infinity) || (x < y ? -1 : x > y ? 1 : 0)));
-    } else if (stage.kind === 'groups') {
+    const stage = cfg.stages[si]!;
+    if (stage.kind === 'groups') {
       order.push(...groupsOrder(cfg, stage, results, ids));
     } else if (stage.kind === 'knockout') {
       order.push(...knockoutOrder(cfg, stage, results, ids));

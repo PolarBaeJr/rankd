@@ -9,6 +9,7 @@ import { ArrowLeft, Users, Calendar, Clock, Zap, Crown, Plus, Swords, DollarSign
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
+import { openEventCount } from '@/lib/tournament-close';
 import { LiveTournament } from '../live-tournament';
 import { CourtsEditor } from './courts-editor';
 import { COURTS_MIGRATION_MISSING, readTournamentCourts, readUsedCourtLabels } from '@/lib/tournament-courts';
@@ -222,6 +223,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                 status={tournament.status}
                 suspendedAt={tournament.suspended_at}
                 suspensionReason={tournament.suspension_reason}
+                openEvents={openEventCount((events ?? []).map((ev) => ev.status as string))}
               />
             </>
           }

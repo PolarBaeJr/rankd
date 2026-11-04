@@ -38,6 +38,7 @@ import {
 // the barrel is imported by client components in both apps.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { formSignedWaivers } from '@badminton/shared';
+import { drawField } from '../stage-controls';
 import type {
   TournamentEventType,
   RatingSettings,
@@ -2359,16 +2360,20 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
  * `expected` is the size the draw was actually built from. Pool-seeded events
  * pass their own subset and are exempted by the caller — their field comes from
  * another event's standings, so a new entry here was never going to be in it.
+ *
+ * `checkedInOnce` is a staged draw's field (drawField): once anyone has checked
+ * in, only the checked-in entries count.
  */
 export async function assertFieldDidNotGrow(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
   doubles: boolean,
   expected: number,
+  checkedInOnce = false,
 ): Promise<void> {
   const { data, error } = await adminClient
     .from(doubles ? 'tournament_pairs' : 'tournament_participants')
-    .select('id')
+    .select('id, status')
     .eq('event_id', eventId)
     .in('status', ['registered', 'checked_in']);
 
@@ -2376,7 +2381,7 @@ export async function assertFieldDidNotGrow(
   // silently-permissive shape as every other discarded read in this audit.
   if (error) throw new Error(`Could not re-check the field before publishing: ${writeErrorMessage(error)}`);
 
-  const now = (data ?? []).length;
+  const now = checkedInOnce ? drawField(data ?? []).field.length : (data ?? []).length;
   if (now > expected) {
     const arrived = now - expected;
     throw new ExpectedError(

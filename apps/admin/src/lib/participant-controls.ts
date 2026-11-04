@@ -140,6 +140,12 @@ export interface DrawCapabilities {
    */
   voidResult: boolean;
   /**
+   * tournaments.draw.noshow.write: with voidResult, the Did not come button on
+   * a staged group's table, which marks the entry a no-show and voids its
+   * unplayed matches. The server asks both again.
+   */
+  markNoShow: boolean;
+  /**
    * tournaments.results.edit.write: approving or declining a category change
    * for a team that has already played with head starts (00279). The key
    * correcting a recorded result asks, because the two decide the same thing:
@@ -456,4 +462,17 @@ export function regenerateDrawControl(
     };
   }
   return { show: true, blockedReason: null };
+}
+
+/**
+ * What the Check-In tab's no-show X does. Before play it marks the entry a
+ * no-show and nothing more. Once the event is playing its drawn matches it is
+ * "Did not come": the no-show plus a void of the entry's unplayed matches, so
+ * it needs the void key as well as the no-show key, and without both it is not
+ * offered. Drawn but not started stays a plain no-show: a void is refused
+ * before the start, and auto-call already skips an absent team.
+ */
+export function checkInNoShowPath(playingDrawnMatches: boolean, canVoidAndMarkNoShow: boolean): 'mark' | 'void' | null {
+  if (!playingDrawnMatches) return 'mark';
+  return canVoidAndMarkNoShow ? 'void' : null;
 }

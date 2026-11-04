@@ -50,8 +50,11 @@ import {
   MATCH_ROUTES,
   refreshStagedHandicaps,
   currentStagedHeadStarts,
+  fencedRefusal,
+  type FencedFieldResult,
   type MatchRoute,
 } from './_internal';
+import { openMatchesOfEntry, unplayedMatchesIn } from '../stage-controls';
 import { fillFreeCourts, type AutoCallEvent, type AutoCallReport } from './auto-call';
 import { requireConsoleUser } from '../court-helper-gate';
 import { courtHelperDecision, hasHelperRow, normaliseVoidReason } from '../court-helpers';
@@ -2042,6 +2045,177 @@ export async function voidCourtHelperMatch(
     }
     return voidMatchImpl(matchId, text, { kind: 'helper', actorId: viewer.id as string });
   });
+}
+
+// ============================================================
+// Voiding in bulk: a team that did not come, a group or stage left unplayed
+// ============================================================
+//
+// Each match goes through voidMatchImpl, the desk's own void, one at a time,
+// so every one keeps its guards, its note, its audit row and its auto-call. One
+// that is refused does not stop the rest, and what was voided is read back at
+// the end rather than counted as it goes: a void can land and then throw in the
+// standings recompute after it.
+
+export interface BulkVoidResult {
+  voided: number;
+  failed: number;
+  /** Matches on court right now, left for their court to void. */
+  live: number;
+  /** Unplayed matches with a side not known yet, never voided in bulk. */
+  skipped: number;
+}
+
+type BulkVoidMatch = {
+  id: string;
+  status: string;
+  is_bye: boolean | null;
+  stage: number | null;
+  pool_number: number | null;
+  group_number: number | null;
+  a: string | null;
+  b: string | null;
+};
+
+async function readPlayingEvent(adminClient: ReturnType<typeof createAdminClient>, eventId: unknown) {
+  if (typeof eventId !== 'string' || eventId === '') throw new ExpectedError('Event not found');
+  const { data: event, error } = await adminClient.from('tournament_events')
+    .select('id, tournament_id, event_type, status')
+    .eq('id', eventId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the event: ${error.message}`);
+  if (!event) throw new ExpectedError('Event not found');
+  if (!eventIsPlaying(event.status)) throw new ExpectedError('Start the event before voiding matches.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+  return { event, doubles: isDoublesEvent(event.event_type as TournamentEventType) };
+}
+
+async function readMatchesForBulkVoid(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  doubles: boolean,
+): Promise<BulkVoidMatch[]> {
+  const { data, error } = await adminClient.from('tournament_matches')
+    .select('id, status, is_bye, stage, pool_number, group_number, pair_a_id, pair_b_id, participant_a_id, participant_b_id')
+    .eq('event_id', eventId);
+  // A failed read must not read as "nothing to void".
+  if (error) throw new Error(`Could not read the event's matches: ${error.message}`);
+  return (data ?? []).map((m) => ({
+    id: m.id,
+    status: m.status,
+    is_bye: m.is_bye,
+    stage: m.stage,
+    pool_number: m.pool_number,
+    group_number: m.group_number,
+    a: doubles ? m.pair_a_id : m.participant_a_id,
+    b: doubles ? m.pair_b_id : m.participant_b_id,
+  }));
+}
+
+async function voidEach(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchIds: string[],
+  reason: string,
+): Promise<{ voided: number; failed: number }> {
+  if (matchIds.length === 0) return { voided: 0, failed: 0 };
+  for (const id of matchIds) {
+    try {
+      await voidMatchImpl(id, reason);
+    } catch (err) {
+      if (!(err instanceof ExpectedError)) Sentry.captureException(err);
+    }
+  }
+  const { data, error } = await adminClient.from('tournament_matches').select('id, status').in('id', matchIds);
+  if (error) throw new Error(`The matches were voided but could not be read back: ${error.message}. Reload to see them.`);
+  const voided = (data ?? []).filter((m) => m.status === 'voided').length;
+  return { voided, failed: matchIds.length - voided };
+}
+
+/**
+ * "DID NOT COME": the entry is marked a no-show, then every match of theirs
+ * nothing has happened on yet is voided with the reason. The no-show goes
+ * first, so an entry that cannot be one (withdrawn, say) voids nothing, and
+ * auto-call stops picking them before the voids free any court. A match of
+ * theirs on court now is left to its court.
+ */
+async function voidOpenMatchesForEntryImpl(eventId: unknown, entryId: unknown, reason: unknown): Promise<BulkVoidResult> {
+  await requireCapability('tournaments.results.void.write');
+  await requireCapability('tournaments.draw.noshow.write');
+  const text = normaliseVoidReason(reason);
+  if (typeof entryId !== 'string' || entryId === '') throw new ExpectedError('That entry is not in this event.');
+  const adminClient = createAdminClient();
+  const { event, doubles } = await readPlayingEvent(adminClient, eventId);
+
+  const { data: entry, error: entryError } = await adminClient.from(doubles ? 'tournament_pairs' : 'tournament_participants')
+    .select('id')
+    .eq('id', entryId)
+    .eq('event_id', event.id)
+    .maybeSingle();
+  if (entryError) throw new Error(`Could not read the entry: ${entryError.message}`);
+  if (!entry) throw new ExpectedError('That entry is not in this event.');
+
+  const { data: noShow, error: noShowError } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: entryId,
+    p_is_pair: doubles,
+    p_new_status: 'no_show',
+    p_actor: null,
+  });
+  if (noShowError) {
+    Sentry.captureException(noShowError);
+    throw new Error(noShowError.message);
+  }
+  const noShowResult = noShow as FencedFieldResult | null;
+  if (!noShowResult?.ok) fencedRefusal(noShowResult, doubles ? 'Pair not found' : 'Participant not found');
+
+  const { open, live } = openMatchesOfEntry(await readMatchesForBulkVoid(adminClient, event.id, doubles), entryId);
+  const done = await voidEach(adminClient, open.map((m) => m.id), text);
+  revalidateEventPaths(event.tournament_id, event.id);
+  return { ...done, live, skipped: 0 };
+}
+
+export async function voidOpenMatchesForEntry(
+  eventId: string,
+  entryId: string,
+  reason: string,
+): Promise<ActionResult<BulkVoidResult>> {
+  return runAction(() => voidOpenMatchesForEntryImpl(eventId, entryId, reason));
+}
+
+/** "VOID UNPLAYED": every match of a stage, or of one group of it, nothing has happened on yet. */
+async function voidUnplayedMatchesImpl(
+  eventId: unknown,
+  stage: unknown,
+  pool: unknown,
+  group: unknown,
+  reason: unknown,
+): Promise<BulkVoidResult> {
+  await requireCapability('tournaments.results.void.write');
+  const text = normaliseVoidReason(reason);
+  const whole = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1;
+  if (!whole(stage) || (pool != null && !whole(pool)) || (group != null && !whole(group))) {
+    throw new ExpectedError('Pick a stage or a group of it.');
+  }
+  const adminClient = createAdminClient();
+  const { event, doubles } = await readPlayingEvent(adminClient, eventId);
+
+  const { open, live, skipped } = unplayedMatchesIn(await readMatchesForBulkVoid(adminClient, event.id, doubles), {
+    stage,
+    pool: (pool as number | null) ?? null,
+    group: (group as number | null) ?? null,
+  });
+  const done = await voidEach(adminClient, open.map((m) => m.id), text);
+  revalidateEventPaths(event.tournament_id, event.id);
+  return { ...done, live, skipped };
+}
+
+export async function voidUnplayedMatches(
+  eventId: string,
+  stage: number,
+  pool: number | null,
+  group: number | null,
+  reason: string,
+): Promise<ActionResult<BulkVoidResult>> {
+  return runAction(() => voidUnplayedMatchesImpl(eventId, stage, pool, group, reason));
 }
 
 export async function undoMatchResult(matchId: string): Promise<ActionResult<void>> {

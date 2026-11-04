@@ -38,6 +38,7 @@ import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlo
 import { EventSettingsDialog } from './EventSettingsDialog';
 import { EventWindowsDialog } from './EventWindowsDialog';
 import { regenerateDrawControl, type DrawCapabilities } from '@/lib/participant-controls';
+import { drawLeftOutMessage } from '@/lib/stage-controls';
 import type { SiblingEvent } from '../../../event-format-fields';
 import type { TournamentEventRow } from '@/lib/tournament-types';
 
@@ -80,9 +81,11 @@ interface Props {
   hasThirdPlace: boolean;
   /** A staged event: the stage numbers that have matches. Empty otherwise. */
   stagesDrawn: number[];
+  /** A staged event: the entries its first draw leaves out (drawField), by name. */
+  drawLeftOut?: string[];
 }
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, undecidedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolUndecided, drawCapabilities, hasThirdPlace, stagesDrawn }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, undecidedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolUndecided, drawCapabilities, hasThirdPlace, stagesDrawn, drawLeftOut = [] }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -181,6 +184,15 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     : !seededFromPool && event.seeding_method !== 'manual';
 
   async function handleAction() {
+    const leftOut = status === 'checkin' && staged ? drawLeftOutMessage(drawLeftOut) : null;
+    if (leftOut) {
+      const ok = await confirm({
+        title: `Draw ${firstStage?.name ?? 'Stage 1'} without them?`,
+        message: leftOut,
+        confirmLabel: 'Draw who is here',
+      });
+      if (!ok) return;
+    }
     setLoading(true);
     try {
       if (status === 'registration') {
