@@ -2,10 +2,11 @@
 -- ROLLBACK OF 00318: the check-in-after-the-draw kill switch
 --
 -- Puts back 00315's publish_stage_draw, set_field_entry_status and
--- set_pair_member_check_in, which do not ask release_flag_on. Then drops
--- release_flag_on, but only when no other function's body still names it:
--- 00316 (the ladder fix) creates and asks it too, and a dropped helper would
--- break that function at its next call, not here.
+-- set_pair_member_check_in, which do not ask release_flag_on, and 00286's
+-- club_change_from_platform_settings, so a kill switch save drafts a club
+-- change again. Then drops release_flag_on, but only when no other function's
+-- body still names it: 00316 (the ladder fix) creates and asks it too, and a
+-- dropped helper would break that function at its next call, not here.
 --
 -- NEVER RUN AUTOMATICALLY. Not a migration: db-migrate.sh does not read this
 -- directory, and nothing in CI or a deploy runs it. Run by hand with psql
@@ -569,6 +570,50 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.set_pair_member_check_in(uuid, smallint, boolean, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.set_pair_member_check_in(uuid, smallint, boolean, uuid) TO service_role;
+
+-- ===========================================================================
+-- club_change_from_platform_settings: verbatim from 00286
+-- ===========================================================================
+
+CREATE OR REPLACE FUNCTION public.club_change_from_platform_settings()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $function$
+DECLARE
+  v_old   JSONB;
+  v_field TEXT;
+BEGIN
+  IF NEW.updated_by IS NULL
+     OR NOT public.club_change_is_app_write()
+     OR (TG_OP = 'UPDATE' AND NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at) THEN
+    RETURN NULL;
+  END IF;
+
+  v_old := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.value END;
+
+  IF jsonb_typeof(NEW.value) = 'object'
+     AND (v_old IS NULL OR jsonb_typeof(v_old) = 'object') THEN
+    FOR v_field IN
+      SELECT k FROM jsonb_object_keys(NEW.value) AS k
+      UNION
+      SELECT k FROM jsonb_object_keys(coalesce(v_old, '{}'::jsonb)) AS k
+    LOOP
+      IF (v_old -> v_field) IS DISTINCT FROM (NEW.value -> v_field) THEN
+        PERFORM public.club_change_upsert(
+          'setting', NEW.key, v_field, v_old -> v_field, NEW.value -> v_field, NEW.updated_by);
+      END IF;
+    END LOOP;
+  ELSIF v_old IS DISTINCT FROM NEW.value THEN
+    PERFORM public.club_change_upsert('setting', NEW.key, '*', v_old, NEW.value, NEW.updated_by);
+  END IF;
+
+  RETURN NULL;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.club_change_from_platform_settings() FROM PUBLIC, anon, authenticated;
 
 -- ===========================================================================
 -- release_flag_on: dropped only when nothing else asks it

@@ -1,9 +1,19 @@
 // Add on the spot: the desk adds whoever is standing there. The rules are
 // here so the action and the dialog read them the same way.
 
+import { checkInWindow } from './participant-controls';
+
 /** Checked in on creation once the event is checking in, drawn or live: they are at the desk. */
 export function onTheSpotChecksIn(eventStatus: string | null | undefined): boolean {
   return eventStatus != null && eventStatus !== 'registration' && eventStatus !== 'completed';
+}
+
+/**
+ * Kill switch check_in_after_draw off: past the draw check-in is locked
+ * (checkInWindow), so the entry is added but left registered.
+ */
+export function onTheSpotCheckInLocked(eventStatus: string | null | undefined, checkInAfterDraw: boolean): boolean {
+  return onTheSpotChecksIn(eventStatus) && !checkInWindow(eventStatus!, checkInAfterDraw).canCheckIn;
 }
 
 /**
@@ -38,8 +48,15 @@ export function singlesNeedingPartner<P extends { player_id: string; status: str
 }
 
 /** What the desk is told once someone is added. */
-export function onTheSpotMessage(res: { name: string; checkedIn: boolean; waiverUnsigned: boolean; needsPartner: boolean }): string {
+export function onTheSpotMessage(res: {
+  name: string;
+  checkedIn: boolean;
+  waiverUnsigned: boolean;
+  checkInLocked: boolean;
+  needsPartner: boolean;
+}): string {
   const parts = [`${res.name} added${res.checkedIn ? ' and checked in' : ''}.`];
+  if (res.checkInLocked) parts.push('Check-in is locked after the draw, so they stay registered.');
   if (res.waiverUnsigned) parts.push('Waiver not signed: they can sign it on their phone, then check them in.');
   if (res.needsPartner) parts.push('They need a partner before a group can take them.');
   return parts.join(' ');

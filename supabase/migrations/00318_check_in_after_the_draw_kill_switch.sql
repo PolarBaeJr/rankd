@@ -18,6 +18,9 @@
 --       set_field_entry_status, set_pair_member_check_in: the undo of a
 --         check-in or a no-show is taken past the draw only while the switch
 --         is on; off, only at 'checkin' (00276, 00309).
+--   * club_change_from_platform_settings, restated whole from 00286: a save of
+--     the 'release_flags' row drafts no club change. A kill switch is
+--     console-only and never member news.
 --
 -- UNCHANGED. Every other guard, signature and grant. With the switch on (no
 -- row, the default) each function behaves exactly as 00315 left it.
@@ -611,6 +614,55 @@ REVOKE ALL ON FUNCTION public.set_pair_member_check_in(uuid, smallint, boolean, 
 GRANT EXECUTE ON FUNCTION public.set_pair_member_check_in(uuid, smallint, boolean, uuid) TO service_role;
 
 -- ===========================================================================
+-- club_change_from_platform_settings: 00286's body, a kill switch drafts nothing
+-- ===========================================================================
+
+CREATE OR REPLACE FUNCTION public.club_change_from_platform_settings()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $function$
+DECLARE
+  v_old   JSONB;
+  v_field TEXT;
+BEGIN
+  -- A kill switch is console-only, never member news: no draft.
+  IF NEW.key = 'release_flags' THEN
+    RETURN NULL;
+  END IF;
+
+  IF NEW.updated_by IS NULL
+     OR NOT public.club_change_is_app_write()
+     OR (TG_OP = 'UPDATE' AND NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at) THEN
+    RETURN NULL;
+  END IF;
+
+  v_old := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.value END;
+
+  IF jsonb_typeof(NEW.value) = 'object'
+     AND (v_old IS NULL OR jsonb_typeof(v_old) = 'object') THEN
+    FOR v_field IN
+      SELECT k FROM jsonb_object_keys(NEW.value) AS k
+      UNION
+      SELECT k FROM jsonb_object_keys(coalesce(v_old, '{}'::jsonb)) AS k
+    LOOP
+      IF (v_old -> v_field) IS DISTINCT FROM (NEW.value -> v_field) THEN
+        PERFORM public.club_change_upsert(
+          'setting', NEW.key, v_field, v_old -> v_field, NEW.value -> v_field, NEW.updated_by);
+      END IF;
+    END LOOP;
+  ELSIF v_old IS DISTINCT FROM NEW.value THEN
+    PERFORM public.club_change_upsert('setting', NEW.key, '*', v_old, NEW.value, NEW.updated_by);
+  END IF;
+
+  RETURN NULL;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.club_change_from_platform_settings() FROM PUBLIC, anon, authenticated;
+
+-- ===========================================================================
 -- VERIFICATION
 -- ===========================================================================
 
@@ -643,6 +695,15 @@ BEGIN
   END IF;
   IF NOT has_function_privilege('service_role', 'public.release_flag_on(text)', 'EXECUTE') THEN
     v_bad := array_append(v_bad, 'release_flag_on is not executable by service_role');
+  END IF;
+
+  IF position('IF NEW.key = ''release_flags'' THEN' IN
+       pg_get_functiondef('public.club_change_from_platform_settings()'::regprocedure)) = 0 THEN
+    v_bad := array_append(v_bad, 'club_change_from_platform_settings still drafts a kill switch');
+  END IF;
+  IF has_function_privilege('anon', 'public.club_change_from_platform_settings()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.club_change_from_platform_settings()', 'EXECUTE') THEN
+    v_bad := array_append(v_bad, 'club_change_from_platform_settings is executable by anon or authenticated');
   END IF;
 
   IF array_length(v_bad, 1) > 0 THEN

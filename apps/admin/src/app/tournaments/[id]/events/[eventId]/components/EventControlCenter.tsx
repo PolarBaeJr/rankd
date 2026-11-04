@@ -379,6 +379,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         <AddOnTheSpotDialog
           eventId={event.id}
           eventStatus={status}
+          checkInAfterDraw={releaseFlags.check_in_after_draw}
           isDoubles={isDoubles}
           players={allPlayers}
           takenPlayerIds={takenPlayerIds}
