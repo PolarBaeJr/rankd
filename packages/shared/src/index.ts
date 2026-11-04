@@ -83,6 +83,7 @@ export * from './utils/event-record';
 export * from './utils/match-court';
 export * from './utils/account-standing';
 export * from './utils/tours';
+export * from './utils/possible-duplicates';
 // Safe in the barrel BECAUSE it computes no hashes. ./utils/event-waiver, which
 // does, stays out of it — node:crypto must not reach the player bundle.
 export * from './utils/event-waiver-eligibility';

@@ -11,6 +11,7 @@ import { runAction, type ActionResult } from '../action-result';
 import { ReadBudget, defaultGoogleDeps, getFormQuestions, readServiceAccount } from '../google-forms';
 import { formMappingSchema } from '../registration-form-mapping';
 import { scheduleManagedFormSync } from '../managed-forms';
+import { existingPeopleLike, type ExistingMatch } from '../possible-matches';
 
 // AN OFFICER ADDS SOMEBODY TO A CLUB EVENT BY HAND (00306): somebody who paid
 // cash, or who does not use the app, email or the Form. A member, or a guest by
@@ -56,6 +57,8 @@ const addSchema = z.discriminatedUnion('kind', [
       mediaConsent: z.boolean().optional(),
       answers: answersSchema.optional(),
       paidMethod: z.string().trim().max(60).optional(),
+      // 00320. The officer saw "Did you mean" and chose a new record anyway.
+      createAnyway: z.boolean().optional(),
     })
     .strict(),
 ]);
@@ -64,11 +67,14 @@ export type AddByHand = z.infer<typeof addSchema>;
 
 type AddResult = { ok: boolean; reason?: string; player_id?: string; record_made?: boolean; paid?: boolean };
 
+/** Signed up, or not yet because a guest by that name may already have a record. */
+export type AddByHandOutcome = { paid: boolean; matches?: undefined } | { paid?: undefined; matches: ExistingMatch[] };
+
 /** Sign somebody up by hand, and mark the event fee paid when they paid. */
 export async function addClubEventPersonByHand(
   eventId: string,
   person: AddByHand,
-): Promise<ActionResult<{ paid: boolean }>> {
+): Promise<ActionResult<AddByHandOutcome>> {
   return runAction(async () => {
     const actor = await requireCapability('events.signups.checkin.write');
     parseOrThrow(uuid, eventId);
@@ -81,6 +87,19 @@ export async function addClubEventPersonByHand(
     }
 
     const adminClient = createAdminClient();
+    // 00320. A guest by name would be a new record. When the email is already
+    // somebody's, the function decides (it reuses a guest and refuses a
+    // member), so only a name with no known address is checked here.
+    if (input.kind === 'guest' && input.createAnyway !== true) {
+      const email = input.email?.trim().toLowerCase() || null;
+      const { data: owner } = email
+        ? await adminClient.from('players').select('id').eq('email', email).maybeSingle()
+        : { data: null };
+      if (!owner) {
+        const matches = await existingPeopleLike(adminClient, { full_name: input.name, email });
+        if (matches.length > 0) return { matches };
+      }
+    }
     const { data, error } = await adminClient.rpc('club_event_add_by_hand' as never, {
       p_event_id: eventId,
       p_player_id: input.kind === 'member' ? input.playerId : null,

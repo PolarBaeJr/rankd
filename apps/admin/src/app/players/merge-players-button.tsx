@@ -19,6 +19,11 @@ interface MergeCandidate {
 
 interface Props {
   players: MergeCandidate[];
+  /** Prefilled from a Possible duplicates pair (00320); the pickers stay editable. */
+  initialKeepId?: string;
+  initialRemoveId?: string;
+  /** The trigger's text, for a button that is not the page's own. */
+  label?: string;
 }
 
 /**
@@ -30,10 +35,10 @@ interface Props {
  * from the account being removed. Deliberately preview-then-confirm: the
  * removal is irreversible, so the admin sees what blocks it first.
  */
-export function MergePlayersButton({ players }: Props) {
+export function MergePlayersButton({ players, initialKeepId = '', initialRemoveId = '', label = 'Merge duplicates' }: Props) {
   const [open, setOpen] = useState(false);
-  const [keepId, setKeepId] = useState('');
-  const [removeId, setRemoveId] = useState('');
+  const [keepId, setKeepId] = useState(initialKeepId);
+  const [removeId, setRemoveId] = useState(initialRemoveId);
   const [blockers, setBlockers] = useState<MergePreviewRow[] | null>(null);
   const [checking, setChecking] = useState(false);
   const [merging, setMerging] = useState(false);
@@ -46,7 +51,7 @@ export function MergePlayersButton({ players }: Props) {
   const bothHaveLogin = Boolean(keep?.has_login && remove?.has_login);
 
   function reset() {
-    setKeepId(''); setRemoveId(''); setBlockers(null);
+    setKeepId(initialKeepId); setRemoveId(initialRemoveId); setBlockers(null);
   }
 
   async function handleCheck() {
@@ -82,7 +87,7 @@ export function MergePlayersButton({ players }: Props) {
   return (
     <>
       <Button variant="ghost" onClick={() => setOpen(true)}>
-        <Merge className="w-4 h-4 mr-1.5" /> Merge duplicates
+        <Merge className="w-4 h-4 mr-1.5" /> {label}
       </Button>
 
       <Dialog open={open} onClose={() => { if (!merging) { setOpen(false); reset(); } }} title="Merge duplicate accounts">

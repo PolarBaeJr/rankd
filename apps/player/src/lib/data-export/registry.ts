@@ -147,6 +147,8 @@ export const PLAYER_EXPORT_COLUMNS = [
   'created_at',
   'updated_at',
   'last_active_at',
+  // 00320. When you last opened either app, at most fifteen minutes stale.
+  'last_seen_at',
   'inactive_since',
   'inactivity_notice_sent_at',
   'deletion_requested_at',
@@ -221,6 +223,7 @@ export const AUDIT_JSONB_ALLOWLIST = [
   'created_at',
   'updated_at',
   'last_active_at',
+  'last_seen_at',
   'inactive_since',
   'inactivity_notice_sent_at',
   'waiver_reset_at',
@@ -261,7 +264,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // Settings switch for that column because it governed nothing, and handing
     // the stored value back without saying so would recreate exactly the
     // confidence the switch manufactured.
-    why: 'Your own membership record: who you are, your standing with the club, your settings and the permissions your account holds. Two notes on the settings in it: show_activity_status is a stored value that governs nothing in the app today, which is why there is no longer a switch for it, and last_active_at is visible to club officers but to no other member. It also records whether you allow photos and video of you, and when you last changed that.',
+    why: 'Your own membership record: who you are, your standing with the club, your settings and the permissions your account holds. Two notes on the settings in it: show_activity_status is a stored value that governs nothing in the app today, which is why there is no longer a switch for it, and last_active_at and last_seen_at (when you last opened the app) are visible to club officers but to no other member. It also records whether you allow photos and video of you, and when you last changed that.',
   },
   ratings: {
     playerColumns: ['player_id'],
@@ -734,6 +737,13 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     playerColumns: ['preferred_partner_player_id'],
     disposition: 'withheld',
     why: 'A non-member\'s sign-up that names you as the partner they asked for; it is theirs.',
+  },
+  possible_duplicate_dismissals: {
+    // 00320. An officer's note that two records are two different people, so
+    // the console stops offering them as one. Each row names another member.
+    playerColumns: ['player_a', 'player_b', 'dismissed_by'],
+    disposition: 'withheld',
+    why: 'A note by a club officer that your record and another member\'s were checked and are two different people, so the console stops suggesting they are one. Withheld: each row names another member. The count below is of rows naming you as one of the two.',
   },
   tournament_checkin_tokens: {
     playerColumns: [],

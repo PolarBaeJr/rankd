@@ -65,6 +65,8 @@ export const AUDITABLE_COLUMNS = [
   'created_at',
   'updated_at',
   'last_active_at',
+  // 00320. When they last opened either app. Activity, not identity.
+  'last_seen_at',
   'inactive_since',
   'inactivity_notice_sent_at',
   'waiver_reset_at',

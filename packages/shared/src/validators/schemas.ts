@@ -509,6 +509,8 @@ export const adminPlayerCreateSchema = z.object({
   role: z.enum(['player']).optional(),
   is_exec: z.boolean().optional(),
   is_trainer: z.boolean().optional(),
+  // 00320. The officer saw "Did you mean" and chose to make a new record.
+  create_anyway: z.boolean().optional(),
 });
 
 export const adminMatchCreateSchema = z.object({
