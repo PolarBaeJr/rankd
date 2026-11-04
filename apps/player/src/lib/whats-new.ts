@@ -15,6 +15,121 @@ export type WhatsNewEntry = {
 
 export const WHATS_NEW: WhatsNewEntry[] = [
   {
+    version: '1.1.8',
+    date: '2026-11-03',
+    title: 'Paid events, live tournaments and better receipts',
+    members: [
+      'A paid club event takes your e-Transfer screenshot as you sign up.',
+      'A full event can keep a waitlist, and the club can cap how long it gets.',
+      "A tournament run for a club event is entered from the club event's page.",
+      'Doubles check-in is per person: your team is in once both of you are.',
+      'Tournament days run live: the next match goes on court by itself, and you can see your court.',
+      'Fee receipts are read from more banks, HEIC photos and SFU Rec purchases.',
+    ],
+    execs: [
+      'Fees is one member list with a View menu, and the club money moved to a new Finances page.',
+      'Add somebody to a club event by hand, and sign-up lists show newest first.',
+      'Court helpers score their own courts from My courts, and a court can skip a match for now.',
+      'A staged group stage can add a round and take late entrants, and a group plays only on its own courts.',
+      'Every exec can read everything, and every new ability can be granted.',
+      'The Discord bot works in any server, with auto mod, /purge and /event signups.',
+      'Saved settings show as text first, with an Edit button.',
+    ],
+  },
+  {
+    version: '1.1.7',
+    date: '2026-10-22',
+    title: 'Read first, edit second',
+    members: [],
+    execs: [
+      'Saved records show as text with an Edit button, so nothing changes by accident.',
+      "A Google Form sign-up shows the preferred partner they typed on the event's list.",
+      'Approving a receipt records the amount actually paid, prefilled from what the receipt shows.',
+      'The paste box example reads name, email, amount, and says the email is optional.',
+    ],
+  },
+  {
+    version: '1.1.6',
+    date: '2026-10-22',
+    title: 'Faster updates',
+    members: [
+      'Fee receipt screenshots in newer image formats are read more reliably.',
+    ],
+    execs: ['Updates to the app build in about a quarter of the time, so fixes reach you sooner.'],
+  },
+  {
+    version: '1.1.5',
+    date: '2026-10-22',
+    title: 'Receipt reading',
+    members: [
+      'The receipt reader finds the amount on more screenshots, including bank "deposited" notices.',
+    ],
+    execs: [
+      'The payee name setting takes several names, separated by commas.',
+      "A Google Form's question mapping saved before waiver questions existed now offers the waiver questions too.",
+    ],
+  },
+  {
+    version: '1.1.4',
+    date: '2026-10-22',
+    title: 'One Review button',
+    members: [],
+    execs: [
+      'Each receipt has one Review button that shows the screenshot with Approve and Reject.',
+      'A Google Form receipt without a reference can still be approved.',
+      'A receipt sent before its event was made, or after it ended, is held for a person to look at.',
+    ],
+  },
+  {
+    version: '1.1.3',
+    date: '2026-10-21',
+    title: 'Receipts that confirm themselves',
+    members: [
+      'A fee receipt the app reads cleanly is confirmed straight away, with no wait for an exec.',
+    ],
+    execs: [
+      "The console can make an event's Google Form and keep it in step with the event.",
+      "A Google Form's waiver answers sign the guest waiver.",
+      'One Signed up list for members and Form guests, and a printable sheet of groups and match times.',
+      'A club event row opens the event, and Past events stay hidden until one has happened.',
+    ],
+  },
+  {
+    version: '1.1.2',
+    date: '2026-10-21',
+    title: 'Club events for everyone',
+    members: [
+      "Anyone can see the club's events and tournaments; a visitor signs up through the event's Google Form.",
+      "Club event pages have a poster header, a details strip and a 'your spot' card.",
+      "Answering a club event's Google Form signs you up at once. Not me takes it back if it was not you.",
+      "If you signed the waiver on an event's Google Form, the app does not ask again for its tournament.",
+      'A club event can run as a tournament, with brackets, scores and check-in.',
+    ],
+    execs: [
+      'Run a club event as a tournament: sign-ups and entries stay the same both ways, and the fee is charged once.',
+      'Non-members from a Google Form are entered as guests, with a Guests view under Players.',
+      'Door check-in for club events and whole tournaments, with walk-ins, no-shows and a waitlist.',
+      '/softban on Discord removes a spammer and their recent messages, and a server log records what happens.',
+    ],
+  },
+  {
+    version: '1.1.1',
+    date: '2026-10-19',
+    title: 'The club on Discord',
+    members: [
+      '/schedule on Discord shows your next two weeks of sessions, events and tournaments.',
+      'A full-page Calendar, and tournaments now appear in your subscribed calendar.',
+      '/tournaments on Discord: enter, read a draw, find your next match and follow results.',
+      "Passkey sign-in inside an app's built-in browser, such as Instagram, now says what to do instead of failing silently.",
+    ],
+    execs: [
+      'Run sessions, club events and tournament days from Discord with /session, /event and /tourney.',
+      "A Google Form's e-Transfer screenshots reach the fee review, and a form can pay a season's dues.",
+      'A draft club event takes its Google Form, so the mapping can be tested before the event is announced.',
+      "The console's top bar becomes a menu on phones.",
+    ],
+  },
+  {
     version: '1.1.0',
     date: '2026-10-08',
     title: 'Membership, receipts and club events',
