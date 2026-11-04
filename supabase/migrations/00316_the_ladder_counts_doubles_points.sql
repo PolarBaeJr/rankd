@@ -21,6 +21,16 @@
 --     joins players and ratings and passes the three visibility predicates,
 --     and that part of the body is 00092's, unchanged.
 --
+-- BEHIND A RELEASE FLAG. The pair arms only count while
+-- release_flag_on('ladder_doubles_points') is true, so the ladder can go back
+-- to singles-only points without a deploy:
+--   platform_settings key 'release_flags', value {"ladder_doubles_points": false}
+-- turns it off. A flag is ON unless its field is literally JSON false, so a
+-- missing row or a missing field leaves the new behaviour on. 00318 creates
+-- the same helper with an identical body; both are CREATE OR REPLACE and
+-- converge whichever runs second. The hand-run undo is
+-- supabase/rollbacks/00316_down.sql, which restores 00092's body.
+--
 -- Same signature, so CREATE OR REPLACE and no DROP. Restated in full rather
 -- than patched, because CREATE OR REPLACE FUNCTION drops any attribute it does
 -- not name and this one is SECURITY DEFINER with a pinned search_path.
@@ -29,6 +39,28 @@
 -- one in --single-transaction.
 -- ============================================================
 
+-- ---- The release flag reader --------------------------------
+-- SECURITY DEFINER because platform_settings is not anon-readable and the
+-- ladder renders signed out. It returns one boolean per flag name and nothing
+-- else from the table.
+CREATE OR REPLACE FUNCTION public.release_flag_on(p_id text)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT NOT EXISTS (
+    SELECT 1
+    FROM public.platform_settings ps
+    WHERE ps.key = 'release_flags'
+      AND ps.value -> p_id = 'false'::jsonb
+  );
+$function$;
+
+REVOKE ALL ON FUNCTION public.release_flag_on(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.release_flag_on(text) TO anon, authenticated, service_role;
+
+-- ---- The ladder ---------------------------------------------
 CREATE OR REPLACE FUNCTION public.get_leaderboard()
  RETURNS TABLE(
    id uuid, name text, handle text, status player_status, avatar_url text,
@@ -62,11 +94,13 @@ AS $function$
       FROM tournament_pairs tpr
       WHERE tpr.status NOT IN ('withdrawn', 'disqualified') AND tpr.points > 0
         AND tpr.player1_id IS NOT NULL
+        AND (SELECT public.release_flag_on('ladder_doubles_points'))
       UNION ALL
       SELECT tpr.player2_id, tpr.points
       FROM tournament_pairs tpr
       WHERE tpr.status NOT IN ('withdrawn', 'disqualified') AND tpr.points > 0
         AND tpr.player2_id IS NOT NULL
+        AND (SELECT public.release_flag_on('ladder_doubles_points'))
     ) earned
     GROUP BY earned.player_id
   ) tp ON tp.player_id = p.id
