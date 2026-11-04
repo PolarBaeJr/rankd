@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Badge } from '@badminton/ui';
 import {
   TOURNAMENT_EVENT_TYPE_LABELS,
@@ -37,6 +38,7 @@ import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
+import { AddOnTheSpotDialog } from './AddOnTheSpotDialog';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { StagesTab } from './StagesTab';
@@ -79,7 +81,7 @@ interface Props {
   matches: TournamentMatchRow[];
   // avatar_url feeds the searchable player picker; siblingEvents feeds the
   // pool-seeding picker. Both are pass-through.
-  allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
+  allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null; handle?: string | null }>;
   siblingEvents: SiblingEvent[];
   isDoubles: boolean;
   // Resolved from platform_settings on the server — client components cannot
@@ -209,6 +211,17 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
     : 'participants';
 
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
+  const router = useRouter();
+  const [spotOpen, setSpotOpen] = useState(false);
+  const [pendingLate, setPendingLate] = useState<string | null>(null);
+  const clearPendingLate = useCallback(() => setPendingLate(null), []);
+  const canAddOnTheSpot = drawCapabilities.soloAdd && status !== 'completed';
+  const takenPlayerIds = new Set<string>([
+    ...participants.filter((p) => p.status !== 'withdrawn' && p.status !== 'disqualified').map((p) => p.player_id),
+    ...pairs.filter((p) => p.status !== 'withdrawn' && p.status !== 'disqualified')
+      .flatMap((p) => [p.player1_id, p.player2_id])
+      .filter((id): id is string => id != null),
+  ]);
 
   // Stats
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
@@ -358,6 +371,25 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       </div>
 
       {/* Tab Content */}
+      {spotOpen && (
+        <AddOnTheSpotDialog
+          eventId={event.id}
+          eventStatus={status}
+          isDoubles={isDoubles}
+          players={allPlayers}
+          takenPlayerIds={takenPlayerIds}
+          onClose={() => setSpotOpen(false)}
+          onAdded={(result) => {
+            setSpotOpen(false);
+            router.refresh();
+            // A drawn staged event: straight on to placing the team in a group.
+            if (lateEntry && !result.needsPartner) {
+              setPendingLate(result.entryId);
+              setActiveTab('stages');
+            }
+          }}
+        />
+      )}
       <div role="tabpanel" aria-label={`${activeTab} tab content`}>
         {activeTab === 'participants' && (
           <ParticipantsTab
@@ -385,6 +417,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waiverStates={waiverStates}
             matches={matches}
             canVoidNoShow={drawCapabilities.voidResult && drawCapabilities.markNoShow}
+            onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
           />
         )}
         {activeTab === 'courts' && (
@@ -429,6 +462,9 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canVoid={drawCapabilities.voidResult}
             canMarkNoShow={drawCapabilities.markNoShow}
             helperCourtIds={helperCourtIds}
+            onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
+            pendingLateEntryId={pendingLate}
+            onPendingLateHandled={clearPendingLate}
           />
         )}
         {activeTab === 'bracket' && (

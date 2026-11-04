@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Button, Dialog, Input, Select, useConfirm } from '@badminton/ui';
 import {
@@ -34,6 +34,7 @@ import {
   voidUnplayedMatches,
   type BulkVoidResult,
 } from '@/lib/tournament-actions';
+import { singlesNeedingPartner } from '@/lib/on-the-spot';
 import {
   bulkVoidSummary,
   drawField,
@@ -80,6 +81,11 @@ interface Props {
   /** Holds the no-show key: with canVoid, Did not come on a group's table. */
   canMarkNoShow?: boolean;
   helperCourtIds?: string[];
+  /** Opens Add on the spot, while the desk may add. */
+  onAddOnTheSpot?: () => void;
+  /** An entry just added on the spot: its placement opens once it is listed. */
+  pendingLateEntryId?: string | null;
+  onPendingLateHandled?: () => void;
 }
 
 /** What the void dialog is about to do: one entry's open matches, or a stage's or a group's. */
@@ -103,6 +109,7 @@ const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named ma
 export function StagesTab({
   event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
   canVoid = false, canMarkNoShow = false, helperCourtIds = [],
+  onAddOnTheSpot, pendingLateEntryId = null, onPendingLateHandled,
 }: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -143,8 +150,8 @@ export function StagesTab({
     [entries, nameMap],
   );
 
-  const { views, lateEntries, results } = useMemo(() => {
-    if (!cfg) return { views: [], lateEntries: [], results: null };
+  const { views, lateEntries, results, lateOpen } = useMemo(() => {
+    if (!cfg) return { views: [], lateEntries: [], results: null, lateOpen: false };
     const results = formatResultsFrom(
       cfg,
       entries.map((e) => ({ id: e.id, seed: e.seed_number ?? null, status: e.status })),
@@ -169,8 +176,14 @@ export function StagesTab({
       views: stagesView(cfg, results),
       lateEntries: open && first.kind === 'groups' ? unplacedLateEntries(first, results, entries) : [],
       results,
+      lateOpen: !!open,
     };
   }, [cfg, entries, matches, isDoubles, canGenerate, event]);
+  // A doubles event's late singles, added on the spot: a group takes a team.
+  const needPartner = useMemo(
+    () => (isDoubles && lateOpen ? singlesNeedingPartner(participants, pairs) : []),
+    [isDoubles, lateOpen, participants, pairs],
+  );
   // Once check-in is in use, the ones still only registered (drawField).
   const notCheckedIn = useMemo(() => new Set(drawField(entries).leftOut.map((e) => e.id)), [entries]);
   const sidedMatches = useMemo(
@@ -196,6 +209,16 @@ export function StagesTab({
   const categoryWarning = useMemo(() => (isDoubles ? uncategorisedWarning(pairs) : null), [isDoubles, pairs]);
 
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
+
+  // Straight on from Add on the spot to placing them, once the refresh lists them.
+  useEffect(() => {
+    if (!pendingLateEntryId) return;
+    const late = lateEntries.find((l) => l.id === pendingLateEntryId);
+    const first = views.find((v) => v.number === 1);
+    if (!late || !first) return;
+    openLate(first, late.id, late.plan.pool, late.plan.group);
+    onPendingLateHandled?.();
+  }, [pendingLateEntryId, lateEntries, views, onPendingLateHandled]);
 
   if (!cfg) {
     return (
@@ -389,6 +412,17 @@ export function StagesTab({
                 {status !== 'completed' && (
                   <div className="flex flex-col items-end gap-1">
                     <div className="flex flex-wrap justify-end gap-2">
+                      {onAddOnTheSpot && view.number === 1 && view.drawn && (
+                        <Button
+                          variant="ghost"
+                          disabled={busy !== null}
+                          onClick={onAddOnTheSpot}
+                          className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                        >
+                          <Plus className="w-4 h-4 mr-1" aria-hidden />
+                          Add on the spot
+                        </Button>
+                      )}
                       {canBulkVoid && view.drawn && !view.complete && unplayedMatchesIn(sidedMatches, { stage: view.number }).open.length > 0 && (
                         <Button
                           variant="ghost"
@@ -442,6 +476,27 @@ export function StagesTab({
                   </div>
                 )}
               </div>
+
+              {view.number === 1 && view.stage.kind === 'groups' && needPartner.length > 0 && (
+                <div
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 space-y-2"
+                  role="region"
+                  aria-label="Players without a partner"
+                >
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">Without a partner</p>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Pair them on the Participants tab; the team then appears below to place in a group.
+                  </p>
+                  <ul className="space-y-1.5">
+                    {needPartner.map((p) => (
+                      <li key={p.id} className="text-sm text-[var(--text-primary)] truncate">
+                        {getName(p, false)}
+                        <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-warning)]">Needs a partner</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {view.number === 1 && view.stage.kind === 'groups' && lateEntries.length > 0 && (
                 <div
