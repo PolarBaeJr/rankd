@@ -172,6 +172,27 @@ describe('fillFreeCourts', () => {
     expect(auditRows('match_started')[0]!.details).toEqual({ previous_status: 'ready', auto: true, trigger: 'result' });
   });
 
+  it('passes over a match with a no-show or a team not checked in, and calls the next', async () => {
+    seedCourts(1);
+    seedMatch('no-show', { slot: 1, match_number: 1 });
+    seedMatch('not-in', { slot: 2, match_number: 2 });
+    seedMatch('ok', { slot: 3, match_number: 3 });
+    store.db.tournament_participants = [
+      { id: 'no-show-a', event_id: EVENT, status: 'no_show' },
+      { id: 'no-show-b', event_id: EVENT, status: 'checked_in' },
+      { id: 'not-in-a', event_id: EVENT, status: 'checked_in' },
+      { id: 'not-in-b', event_id: EVENT, status: 'registered' },
+      { id: 'ok-a', event_id: EVENT, status: 'checked_in' },
+      { id: 'ok-b', event_id: EVENT, status: 'checked_in' },
+    ];
+
+    const report = await fill({}, 'court-1');
+
+    expect(report).toEqual({ called: [{ matchId: 'ok', court: 'Court 1' }], failed: [] });
+    expect(row('no-show').status).toBe('ready');
+    expect(row('not-in').status).toBe('ready');
+  });
+
   it('gives a court-less knockout match a court and starts it in one write, with both audits', async () => {
     seedCourts(1);
     seedMatch('qf', { stage: 2, pool_number: null, group_number: null, slot: null, court: null, court_id: null });

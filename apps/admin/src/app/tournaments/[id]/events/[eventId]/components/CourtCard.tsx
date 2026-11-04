@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, useConfirm } from '@badminton/ui';
+import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
 import {
   courtLabel,
   describeStageScoring,
@@ -23,7 +23,7 @@ import { useToast } from '@/components/toast-provider';
 import type { ActionResult } from '@/lib/action-result';
 import type { TournamentMatchRow } from '@/lib/tournament-types';
 
-export type CourtSide = { entryId: string | null; label: string };
+export type CourtSide = { entryId: string | null; label: string; absent?: boolean };
 export type CourtDeskRow = DeskRow<TournamentMatchRow, CourtSide>;
 
 /** Saves a score from the card. The desk's is enterMatchResult; a court helper's is passed in. */
@@ -31,6 +31,12 @@ export type CourtScoreSave = (
   matchId: string,
   scores: Array<{ a: number; b: number }>,
   winner: 'a' | 'b',
+) => Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>>;
+
+/** Voids the match on court, with the reason typed on the card. */
+export type CourtVoid = (
+  matchId: string,
+  reason: string,
 ) => Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>>;
 
 interface Props {
@@ -50,6 +56,8 @@ interface Props {
   onMore?: (matchId: string) => void;
   /** Saves the score; enterMatchResult when not given. */
   save?: CourtScoreSave;
+  /** Voids the match on court. Given only to someone who may (the void key, or a helper row on this court). */
+  voidMatch?: CourtVoid;
 }
 
 /**
@@ -58,7 +66,7 @@ interface Props {
  * result is saved (nextMatchForCourt with this match's entrants let off).
  */
 export function CourtCard({
-  court, groupName, rows, courts, cfg, isLive, canEnterResult, canManageCourts, busyElsewhere, onMore, save,
+  court, groupName, rows, courts, cfg, isLive, canEnterResult, canManageCourts, busyElsewhere, onMore, save, voidMatch,
 }: Props) {
   const onCourt = rows.find((r) => r.state === 'live' && r.match.court_id === court.id) ?? null;
   const next = nextMatchForCourt(rows, court, courts, cfg, { busyEntries: liveEntrants(rows, onCourt?.match.id) });
@@ -94,7 +102,13 @@ export function CourtCard({
               save={save}
             />
           )}
-          {isLive && canEnterResult && <SkipForNow row={onCourt} courtName={name} />}
+          {isLive && (canEnterResult || voidMatch) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {canEnterResult && <SkipForNow row={onCourt} courtName={name} />}
+              {/* Keyed by match, so a reason typed for one match never carries to the next on this court. */}
+              {voidMatch && <VoidOnCourt key={onCourt.match.id} row={onCourt} courtName={name} voidMatch={voidMatch} />}
+            </div>
+          )}
         </div>
       ) : (
         !busyElsewhere && isLive && canManageCourts && next && <PutOnCourt row={next} court={court} />
@@ -281,5 +295,67 @@ function SkipForNow({ row, courtName }: { row: CourtDeskRow; courtName: string }
     <Button type="button" variant="secondary" size="sm" loading={pending} disabled={pending} onClick={skip}>
       Skip for now
     </Button>
+  );
+}
+
+/**
+ * A team is not coming: the match is voided, with a reason, and the court
+ * takes its next match. A Dialog of its own rather than useConfirm, whose
+ * message cannot hold a typed input.
+ */
+function VoidOnCourt({ row, courtName, voidMatch }: { row: CourtDeskRow; courtName: string; voidMatch: CourtVoid }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [pending, setPending] = useState(false);
+
+  async function submit() {
+    if (!reason.trim()) return;
+    setPending(true);
+    const res = await voidMatch(row.match.id, reason.trim());
+    setPending(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    setOpen(false);
+    setReason('');
+    const failure = autoCallFailureText(res.data?.autoCall);
+    if (failure) toast(failure, 'error');
+    else if ((res.data?.autoCall?.called ?? []).length > 0) toast(`Voided. ${courtName}: next match is on`, 'success');
+    else toast('Match voided.', 'success');
+    router.refresh();
+  }
+
+  return (
+    <>
+      <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => setOpen(true)}>
+        Void
+      </Button>
+      {open && (
+        <Dialog open onClose={() => { if (!pending) setOpen(false); }} title="Void this match?">
+          <form
+            className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); void submit(); }}
+          >
+            <p className="text-sm text-[var(--text-muted)]">
+              {row.a.label} vs {row.b.label} is voided and counts for neither side. {courtName} takes its next match.
+            </p>
+            <Input
+              label="Reason"
+              value={reason}
+              maxLength={500}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="For example: the other team did not come"
+              autoFocus
+            />
+            <div className="flex justify-between gap-2">
+              <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" variant="danger" loading={pending} disabled={!reason.trim() || pending}>
+                Void match
+              </Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+    </>
   );
 }

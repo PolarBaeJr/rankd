@@ -46,6 +46,7 @@ import { CourtManagementTab } from './CourtManagementTab';
 import { LiveStrip } from './LiveStrip';
 import { CategoryRequestsPanel } from './CategoryRequestsPanel';
 import { hasCourtsTab } from '@/lib/live-desk';
+import { eventMatchProgress, poolMatchesUndecided } from '@/lib/event-progress';
 
 // 'pool' is a tab of its own rather than a mode of 'bracket' (00107). On a
 // pool_to_bracket event BOTH halves exist at once from the moment the knockout
@@ -117,9 +118,11 @@ interface Props {
   partners?: ParticipantPartners | null;
   // Who is looking, so the panel offers Cancel on their own requests only.
   viewerId: string;
+  /** The courts this viewer helps on (00310), for the court card's Void. */
+  helperCourtIds?: string[];
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, helperCourtIds = [] }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -210,10 +213,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   const totalEntries = entries.length;
   const checkedIn = entries.filter((e) => e.status === 'checked_in').length;
-  const totalMatches = matches.length;
-  const completedMatches = matches.filter((m) =>
-    m.status === 'completed' || m.status === 'walkover' || m.is_bye
-  ).length;
+  // By finalizeEvent's own rule, so a voided match is decided and an unused
+  // bracket slot is not waited on.
+  const progress = eventMatchProgress(matches, isDoubles);
+  const totalMatches = progress.total;
+  const completedMatches = progress.decided;
   // A SECOND, NARROWER COUNT, and the two must not be merged. `completedMatches`
   // above is the PROGRESS figure — how many slots no longer need a court — so it
   // counts byes, which is right for "11/15 matches" and for greying Finalize.
@@ -261,6 +265,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         checkedIn={checkedIn}
         totalMatches={totalMatches}
         completedMatches={completedMatches}
+        undecidedMatches={progress.undecided}
         playedMatches={playedMatches}
         liveMatches={redrawBlockers.inProgress}
         ratedMatches={redrawBlockers.rated}
@@ -269,11 +274,10 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         // on a pool_to_bracket event "the 18 matches in the current draw are
         // deleted" would be a false and alarming claim about a knockout of 3.
         phaseMatches={phaseMatches.length}
-        // The POOL's own progress, which is what decides whether the knockout
-        // can be drawn yet. Equal to the whole event on the other two formats,
-        // where nothing reads it.
-        poolTotal={poolMatches.length}
-        poolDecided={poolMatches.filter((m) => m.status === 'completed' || m.status === 'walkover' || m.is_bye).length}
+        // The POOL's own progress, by the knockout draw's rule (brackets.ts),
+        // which is what decides whether the knockout can be drawn yet. The
+        // whole event on the other two formats, where nothing reads it.
+        poolUndecided={poolMatchesUndecided(poolMatches, isDoubles)}
         drawCapabilities={drawCapabilities}
         // WHETHER THE DRAW THAT EXISTS HAS A BRONZE MATCH, read off the matches
         // themselves. The third-place choice is deliberately not stored on
@@ -418,6 +422,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             busyCourtIds={busyCourtIds}
             canManageCourts={drawCapabilities.manageCourts}
             canEnterResult={drawCapabilities.enterResult}
+            canVoid={drawCapabilities.voidResult}
+            helperCourtIds={helperCourtIds}
           />
         )}
         {activeTab === 'bracket' && (

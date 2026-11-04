@@ -377,6 +377,8 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
       const res = await voidMatch(match.id, walkoverReason || 'Voided by admin');
       if (!res.ok) { toast(res.error, 'error'); setWalkoverLoading(false); return; }
       done('Match voided');
+      const autoCallFailure = autoCallFailureText(res.data?.autoCall);
+      if (autoCallFailure) toast(autoCallFailure, 'error');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }

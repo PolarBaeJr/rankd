@@ -4,6 +4,8 @@
 // decides; this only tells the exec before the click rather than after.
 
 import {
+  isSettledStatus,
+  isTalliedStatus,
   parseFormatConfig,
   planLateEntrant,
   summariseRedrawBlockers,
@@ -154,4 +156,22 @@ export function uncategorisedWarning(
   return n === 1
     ? '1 team has no category, so it gets no head start. Set it in Participants.'
     : `${n} teams have no category, so they get no head start. Set it in Participants.`;
+}
+
+/**
+ * A group's matches in the order the column lists them: still to play, then
+ * played, then voided. A voided match is settled (isSettledStatus) but never
+ * counts in the table, so it is neither "to play" nor "played".
+ */
+export function splitGroupMatches<M extends { status: string }>(matches: readonly M[]): {
+  toPlay: M[];
+  played: M[];
+  voided: M[];
+  summary: string;
+} {
+  const toPlay = matches.filter((m) => !isSettledStatus(m.status));
+  const played = matches.filter((m) => isTalliedStatus(m.status));
+  const voided = matches.filter((m) => m.status === 'voided');
+  const summary = `${toPlay.length} to play, ${played.length} played${voided.length > 0 ? `, ${voided.length} voided` : ''}`;
+  return { toPlay, played, voided, summary };
 }
