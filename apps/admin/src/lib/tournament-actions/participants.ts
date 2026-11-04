@@ -2246,8 +2246,9 @@ export async function markPairNoShow(pairId: string) {
 // ============================================================
 
 // THE UNDO for a check-in or a no-show pressed on the wrong row. Both go back
-// to waiting through the same fenced RPC (00271), and only while check-in is
-// open: once the draw is published the field is what was drawn. A no-show
+// to waiting through the same fenced RPC (00271), from check-in until the event
+// is completed (00315): a staged event keeps checking people in after its draw,
+// so a wrong press there has to be undoable too. A no-show
 // comes back as waiting, not checked in, so the waiver check at the door still
 // runs when they do turn up. Each undo asks for the capability of the press it
 // reverses.

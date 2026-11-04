@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
@@ -26,6 +27,7 @@ import {
 } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings, type TournamentBonusSettings } from '../platform-settings';
+import { closesWithLastEvent } from '../tournament-close';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -1266,7 +1268,44 @@ export async function recomputeEventStandings(eventId: string): Promise<{
  * finalizeEvent itself still throws, for the cascade that calls it.
  */
 export async function finalizeEventAction(eventId: string): Promise<ActionResult<void>> {
-  return runAction(async () => { await finalizeEvent(eventId); });
+  return runAction(async () => {
+    try {
+      await finalizeEvent(eventId);
+    } finally {
+      // In finally: a finalise that completed the event and then reported a
+      // held follow-up failure has still finished it.
+      await closeTournamentAfterLastEvent(eventId);
+    }
+  });
+}
+
+/**
+ * Finalising the last open event finishes the tournament, through the same
+ * guarded status write and audit row as Mark Completed. Here and not in
+ * finalizeEvent, so completeTournamentWithEvents, which finalises event after
+ * event and closes the tournament itself, never races it. Never throws: the
+ * finalise has already happened, and an actor without the tournament status
+ * key is refused by that write and the tournament simply stays open.
+ */
+async function closeTournamentAfterLastEvent(eventId: string): Promise<void> {
+  try {
+    const adminClient = createAdminClient();
+    const { data: event, error: eventError } = await adminClient.from('tournament_events')
+      .select('tournament_id, status').eq('id', eventId).maybeSingle();
+    if (eventError) throw new Error(eventError.message);
+    if (!event || event.status !== 'completed') return;
+    const [tournamentRes, eventsRes] = await Promise.all([
+      adminClient.from('tournaments').select('status').eq('id', event.tournament_id).maybeSingle(),
+      adminClient.from('tournament_events').select('status').eq('tournament_id', event.tournament_id),
+    ]);
+    if (tournamentRes.error) throw new Error(tournamentRes.error.message);
+    if (eventsRes.error) throw new Error(eventsRes.error.message);
+    if (!closesWithLastEvent(tournamentRes.data?.status, (eventsRes.data ?? []).map((e) => e.status as string))) return;
+    const { updateTournamentStatus } = await import('../actions/tournaments');
+    await updateTournamentStatus(event.tournament_id, 'completed');
+  } catch (err) {
+    Sentry.captureException(err);
+  }
 }
 
 export async function finalizeEvent(eventId: string) {

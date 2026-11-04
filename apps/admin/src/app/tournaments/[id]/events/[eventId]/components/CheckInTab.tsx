@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Button, AvatarChip } from '@badminton/ui';
+import { useMemo, useState } from 'react';
+import { Button, AvatarChip, Dialog, Input } from '@badminton/ui';
 import {
   checkInParticipant,
   markParticipantNoShow,
@@ -12,13 +12,18 @@ import {
   bulkCheckIn,
   undoCheckIn,
   undoNoShow,
+  voidOpenMatchesForEntry,
 } from '@/lib/tournament-actions';
+import { checkInNoShowPath } from '@/lib/participant-controls';
+import { bulkVoidSummary, openMatchesOfEntry } from '@/lib/stage-controls';
 import { useToast } from '@/components/toast-provider';
 import { CheckCircle, XCircle, Clock, Users, UserCheck, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
-import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
+import type { TournamentEventRow, TournamentMatchRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import {
   CLUB_TIMEZONE,
+  eventIsPlaying,
+  matchSides,
   pairCheckInCounts,
   pairCheckInPeople,
   type EventWaiverStatus,
@@ -33,6 +38,10 @@ interface Props {
   isDoubles: boolean;
   // null = draw no waiver state at all. See WaiverState.
   waiverStates: Record<string, EventWaiverStatus> | null;
+  /** The event's matches: once it is playing them, the no-show X also voids. */
+  matches?: TournamentMatchRow[];
+  /** Holds both the void key and the no-show key. */
+  canVoidNoShow?: boolean;
 }
 
 /** Whose signature this entry needs — one person, or both halves of a pair. */
@@ -44,8 +53,15 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
     : [(entry as ParticipantWithPlayer).player_id];
 }
 
-export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates }: Props) {
+export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
+  const [didNotCome, setDidNotCome] = useState<{ id: string; name: string; count: number; live: number } | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const noShowPath = checkInNoShowPath(matches.length > 0 && eventIsPlaying(event.status), canVoidNoShow);
+  const sidedMatches = useMemo(
+    () => matches.map((m) => { const { a, b } = matchSides(m, isDoubles); return { ...m, a, b }; }),
+    [matches, isDoubles],
+  );
   const [bulkLoading, setBulkLoading] = useState(false);
   const [search, setSearch] = useState('');
   const { toast } = useToast();
@@ -145,6 +161,13 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
   }
 
   async function handleNoShow(id: string) {
+    if (noShowPath === 'void') {
+      const entry = entries.find((e) => e.id === id);
+      const { open, live } = openMatchesOfEntry(sidedMatches, id);
+      setVoidReason('');
+      setDidNotCome({ id, name: entry ? getName(entry, isDoubles) : 'This entry', count: open.length, live });
+      return;
+    }
     setLoading(`noshow-${id}`);
     try {
       if (isDoubles) {
@@ -157,6 +180,19 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(null);
+  }
+
+  async function handleDidNotCome() {
+    const ask = didNotCome;
+    const reason = voidReason.trim();
+    if (!ask || !reason) return;
+    setDidNotCome(null);
+    setLoading(`noshow-${ask.id}`);
+    const res = await voidOpenMatchesForEntry(event.id, ask.id, reason);
+    setLoading(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const { text, ok } = bulkVoidSummary(res.data);
+    toast(`Marked as a no-show. ${text}`, ok ? 'success' : 'error');
   }
 
   // Back to waiting, for a check-in or a no-show pressed on the wrong row.
@@ -201,9 +237,10 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
     setBulkLoading(false);
   }
 
-  const canCheckIn = event.status === 'checkin' || event.status === 'registration';
-  // Undo only while check-in is open. The draw fixes the field once published.
-  const canUndo = event.status === 'checkin';
+  // Check-in stays open through the draw and the play (00315): a staged event
+  // draws only who is here, and a team that turns up later joins as a late entry.
+  const canCheckIn = event.status !== 'completed';
+  const canUndo = event.status !== 'registration' && event.status !== 'completed';
   const shownWaiting = peopleWaiting.filter((p) => found(p.name, p.partnerName));
   const shownHere = peopleHere.filter((p) => found(p.name, p.partnerName));
   const shownNotCheckedIn = notCheckedIn.filter((e) => found(getName(e, isDoubles)));
@@ -296,7 +333,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                       >
                         <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                       </Button>
-                      {noShowRow.has(`${person.pairId}:${person.slot}`) && (
+                      {noShowPath && noShowRow.has(`${person.pairId}:${person.slot}`) && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -384,16 +421,18 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleNoShow(entry.id)}
-                      loading={loading === `noshow-${entry.id}`}
-                      aria-label="Mark as no-show"
-                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-                    >
-                      <XCircle className="w-3.5 h-3.5 text-[var(--color-danger)]" />
-                    </Button>
+                    {noShowPath && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleNoShow(entry.id)}
+                        loading={loading === `noshow-${entry.id}`}
+                        aria-label="Mark as no-show"
+                        className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+                      </Button>
+                    )}
                   </div>
                 ) : null}
               />
@@ -460,6 +499,29 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
             ))}
           </div>
         </div>
+      )}
+
+      {didNotCome && (
+        <Dialog open onClose={() => setDidNotCome(null)} title={`${didNotCome.name} did not come?`}>
+          <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void handleDidNotCome(); }}>
+            <p className="text-sm text-[var(--text-muted)]">
+              {`They are marked as a no-show and ${didNotCome.count === 1 ? 'their 1 unplayed match is' : `their ${didNotCome.count} unplayed matches are`} voided. A voided match counts for neither side.`}
+              {didNotCome.live > 0 && ` ${didNotCome.live === 1 ? '1 match is' : `${didNotCome.live} matches are`} on court now and left alone: void ${didNotCome.live === 1 ? 'it' : 'them'} from the court.`}
+            </p>
+            <Input
+              label="Reason"
+              value={voidReason}
+              maxLength={500}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="For example: did not come"
+              autoFocus
+            />
+            <div className="flex justify-between gap-2">
+              <Button type="button" variant="ghost" onClick={() => setDidNotCome(null)}>Cancel</Button>
+              <Button type="submit" variant="danger" disabled={!voidReason.trim()}>Mark no-show and void</Button>
+            </div>
+          </form>
+        </Dialog>
       )}
     </div>
   );

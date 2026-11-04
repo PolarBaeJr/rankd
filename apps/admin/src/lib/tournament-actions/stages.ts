@@ -11,6 +11,7 @@ import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import {
   ExpectedError,
+  allowedTournamentCourts,
   eventIsPlaying,
   buildAddedRoundRows,
   buildLateEntrantRows,
@@ -25,6 +26,7 @@ import {
   shuffleWithRng,
   sourceStages,
   stageComplete,
+  stageCourtLabels,
   stageNumber,
   stageReady,
   summariseRedrawBlockers,
@@ -53,6 +55,7 @@ import {
 import { fillFreeCourts, type AutoCallReport } from './auto-call';
 import { readTournamentCourts } from '../tournament-courts';
 import { resolveStageCourts, rowForInsert, unknownStageCourtsMessage } from './stage-rows';
+import { drawField } from '../stage-controls';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -292,8 +295,14 @@ async function drawStageImpl(
 
   if (fromField) {
     await assertNobodyLeftUnpaired(adminClient, eventId, doubles);
-    let field = entries.filter((e) => e.status === 'registered' || e.status === 'checked_in');
-    if (field.length < 2) throw new ExpectedError('Need at least 2 entries to draw this stage.');
+    // Once check-in is in use, only those checked in are drawn (drawField).
+    const drawn = drawField(entries);
+    let field = drawn.field;
+    if (field.length < 2) {
+      throw new ExpectedError(drawn.leftOut.length > 0
+        ? 'Need at least 2 checked-in entries to draw this stage.'
+        : 'Need at least 2 entries to draw this stage.');
+    }
     await assertDrawFieldEventWaiverSigned(adminClient, event.tournament_id, field.map((e) => e.id), doubles);
 
     const order = stage.entrants.from === 'field' ? stage.entrants.order : 'elo';
@@ -410,7 +419,7 @@ async function drawStageImpl(
     adminClient.from('tournament_matches').insert(rows.map((r) => rowForInsert(eventId, r, doubles, courtIds)) as never).select('id'),
   );
 
-  if (fromField) await assertFieldDidNotGrow(adminClient, eventId, doubles, drawnIds.length);
+  if (fromField) await assertFieldDidNotGrow(adminClient, eventId, doubles, drawnIds.length, true);
   await publishStage(adminClient, eventId, k, generation, doubles, drawnIds, digests, fromField ? null : sourceFingerprint);
 
   await logAudit(adminClient, {
@@ -583,8 +592,30 @@ export async function addStageRound(eventId: string, stageKey: string): Promise<
 // A LATE ENTRANT (00308) joins one group of the first stage and plays only the
 // matches that even that group out. The entry itself arrives through the usual
 // add paths, which 00308 opens while no later stage is drawn; this places it.
-async function placeLateEntrantImpl(eventId: string, stageKey: string, entryId: string): Promise<{ matches: number }> {
+export interface LateEntrantChoice {
+  /** The group the desk picked; both or neither. */
+  pool?: number | null;
+  group?: number | null;
+  /** A court of the tournament every one of the entrant's matches goes on. */
+  courtId?: string | null;
+}
+
+async function placeLateEntrantImpl(
+  eventId: string,
+  stageKey: string,
+  entryId: string,
+  choice: LateEntrantChoice | null | undefined,
+): Promise<{ matches: number }> {
   const loaded = await loadExtendableStage(eventId, stageKey);
+  // Client-controlled POST fields, so each is checked for shape here.
+  const pool = choice?.pool ?? null;
+  const group = choice?.group ?? null;
+  const courtId = choice?.courtId ?? null;
+  if ((pool == null) !== (group == null)
+    || (pool != null && !(Number.isInteger(pool) && Number.isInteger(group) && pool >= 1 && group! >= 1))) {
+    throw new ExpectedError('Pick a group of this stage.');
+  }
+  if (courtId != null && typeof courtId !== 'string') throw new ExpectedError('Pick one of the tournament\'s courts.');
   const { admin, adminClient, event, cfg, stage, k, doubles, entries, results, active } = loaded;
   if (k !== 1 || stage.entrants.from !== 'field') {
     throw new ExpectedError('A late entry joins the first stage, drawn from the field, only.');
@@ -597,14 +628,31 @@ async function placeLateEntrantImpl(eventId: string, stageKey: string, entryId: 
   if (!active.has(entryId)) throw new ExpectedError('That entry has left the event.');
   await assertDrawFieldEventWaiverSigned(adminClient, event.tournament_id, [entryId], doubles);
 
-  const plan = planLateEntrant(stage, results, active, entryId);
-  if (!plan) throw new ExpectedError(`That entry is already in a group of "${stage.name}".`);
+  if (results.groups.some((g) => g.stage === stage.key && g.members.includes(entryId))) {
+    throw new ExpectedError(`That entry is already in a group of "${stage.name}".`);
+  }
+  const plan = planLateEntrant(stage, results, active, entryId, pool != null ? { pool, group: group! } : undefined);
+  if (!plan) throw new ExpectedError(pool != null ? `"${stage.name}" has no such group. Reload and pick again.` : `"${stage.name}" has no group drawn yet.`);
   const categories = new Map(entries.map((e) => [e.id, e.category]));
   const rows = buildLateEntrantRows(cfg, stageKey, plan, entryId, categories, loaded.generation, {
     firstSlot: loaded.firstSlot,
     firstMatchNumber: loaded.firstMatchNumber,
   });
   if (rows.length === 0) throw new ExpectedError('That group has nobody left in it to play.');
+
+  // A court the desk picked, by the auto-call's own rule: it must be one the
+  // group's pool may use, or nothing would ever call the matches there.
+  let pickedCourt: string | null = null;
+  if (courtId != null) {
+    const courts = await readTournamentCourts(adminClient, event.tournament_id);
+    const allowed = courts
+      ? allowedTournamentCourts(courts, stageCourtLabels(cfg, { stage: k, pool_number: plan.pool })) ?? courts.filter((c) => c.active)
+      : [];
+    const court = allowed.find((c) => c.id === courtId && c.active);
+    if (!court) throw new ExpectedError('That court is not one this group plays on. Reload and pick again.');
+    pickedCourt = court.label;
+    for (const r of rows) r.court = court.label;
+  }
 
   const { courtsAssigned } = await insertStageExtension(adminClient, eventId, event.tournament_id, stage.name, rows, doubles);
 
@@ -625,6 +673,8 @@ async function placeLateEntrantImpl(eventId: string, stageKey: string, entryId: 
       matches: rows.length,
       courts_assigned: courtsAssigned,
       generation: loaded.generation,
+      group_picked: pool != null,
+      court_picked: pickedCourt,
     },
   });
 
@@ -632,7 +682,16 @@ async function placeLateEntrantImpl(eventId: string, stageKey: string, entryId: 
   return { matches: rows.length };
 }
 
-/** Put an entry that arrived after the draw into a group of the first stage. */
-export async function placeLateEntrant(eventId: string, stageKey: string, entryId: string): Promise<ActionResult<{ matches: number }>> {
-  return runAction(() => placeLateEntrantImpl(eventId, stageKey, entryId));
+/**
+ * Put an entry that arrived after the draw (or checked in after it) into a
+ * group of the first stage: the one picked, else the one planLateEntrant
+ * picks, and optionally onto one court.
+ */
+export async function placeLateEntrant(
+  eventId: string,
+  stageKey: string,
+  entryId: string,
+  choice?: LateEntrantChoice | null,
+): Promise<ActionResult<{ matches: number }>> {
+  return runAction(() => placeLateEntrantImpl(eventId, stageKey, entryId, choice));
 }
