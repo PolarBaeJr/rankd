@@ -17,7 +17,7 @@ import {
 import { checkInNoShowPath } from '@/lib/participant-controls';
 import { bulkVoidSummary, openMatchesOfEntry } from '@/lib/stage-controls';
 import { useToast } from '@/components/toast-provider';
-import { CheckCircle, XCircle, Clock, Users, UserCheck, Undo2 } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Users, UserCheck, UserPlus, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
 import type { TournamentEventRow, TournamentMatchRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import {
@@ -42,6 +42,8 @@ interface Props {
   matches?: TournamentMatchRow[];
   /** Holds both the void key and the no-show key. */
   canVoidNoShow?: boolean;
+  /** Opens Add on the spot, while the desk may add. */
+  onAddOnTheSpot?: () => void;
 }
 
 /** Whose signature this entry needs — one person, or both halves of a pair. */
@@ -53,7 +55,7 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
     : [(entry as ParticipantWithPlayer).player_id];
 }
 
-export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false }: Props) {
+export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [didNotCome, setDidNotCome] = useState<{ id: string; name: string; count: number; live: number } | null>(null);
   const [voidReason, setVoidReason] = useState('');
@@ -262,11 +264,19 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                 : `${checkedIn.length} / ${entries.length} checked in`}
             </p>
           </div>
-          {canCheckIn && notCheckedIn.length > 0 && (
-            <Button onClick={handleBulkCheckIn} loading={bulkLoading} variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-              Check In All Present
-            </Button>
-          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            {onAddOnTheSpot && (
+              <Button onClick={onAddOnTheSpot} variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                <UserPlus className="w-4 h-4 mr-1" aria-hidden />
+                Add on the spot
+              </Button>
+            )}
+            {canCheckIn && notCheckedIn.length > 0 && (
+              <Button onClick={handleBulkCheckIn} loading={bulkLoading} variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                Check In All Present
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Progress bar */}
