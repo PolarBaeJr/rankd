@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     const { data: admins } = await supabase
       .from('players')
       .select('id')
-      .eq('role', 'admin');
+      .in('role', ['admin', 'super_admin']);
 
     if (admins && admins.length > 0) {
       const alerts = admins.flatMap((admin: { id: string }) =>

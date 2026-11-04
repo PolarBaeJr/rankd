@@ -20,6 +20,7 @@ import {
   Camera,
   History,
   MapPin,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   canAccess,
@@ -36,6 +37,7 @@ import { FEE_LIST_CAPABILITIES, FINANCES_CAPABILITIES } from '../lib/fee-views';
 import type { NavEntry, NavNest } from '@badminton/ui/src/nav-groups';
 // Deep for the same reason: the registry has no imports of its own.
 import { adminFeatureFor, type FeatureFlags } from '@badminton/shared/src/utils/features';
+import { consolePageClosed, type ConsolePages } from '@badminton/shared/src/utils/console-pages';
 
 // THE CONSOLE'S NAVIGATION, as data.
 //
@@ -111,6 +113,9 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: '/legal/guests', label: 'External waivers', icon: FileSignature, area: 'legal' },
       { href: '/legal/media-consent', label: 'Photo consent', icon: Camera, area: 'legal' },
       { href: '/audit', label: 'Audit Log', icon: ScrollText, area: 'audit' },
+      // 00321: opened by platform.page, which only a super admin holds, so
+      // canAccess() alone keeps it out of everybody else's nav.
+      { href: '/platform', label: 'Platform', icon: SlidersHorizontal, area: 'platform' },
       { href: '/settings', label: 'Settings', icon: Settings, area: null },
     ],
   },
@@ -176,7 +181,7 @@ export const NAV_LAYOUT: NavEntry<NavItem>[] = [
     ['/announcements', '/fees', '/finances', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'],
     [{ parent: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] }],
   ),
-  group('system', 'System', ['/ratings', '/club-changes', '/audit']),
+  group('system', 'System', ['/ratings', '/club-changes', '/audit', '/platform']),
   { kind: 'link', item: navItem('/settings') },
 ];
 
@@ -196,6 +201,20 @@ export function adminNavItemOn(
 ): boolean {
   const id = adminFeatureFor(href);
   return id === null || features[id] || held.has(featureAccessCapability(id));
+}
+
+/**
+ * False for the nav item of a console page a super admin switched off
+ * (console-pages.ts), unless the viewer is a super admin. Layered on top of
+ * canAccess() like adminNavItemOn; the middleware answers the route itself
+ * with the unavailable page.
+ */
+export function consolePageNavOn(
+  href: string,
+  pages: ConsolePages,
+  level: AccessLevel | null,
+): boolean {
+  return !consolePageClosed(href, pages, level === 'super_admin');
 }
 
 /**

@@ -32,9 +32,14 @@ const ids = (steps: { id: string }[]) => steps.map((s) => s.id);
 const role = (name: string) => resolvePermissions('exec', name, [], []);
 
 describe('the exec tour steps', () => {
-  it('gives an admin every step, with every optional sentence', () => {
+  it('gives an admin every step but the feature switches, with every optional sentence', () => {
     const steps = stepsFor('admin', UNRESTRICTED);
+    // The feature switches moved to /platform, a super admin's alone (00321).
     expect(ids(steps)).toEqual([
+      'welcome', 'pending-approvals', 'sessions', 'door', 'members', 'club-events',
+      'announcements', 'settings', 'done',
+    ]);
+    expect(ids(stepsFor('super_admin', UNRESTRICTED))).toEqual([
       'welcome', 'pending-approvals', 'sessions', 'door', 'members', 'club-events',
       'announcements', 'feature-switches', 'settings', 'done',
     ]);
@@ -179,7 +184,7 @@ describe('the exec tour selectors still match the markup', () => {
     roster: ['app/players/roster-table.tsx', 'app/players/page.tsx'],
     'events-upcoming': ['app/events/page.tsx'],
     'announcement-composer': ['app/announcements/page.tsx'],
-    'member-pages': ['app/accounts/page.tsx'],
+    'member-pages': ['app/platform/page.tsx'],
     passkeys: ['app/settings/page.tsx'],
   };
 

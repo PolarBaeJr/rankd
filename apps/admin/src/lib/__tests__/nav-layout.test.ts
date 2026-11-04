@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { NAV_LAYOUT, NAV_SECTIONS, adminNavItemOn, type NavItem } from '../../components/nav-sections';
+import { NAV_LAYOUT, NAV_SECTIONS, adminNavItemOn, consolePageNavOn, type NavItem } from '../../components/nav-sections';
+import { ALL_CONSOLE_PAGES_ON, parseConsolePages } from '@badminton/shared/src/utils/console-pages';
 import { ALL_FEATURES_ENABLED, FEATURES, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import {
   flattenEntries,
@@ -56,8 +57,18 @@ describe('the console top bar layout', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('shows an admin every group, in full', () => {
-    expect(visibleFor('admin', UNRESTRICTED)).toEqual(NAV_LAYOUT);
+  it('shows a super admin every group, in full', () => {
+    expect(visibleFor('super_admin', UNRESTRICTED)).toEqual(NAV_LAYOUT);
+  });
+
+  // /platform opens on platform.page, a super admin's alone (00321).
+  it('shows an admin every item but Platform', () => {
+    const hrefs = flattenEntries(visibleFor('admin', UNRESTRICTED)).map((item) => item.href);
+    const all = flattenEntries(NAV_LAYOUT).map((item) => item.href);
+    expect(hrefs).toEqual(all.filter((href) => href !== '/platform'));
+    expect(shape(visibleFor('super_admin', UNRESTRICTED))).toContainEqual({
+      system: ['/ratings', '/club-changes', '/audit', '/platform'],
+    });
   });
 
   // Club changes sits beside Ratings, where most of its lines come from.
@@ -143,7 +154,7 @@ describe('the console top bar with a feature switched off', () => {
   };
 
   it('changes nothing while every feature is on', () => {
-    expect(visibleWith(ALL_FEATURES_ENABLED, 'admin')).toEqual(NAV_LAYOUT);
+    expect(visibleWith(ALL_FEATURES_ENABLED, 'super_admin')).toEqual(NAV_LAYOUT);
   });
 
   it('drops the Events menu when tournaments are off', () => {
@@ -178,7 +189,8 @@ describe('the console top bar with a feature switched off', () => {
   // An admin holds every key by level, so nothing they could open is hidden.
   it('hides nothing from an admin, who holds every key', () => {
     const allOff = off(...FEATURES.map((f) => f.id));
-    expect(visibleWith(allOff, 'admin')).toEqual(NAV_LAYOUT);
+    expect(visibleWith(allOff, 'admin')).toEqual(visibleWith(ALL_FEATURES_ENABLED, 'admin'));
+    expect(visibleWith(allOff, 'super_admin')).toEqual(NAV_LAYOUT);
   });
 
   // THE KEY IS PER FEATURE: an exec handed page.access.tournaments keeps
@@ -277,5 +289,37 @@ describe('isRouteActive', () => {
   it('matches the root only on the root', () => {
     expect(isRouteActive('/', '/')).toBe(true);
     expect(isRouteActive('/feed', '/')).toBe(false);
+  });
+});
+
+// THE CONSOLE PAGE SWITCHES (00321): a switched-off page leaves everybody's nav
+// but a super admin's, and a page no switch reaches never leaves.
+describe('the console top bar with a console page switched off', () => {
+  const pages = parseConsolePages({ matches: false, audit: false });
+
+  it('changes nothing while every page is on', () => {
+    for (const item of ITEMS) {
+      expect(consolePageNavOn(item.href, ALL_CONSOLE_PAGES_ON, 'admin'), item.href).toBe(true);
+    }
+  });
+
+  it('hides a switched-off page from an admin and an exec', () => {
+    for (const level of ['admin', 'exec'] as const) {
+      expect(consolePageNavOn('/matches', pages, level)).toBe(false);
+      expect(consolePageNavOn('/audit', pages, level)).toBe(false);
+      expect(consolePageNavOn('/tournaments', pages, level)).toBe(true);
+    }
+  });
+
+  it('hides nothing from a super admin', () => {
+    expect(consolePageNavOn('/matches', pages, 'super_admin')).toBe(true);
+    expect(consolePageNavOn('/audit', pages, 'super_admin')).toBe(true);
+  });
+
+  it('never hides Platform, Accounts or Permissions', () => {
+    const allOff = parseConsolePages(Object.fromEntries(Object.keys(ALL_CONSOLE_PAGES_ON).map((id) => [id, false])));
+    for (const href of ['/platform', '/accounts', '/permissions', '/settings', '/legal']) {
+      expect(consolePageNavOn(href, allOff, 'admin'), href).toBe(true);
+    }
   });
 });

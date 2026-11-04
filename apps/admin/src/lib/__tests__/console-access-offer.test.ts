@@ -9,7 +9,7 @@ import { EXEC_ROLE_OPTIONS } from '../console-access';
 // guaranteed to refuse them, not about the boundary. The boundary's own tests
 // are console-access-capability.test.ts and grant-closure.test.ts.
 
-const base = { canWrite: true, isSelf: false, current: 'none' as const, viewerIsAdmin: false };
+const base = { canWrite: true, isSelf: false, current: 'none' as const, viewerIsSuperAdmin: false };
 
 describe('who gets the control at all', () => {
   it('offers it to a holder of players.consoleaccess.write', () => {
@@ -29,19 +29,23 @@ describe('who gets the control at all', () => {
     // its own holder.
     expect(consoleAccessOffer({ ...base, isSelf: true }).offered).toBe(false);
     expect(
-      consoleAccessOffer({ ...base, isSelf: true, viewerIsAdmin: true }).offered,
+      consoleAccessOffer({ ...base, isSelf: true, viewerIsSuperAdmin: true }).offered,
     ).toBe(false);
   });
 
-  it('does not offer a non-admin the row of an admin', () => {
-    // Taking the level away is the same act as giving it, so the level no
-    // capability hands out is the one no capability takes back.
+  it('does not offer anybody but a super admin the row of an admin or a super admin', () => {
+    // Taking the level away is the same act as giving it, so the levels only a
+    // super admin hands out are the ones only a super admin takes back (00321).
     expect(consoleAccessOffer({ ...base, current: 'admin' }).offered).toBe(false);
+    expect(consoleAccessOffer({ ...base, current: 'super_admin' }).offered).toBe(false);
   });
 
-  it('offers an admin the row of another admin', () => {
+  it('offers a super admin the row of an admin or another super admin', () => {
     expect(
-      consoleAccessOffer({ ...base, current: 'admin', viewerIsAdmin: true }).offered,
+      consoleAccessOffer({ ...base, current: 'admin', viewerIsSuperAdmin: true }).offered,
+    ).toBe(true);
+    expect(
+      consoleAccessOffer({ ...base, current: 'super_admin', viewerIsSuperAdmin: true }).offered,
     ).toBe(true);
   });
 
@@ -52,7 +56,7 @@ describe('who gets the control at all', () => {
 });
 
 describe('which levels are offered', () => {
-  it('withholds Admin from a non-admin', () => {
+  it('withholds Admin and Super admin from anybody but a super admin', () => {
     // Filtered rather than disabled, matching /permissions: a capability that
     // could mint an admin would make holding it the same thing as being one.
     expect(consoleAccessOffer(base).options.map((o) => o.value)).toEqual([
@@ -62,8 +66,8 @@ describe('which levels are offered', () => {
     ]);
   });
 
-  it('offers an admin every level', () => {
-    expect(consoleAccessOffer({ ...base, viewerIsAdmin: true }).options).toEqual(
+  it('offers a super admin every level', () => {
+    expect(consoleAccessOffer({ ...base, viewerIsSuperAdmin: true }).options).toEqual(
       EXEC_ROLE_OPTIONS,
     );
   });
@@ -71,7 +75,7 @@ describe('which levels are offered', () => {
   it('offers the levels in the order /permissions offers them', () => {
     // One vocabulary and one order across the two screens that set a level —
     // the whole reason EXEC_ROLE_OPTIONS is a shared constant.
-    expect(consoleAccessOffer({ ...base, viewerIsAdmin: true }).options.map((o) => o.value)).toEqual(
+    expect(consoleAccessOffer({ ...base, viewerIsSuperAdmin: true }).options.map((o) => o.value)).toEqual(
       EXEC_ROLE_OPTIONS.map((o) => o.value),
     );
   });

@@ -50,8 +50,10 @@ describe('the phrase map', () => {
       ...Object.keys(SEEDABLE_SETTINGS),
       ...Object.keys(FIELD_META),
     ]);
-    // Never drafted: the trigger skips the kill switches row (00318).
+    // Never drafted: the trigger skips the kill switches row (00318) and the
+    // console page switches row (00321).
     keys.delete(RELEASE_FLAGS_SETTING_KEY);
+    keys.delete('console_pages');
     for (const key of keys) {
       expect(CHANGE_PHRASES[key], `no phrases for ${key}`).toBeDefined();
       for (const field of Object.keys(FIELD_META[key] ?? {})) {

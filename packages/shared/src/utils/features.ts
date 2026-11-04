@@ -2,8 +2,8 @@
 //
 // One platform_settings row, key `features`, holding `<id>_enabled` booleans.
 // No migration seeds it: an absent row or an absent field reads as the
-// feature's default, so nothing changes until an admin flips a switch on
-// /accounts. The first save inserts the row (see SEEDABLE_SETTINGS in the
+// feature's default, so nothing changes until a super admin flips a switch on
+// /platform. The first save inserts the row (see SEEDABLE_SETTINGS in the
 // admin's actions/settings.ts).
 //
 // ON BY DEFAULT, unless the entry says `defaultEnabled: false`. A default-on

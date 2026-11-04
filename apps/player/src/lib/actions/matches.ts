@@ -148,7 +148,7 @@ async function disputeMatchResultImpl(matchId: string, reason: string, category:
   if (error) throw dbError(error);
 
   const [adminsRes, matchRes] = await Promise.all([
-    createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('role', 'admin'),
+    createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').in('role', ['admin', 'super_admin']),
     supabase.from('matches').select('score_summary').eq('id', matchId).single(),
   ]);
   const score = matchRes.data?.score_summary || 'N/A';
@@ -258,7 +258,7 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
   );
 
   const [adminsRes, forfeitRes] = await Promise.all([
-    createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('role', 'admin'),
+    createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').in('role', ['admin', 'super_admin']),
     supabase.from('players').select('full_name').eq('id', input.forfeit_player_id).single(),
   ]);
   const forfeitName = forfeitRes.data?.full_name || 'Unknown';

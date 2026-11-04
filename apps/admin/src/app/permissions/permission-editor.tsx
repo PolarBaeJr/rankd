@@ -28,7 +28,7 @@ import { setConsoleAccess, setPlayerPermissions } from '@/lib/actions';
 import { REASON_MIN } from '@/lib/audit-reason';
 // The one mapping between "what console access does this person have" and the
 // three columns that store it, shared with the /players Edit dialog.
-import { EXEC_ROLE_OPTIONS, accessForLevel, type ExecRole } from '@/lib/console-access';
+import { ADMIN_TIER_ACCESS, EXEC_ROLE_OPTIONS, accessForLevel, type ExecRole } from '@/lib/console-access';
 // Labels and grouping for all 115. Its own module precisely so that pages
 // which only need the vocabulary do not ship it; the editor is the one screen
 // that genuinely does.
@@ -49,6 +49,7 @@ import {
   type PendingEdits,
 } from '@/lib/permission-batch';
 import {
+  atLeast,
   effectiveCapabilities,
   isBuiltinPermissionRole,
   resolvePermissions,
@@ -227,6 +228,7 @@ const SCOPE_BADGE: Record<Leaf['mode'], 'info' | 'warning' | null> = {
 const LEVEL_DEFAULT_OPTION = '';
 
 const LEVEL_LABELS: Record<AccessLevel, string> = {
+  super_admin: 'Super admin',
   admin: 'Admin',
   exec: 'Executive',
   trainer: 'Varsity trainer',
@@ -243,6 +245,7 @@ const LEVEL_LABELS: Record<AccessLevel, string> = {
 // and every comment explaining why still says so. This is what the screen calls
 // it.
 const LEVEL_ACCESS_LABELS: Record<AccessLevel, string> = {
+  super_admin: 'Super admin access',
   admin: 'Admin access',
   exec: 'Executive access',
   trainer: 'Varsity access',
@@ -254,7 +257,8 @@ const LEVEL_ACCESS_LABELS: Record<AccessLevel, string> = {
 // only an exec could be composed. On a trainer that is simply false, so the
 // phrase is read from the row being edited rather than written into the prose.
 const BASELINE_PHRASE: Record<AccessLevel, string> = {
-  admin: 'every capability there is',
+  super_admin: 'every capability there is',
+  admin: 'every capability except the platform settings and the data API keys',
   exec: 'everything an executive can do',
   trainer: 'opening the roster, reading it, and writing varsity notes',
 };
@@ -396,7 +400,7 @@ export function PermissionEditor({
   holders,
   others,
   viewerId,
-  viewerIsAdmin,
+  viewerIsSuperAdmin,
   viewerCanGrantConsole,
   viewerCapabilities,
   baselines,
@@ -407,12 +411,13 @@ export function PermissionEditor({
   others: PersonRow[];
   viewerId: string;
   /**
-   * ADMIN BY LEVEL, and now used for one thing only: whether "Admin" is on the
-   * console-access menu. Making somebody an admin is the act no capability
-   * reaches, so the option is not drawn for anybody else and setConsoleAccess
-   * refuses it again from the actor's own row.
+   * SUPER ADMIN BY LEVEL (00321), and used for one thing only: whether the
+   * admin levels are on the console-access menu and whether an admin's or a
+   * super admin's access may be edited. Making or unmaking an admin is the act
+   * no capability reaches and no admin either, so the options are not drawn for
+   * anybody else and setConsoleAccess refuses it again from the actor's own row.
    */
-  viewerIsAdmin: boolean;
+  viewerIsSuperAdmin: boolean;
   /**
    * Holds `players.consoleaccess.write`, or is an admin — the question that used
    * to be spelled `viewerIsAdmin` everywhere on this screen. It decides whether
@@ -590,7 +595,7 @@ export function PermissionEditor({
       ? null
       : selected.id === viewerId
         ? 'This is you. A permissions screen where the row you are editing might be your own is where misreadings live — ask another admin to change yours.'
-        : selected.level === 'admin'
+        : selected.level === 'admin' || selected.level === 'super_admin'
           ? 'Admins are superusers by level. They hold every capability and nothing stored here is consulted for them — a role on this row would look like a narrowing and would not be one. Make them an executive first.'
           : // GRANT CLOSURE, SHOWN AS A LOCKED ROW RATHER THAN AS A FAILED SAVE.
             // setPlayerPermissions refuses any edit to somebody holding a
@@ -1380,7 +1385,7 @@ export function PermissionEditor({
     if (person.level === null) return <Badge variant="neutral">no access</Badge>;
     // An admin's stored row is never consulted, so "custom" would be a lie
     // whatever is in it.
-    if (person.level === 'admin') return <Badge variant="success">all</Badge>;
+    if (person.level === 'admin' || person.level === 'super_admin') return <Badge variant="success">all</Badge>;
     const deltas = person.grants.length + person.revokes.length;
     if (deltas > 0) return <Badge variant="warning">{deltas} custom</Badge>;
     return <Badge variant="neutral">role only</Badge>;
@@ -1696,7 +1701,7 @@ export function PermissionEditor({
                       <p className={cn(MICRO, 'text-[var(--mute)]')}>Console access</p>
                       {!editingAccess
                         && selected.id !== viewerId
-                        && !(selected.level === 'admin' && !viewerIsAdmin) && (
+                        && !(atLeast(selected.level, 'admin') && !viewerIsSuperAdmin) && (
                         <Button variant="secondary" size="sm" onClick={() => setEditingAccess(true)}>
                           Edit
                         </Button>
@@ -1710,11 +1715,11 @@ export function PermissionEditor({
                         level you do not have is the one move that would let this capability promote its
                         own holder, so it is refused before anything is read. Ask another admin.
                       </p>
-                    ) : selected.level === 'admin' && !viewerIsAdmin ? (
+                    ) : atLeast(selected.level, 'admin') && !viewerIsSuperAdmin ? (
                       <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
-                        Only an admin can change an admin&rsquo;s console access. Taking it away is the
-                        same act as giving it, so the level that no capability hands out is also the one
-                        no capability takes back.
+                        Only a super admin can change an admin&rsquo;s console access. Taking it away is
+                        the same act as giving it, so the levels only a super admin hands out are also
+                        the ones only a super admin takes back.
                       </p>
                     ) : (
                       <>
@@ -1738,9 +1743,9 @@ export function PermissionEditor({
                           // capability may mint an admin — belongs in the
                           // documentation rather than in a tooltip on a menu.
                           options={
-                            viewerIsAdmin
+                            viewerIsSuperAdmin
                               ? EXEC_ROLE_OPTIONS
-                              : EXEC_ROLE_OPTIONS.filter((option) => option.value !== 'admin')
+                              : EXEC_ROLE_OPTIONS.filter((option) => !ADMIN_TIER_ACCESS.includes(option.value))
                           }
                           value={access}
                           onChange={(e) => setAccess(e.target.value as ExecRole)}
@@ -1761,7 +1766,7 @@ export function PermissionEditor({
                                 ? 'They lose the console entirely, and anything set below is cleared with it — a stored role nobody can reach would sit dormant and wake up if they were ever promoted again.'
                                 : selected.level === null
                                   ? 'They get the console, starting from everything that level has always had. Narrow it below afterwards.'
-                                  : access === 'admin'
+                                  : access === 'admin' || access === 'super_admin'
                                     ? 'Admins hold every capability by level, so anything set below stops being consulted and is cleared.'
                                     : 'Their level changes. Anything set below still applies — the resolver does not look at levels.'}
                             </p>
@@ -1890,7 +1895,7 @@ export function PermissionEditor({
                         was reported on 2026-08-15: "the permission editor makes
                         no changes". Losing an hour to a screen that accepted the
                         work and discarded it is worse than being told up front. */}
-                    {selectedLevel === 'admin' && (
+                    {(selectedLevel === 'admin' || selectedLevel === 'super_admin') && (
                       <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3">
                         <p className={cn(MICRO, 'text-[var(--text-primary)]')}>
                           An admin holds every capability by level
@@ -1910,7 +1915,7 @@ export function PermissionEditor({
                         are not the same question and only the second one is a
                         warning. See the note on `losing` above for why a trainer
                         needs it more sharply than an exec does. */}
-                    {!(composable && editingTree) && selectedLevel !== 'admin' && (
+                    {!(composable && editingTree) && selectedLevel !== 'admin' && selectedLevel !== 'super_admin' && (
                       <DetailList>
                         <DetailRow label="Starts from" value={storedStart} mono={false} />
                         <DetailRow label="Differs from the role" value={storedDiff} mono={false} wide />
@@ -2179,6 +2184,7 @@ function accessSummary(person: PersonRow, baselineNames: ReadonlyMap<string, str
   if (person.level === null) return 'No console access';
   // Still answered from the level, and still correctly: an admin's stored role
   // is never consulted, so there is nothing else it could say.
+  if (person.level === 'super_admin') return 'Super admin';
   if (person.level === 'admin') return 'Admin';
   if (!isRole(person.role)) return LEVEL_ACCESS_LABELS[person.level];
   // THE BASELINE'S NAME BEATS 'Hand-picked', because that is what the club

@@ -10,6 +10,7 @@ import {
   TRAINER_BASELINE,
   PERMISSION_ROLES,
   ROLE_DEFAULTS,
+  PLATFORM_ONLY,
   UNRESTRICTED,
   effectiveCapabilities,
   featureAccessFor,
@@ -1135,17 +1136,25 @@ describe('permits', () => {
   // and 141 BECAME 142 with the guest waivers switch, and 142 BECAME 144 with
   // the audit export's two, and 144 BECAME 145 with the predictions switch,
   // and 145 BECAME 147 with Club changes, and 147 BECAME 148 with club event
-  // check-in.
+  // check-in. 00321 moved the top of the ladder to the super admin, and an
+  // admin holds the 143 outside PLATFORM_ONLY.
   // This number
-  // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
-  // so every capability added is automatically theirs), and it is written as a
-  // literal anyway, because a count derived from the list it is checking would
-  // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 148', () => {
+  // tracks CAPABILITIES.length by construction (a super admin is a superuser BY
+  // LEVEL, so every capability added is automatically theirs), and it is
+  // written as a literal anyway, because a count derived from the list it is
+  // checking would pass for an empty list.
+  it('makes a super admin a superuser BY LEVEL, holding all 148', () => {
     for (const capability of CAPABILITIES) {
-      expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
+      expect(permits('super_admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(148);
+    expect(effectiveCapabilities('super_admin', UNRESTRICTED).size).toBe(148);
+  });
+
+  it('gives an admin all 148 but the 5 PLATFORM_ONLY', () => {
+    for (const capability of CAPABILITIES) {
+      expect(permits('admin', UNRESTRICTED, capability), capability).toBe(!PLATFORM_ONLY.includes(capability));
+    }
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(143);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

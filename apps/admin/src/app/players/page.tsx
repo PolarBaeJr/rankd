@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
+import { accessLevelFor, atLeast, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, TableCard } from '@badminton/ui';
 import {
   PLAYER_STATUS_LABELS,
@@ -88,7 +88,7 @@ export default async function PlayersPage({
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(accessLevelFor(viewer), viewer);
-  const isAdmin = level === 'admin';
+  const isAdmin = atLeast(level, 'admin');
   const can = (capability: Capability) => permits(level, permissions, capability);
   // MAY THEY SEE THE ROSTER? Its own capability, separate from the page key that
   // let them through the door — this is the section the club owner wanted split
@@ -498,7 +498,7 @@ export default async function PlayersPage({
           current={toRoleValue(player.role ?? 'player', player.is_exec === true, player.is_trainer === true)}
           canWrite={canConsoleAccess}
           isSelf={player.id === viewer.id}
-          viewerIsAdmin={isAdmin}
+          viewerIsSuperAdmin={level === 'super_admin'}
         />
         {/* A guest's own data requests, which they cannot make themselves. Not
             for an erased guest: there is nothing left to export or erase. */}

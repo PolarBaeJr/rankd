@@ -9,7 +9,7 @@ export type PlayerStatus =
   | 'pending_approval'
   | 'suspended';
 
-export type UserRole = 'player' | 'admin';
+export type UserRole = 'player' | 'admin' | 'super_admin';
 
 export type MatchFormat = 'bo3_21' | 'single_21' | 'single_15' | 'single_11';
 

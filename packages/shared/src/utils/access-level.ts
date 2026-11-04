@@ -10,13 +10,17 @@
 // It lives in @badminton/shared so both apps ask the same function. The
 // admin-only pieces — which path needs which capability — stay in the admin app.
 //
-// THREE ORDERED LEVELS — admin > exec > trainer. The ordering still exists, but
-// it now decides only two things: whether someone reaches the console at all,
-// and which BASELINE an unrestricted person holds. What a person may DO is a set
-// of capabilities, not a rung — see permits() below.
+// FOUR ORDERED LEVELS: super_admin > admin > exec > trainer. The ordering still
+// exists, but it now decides only two things: whether someone reaches the
+// console at all, and which BASELINE an unrestricted person holds. What a person
+// may DO is a set of capabilities, not a rung: see permits() below.
+//
+// SUPER ADMIN (00321) is players.role = 'super_admin'. It holds every
+// capability; an admin holds every capability except PLATFORM_ONLY below. Only a
+// super admin may make or unmake an admin or a super admin.
 //
 // The string literals must stay byte-identical to what admin_access_level()
-// returns in the database (migrations 00054, 00057); the admin middleware feeds
+// returns in the database (migrations 00054, 00057, 00321); the admin middleware feeds
 // that value straight into canAccess(). A mismatch resolves to null, fails
 // closed, and locks the level out with no error surfaced anywhere.
 //
@@ -25,11 +29,12 @@
 // imports of its own, so the edge middleware pulls in nothing further.
 import { FEATURES, type FeatureId } from './features';
 
-export type AccessLevel = 'admin' | 'exec' | 'trainer';
+export type AccessLevel = 'super_admin' | 'admin' | 'exec' | 'trainer';
 
 // Higher number = more access. Used for every comparison so a new level is one
 // entry here rather than a new branch in each caller.
 const LEVEL_RANK: Record<AccessLevel, number> = {
+  super_admin: 4,
   admin: 3,
   exec: 2,
   trainer: 1,
@@ -39,6 +44,19 @@ const LEVEL_RANK: Record<AccessLevel, number> = {
 export function atLeast(level: AccessLevel | null | undefined, required: AccessLevel): boolean {
   if (!level) return false;
   return LEVEL_RANK[level] >= LEVEL_RANK[required];
+}
+
+/** The players.role values that make somebody an admin or more. */
+export const ADMIN_ROLES = ['admin', 'super_admin'] as const;
+
+/** players.role is admin or super_admin. */
+export function isAdminRole(role: string | null | undefined): boolean {
+  return role === 'admin' || role === 'super_admin';
+}
+
+/** players.role is super_admin. */
+export function isSuperAdminRole(role: string | null | undefined): boolean {
+  return role === 'super_admin';
 }
 
 /** The role markers a player row carries. */
@@ -180,8 +198,9 @@ export const CAPABILITIES = [
   // must be inside the actor's own set, and what they would hold afterwards
   // must be too.
   //
-  // IT CAN NEVER MINT AN ADMIN. `access === 'admin'`, and any change to a
-  // person who is ALREADY an admin, still require isAdminActor(). If a
+  // IT CAN NEVER MINT AN ADMIN. `access === 'admin'` or `'super_admin'`, and
+  // any change to a person who is ALREADY one, require a super admin (00321;
+  // before it, any admin). If a
   // capability could hand out the admin level, holding it would be equivalent
   // to being an admin and the floor above would be decorative. The docblock on
   // setConsoleAccess makes that argument and this change narrows it rather than
@@ -508,11 +527,10 @@ export const CAPABILITIES = [
   'accounts.apikey.revoke.write',
 
   // ---- platform ----------------------------------------------------------
-  // THE ONE AREA WITH NO ROUTE OF ITS OWN. Platform settings are a form drawn
-  // inside /ratings and /accounts, so `platform.page` gates that form rather
-  // than a path in the section map. It exists because every capability in an
-  // area requires that area's page — without it, platform.settings.write would
-  // be pruned from anybody the resolver ever runs for.
+  // SUPER ADMIN ONLY (PLATFORM_ONLY below). `platform.page` opens /platform,
+  // where the member page switches, the console page switches, the kill
+  // switches, the account rules, the club links and the data API keys live,
+  // and it still gates the settings form on /ratings.
   'platform.page',
   'platform.settings.write',
 
@@ -567,6 +585,31 @@ export function featureAccessCapability(id: FeatureId): Capability {
 }
 
 const ALL_CAPABILITIES: ReadonlySet<Capability> = new Set(CAPABILITIES);
+
+// THE SUPER ADMIN'S ALONE (00321). The owner: "remove platform systems from
+// admins". An admin holds every capability except these; a super admin holds
+// them all. Every one sits in an area of ADMIN_ONLY_AREAS, so none is in
+// EDITOR_OFFERABLE and no role, baseline or grant can hand one to anybody.
+//
+//   platform.page / platform.settings.write  /platform and every
+//       platform_settings write: the member page switches, the console page
+//       switches, the kill switches, the account rules, the club links, the
+//       rating settings on /ratings, and the Discord bot's /setup and /config.
+//   accounts.apikey.*  the data API keys, a credential that outlives the grant.
+//
+// Making or unmaking an admin is not a capability: setConsoleAccess asks for a
+// super admin by level, and so does the players trigger (00321).
+export const PLATFORM_ONLY: readonly Capability[] = [
+  'platform.page',
+  'platform.settings.write',
+  'accounts.apikey.read',
+  'accounts.apikey.mint.write',
+  'accounts.apikey.revoke.write',
+];
+
+const ADMIN_CAPABILITIES: ReadonlySet<Capability> = new Set(
+  CAPABILITIES.filter((cap) => !PLATFORM_ONLY.includes(cap)),
+);
 
 /** Narrow an arbitrary stored string to a capability the vocabulary still has. */
 export function isCapability(value: unknown): value is Capability {
@@ -648,7 +691,8 @@ export const TRAINER_BASELINE: readonly Capability[] = [
 // THE AREAS AN OFFICER CANNOT READ, AND NOBODY CAN BE GIVEN. Who holds what, the audit trail
 // with its sign-ins, the data API's keys, the platform switches and the rating
 // tools: admin work, and reading them is most of what the work is. Everything
-// else is EXEC_READS below.
+// else is EXEC_READS below. The data API's keys and the platform switches are
+// narrower still: PLATFORM_ONLY, the super admin's alone.
 const ADMIN_ONLY_AREAS: readonly Area[] = ['permissions', 'audit', 'ratings', 'accounts', 'platform'];
 
 /** Every `.read` and `.page` an officer holds by being an officer. */
@@ -716,9 +760,11 @@ export const EXEC_BASELINE: readonly Capability[] = [
 ];
 
 const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
-  // Admin is a superuser BY LEVEL, so a capability added next year is
-  // automatically theirs and there is no list to keep in sync.
-  admin: ALL_CAPABILITIES,
+  // Super admin and admin are superusers BY LEVEL, so a capability added next
+  // year is automatically theirs and there is no list to keep in sync. The
+  // admin's set is everything outside PLATFORM_ONLY.
+  super_admin: ALL_CAPABILITIES,
+  admin: ADMIN_CAPABILITIES,
   exec: new Set(EXEC_BASELINE),
   trainer: new Set(TRAINER_BASELINE),
 };
@@ -1532,8 +1578,8 @@ export function resolvePermissions(
   // happen without anybody noticing, since the exec case is the one everybody
   // tests.
   //
-  // ADMIN IS EXCLUDED, and not as a special case for tidiness. BASELINES.admin
-  // is ALL_CAPABILITIES — a LEVEL SHORT-CIRCUIT written as a set, not a floor
+  // ADMIN AND SUPER ADMIN ARE EXCLUDED, and not as a special case for tidiness.
+  // Their BASELINES are a LEVEL SHORT-CIRCUIT written as a set, not a floor
   // anybody was granted. Merging it would make this function answer 119 for a
   // composition that cannot exist: both write paths refuse an admin target
   // outright (isAdminActor in setPlayerPermissions and setConsoleAccess), and
@@ -1552,6 +1598,9 @@ export function resolvePermissions(
   // CHECK, but the resolver has to be total — a row that somehow holds both must
   // have one clear answer.
   for (const cap of revokes) if (isCapability(cap)) effective.delete(cap);
+  // PLATFORM_ONLY IS NEVER CONFERRED BY A ROLE OR A GRANT (00321). The editor
+  // never offers one, and this makes a stored element naming one inert too.
+  for (const cap of PLATFORM_ONLY) effective.delete(cap);
 
   // THE ONE STRUCTURAL INVARIANT: every capability in an area requires that
   // area's page. Applied AFTER subtraction, and that order is the whole reason
@@ -1707,7 +1756,7 @@ export function effectiveCapabilities(
   permissions: Permissions,
 ): ReadonlySet<Capability> {
   if (!level) return EMPTY_CAPABILITIES;
-  if (level === 'admin') return ALL_CAPABILITIES;
+  if (level === 'super_admin' || level === 'admin') return BASELINES[level];
   if (permissions.kind === 'unrestricted') return BASELINES[level];
   return permissions.capabilities;
 }
@@ -1742,6 +1791,7 @@ export type StandingInput = {
 // NOT check standing — see hasConsoleAccess for the gate a UI should use.
 export function accessLevelFor(player: AccessLevelInput | null | undefined): AccessLevel | null {
   if (!player) return null;
+  if (player.role === 'super_admin') return 'super_admin';
   if (player.role === 'admin') return 'admin';
   if (player.is_exec === true) return 'exec';
   if (player.is_trainer === true) return 'trainer';

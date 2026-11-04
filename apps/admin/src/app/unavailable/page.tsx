@@ -34,6 +34,7 @@ function UnavailableContent() {
   // the passkey prompt below is still the way back in, because confirming a
   // passkey does not need that lookup to have worked.
   const isPasskeyOutage = searchParams.get('reason') === 'passkey-unavailable';
+  const isPageOff = searchParams.get('reason') === 'page-off';
 
   useEffect(() => {
     const supabase = createClient();
@@ -79,6 +80,33 @@ function UnavailableContent() {
   async function handleSignOut() {
     await signOutThisDevice(createClient().auth);
     window.location.href = withBase('/login');
+  }
+
+  // A console page a super admin switched off (00321). Not an outage and not a
+  // decision about this person, so it says neither.
+  if (isPageOff) {
+    return (
+      <div className="min-h-screen flex items-center bg-[var(--bg-primary)]">
+        <div className="max-w-xl w-full mx-auto px-6">
+          <div className="page-eyebrow">
+            <span className="bar" />
+            Page unavailable
+          </div>
+          <h1 className="page-title">This page is switched off for now</h1>
+          <p className="page-sub">
+            A super admin has switched this console page off. Nothing has changed about your
+            account, and the rest of the console works as before.
+          </p>
+          <div className="mt-8 flex items-center gap-3">
+            <Button onClick={() => router.replace('/dashboard')}>Go to the dashboard</Button>
+            <Button variant="ghost" onClick={handleSignOut}>
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isPermissionsOutage || isPasskeyOutage) {

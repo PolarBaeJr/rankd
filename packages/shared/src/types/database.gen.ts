@@ -5308,7 +5308,7 @@ export type Database = {
       session_status: "open" | "closed"
       team_side: "a" | "b"
       tournament_status: "draft" | "active" | "completed" | "archived"
-      user_role: "player" | "admin"
+      user_role: "player" | "admin" | "super_admin"
       walkover_status: "pending" | "confirmed" | "rejected"
       walkover_type: "withdrawal" | "no_show"
     }
@@ -5539,7 +5539,7 @@ export const Constants = {
       session_status: ["open", "closed"],
       team_side: ["a", "b"],
       tournament_status: ["draft", "active", "completed", "archived"],
-      user_role: ["player", "admin"],
+      user_role: ["player", "admin", "super_admin"],
       walkover_status: ["pending", "confirmed", "rejected"],
       walkover_type: ["withdrawal", "no_show"],
     },

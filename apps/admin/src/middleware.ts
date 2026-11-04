@@ -17,6 +17,11 @@ import {
   duplicateAuthCookieClears,
 } from '@badminton/shared/src/utils/constants';
 import { getServerSupabaseUrl } from '@badminton/shared/src/utils/supabase-url';
+import {
+  ALL_CONSOLE_PAGES_ON,
+  consolePageClosed,
+  parseConsolePages,
+} from '@badminton/shared/src/utils/console-pages';
 
 export async function middleware(request: NextRequest) {
   // Container health probes come first, for the same second reason spelled out
@@ -143,6 +148,9 @@ export async function middleware(request: NextRequest) {
 
       let accessLevel: AccessLevel | null = null;
       let permissions = UNRESTRICTED;
+      // The console page switches (00321), read in the same round trip. A
+      // failed read is every page on.
+      let consolePages = ALL_CONSOLE_PAGES_ON;
 
       if (accessError) {
         // FAIL CLOSED FOR AN EXEC, and let admins and trainers through. This
@@ -192,8 +200,9 @@ export async function middleware(request: NextRequest) {
         // Null when there is no player row at all, which resolves to no level
         // and therefore to no access — the same answer admin_access_level()
         // gave on its own.
-        const row = access as (PermissionsInput & { level: string | null }) | null;
+        const row = access as (PermissionsInput & { level: string | null; console_pages?: unknown }) | null;
         accessLevel = (row?.level as AccessLevel | null) ?? null;
+        consolePages = parseConsolePages(row?.console_pages ?? null);
         // The LEVEL the same row carried, so the middleware floors on exactly
         // what every server action floors on. A gate that resolved a different
         // baseline from the action behind it is a nav that hides sections the
@@ -225,13 +234,31 @@ export async function middleware(request: NextRequest) {
         // is exactly why it must be written down rather than relied upon. One
         // capability added to that route and the console becomes an infinite
         // redirect for whoever lacks it.
+        // /platform is the super admin's alone, and for anybody else it is
+        // not a section they lack but one that does not exist for them.
         const canLandOnDashboard =
-          accessLevel !== null && request.nextUrl.pathname !== '/dashboard';
+          accessLevel !== null
+          && request.nextUrl.pathname !== '/dashboard'
+          && !isPlatformPath(request.nextUrl.pathname);
         url.pathname = canLandOnDashboard ? '/dashboard' : '/unauthorized';
         url.search = '';
         if (canLandOnDashboard) {
           url.searchParams.set('denied', request.nextUrl.pathname);
         }
+        return finish(NextResponse.redirect(url));
+      }
+
+      // A CONSOLE PAGE A SUPER ADMIN SWITCHED OFF (00321). Everybody but a
+      // super admin gets the unavailable page, or a 403 for an API call, whose
+      // fetch would otherwise follow a redirect into HTML.
+      if (consolePageClosed(request.nextUrl.pathname, consolePages, accessLevel === 'super_admin')) {
+        if (request.nextUrl.pathname.startsWith('/api/')) {
+          return finish(NextResponse.json({ error: 'This page is switched off for now' }, { status: 403 }));
+        }
+        const url = request.nextUrl.clone();
+        url.pathname = '/unavailable';
+        url.search = '';
+        url.searchParams.set('reason', 'page-off');
         return finish(NextResponse.redirect(url));
       }
 
@@ -332,6 +359,10 @@ export async function middleware(request: NextRequest) {
   }
 
   return finish(supabaseResponse);
+}
+
+function isPlatformPath(pathname: string): boolean {
+  return pathname === '/platform' || pathname.startsWith('/platform/');
 }
 
 export const config = {
