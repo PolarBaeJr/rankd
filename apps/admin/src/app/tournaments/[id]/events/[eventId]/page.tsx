@@ -253,10 +253,10 @@ export default async function EventPage({
     canAddEntries
       ? supabase
           .from('players')
-          .select('id, full_name, avatar_url')
+          .select('id, full_name, avatar_url, handle')
           .not('status', 'in', '("suspended","pending_approval")')
           .order('full_name')
-      : Promise.resolve({ data: [] as PlayerSummary[] }),
+      : Promise.resolve({ data: [] as Array<PlayerSummary & { handle: string | null }> }),
     // WHO HAS SIGNED THE EVENT WAIVER — its own capability, its own fetch,
     // skipped outright rather than hidden for a viewer who does not hold it.
     // Same discipline as `allPlayers` above: this crosses to the browser as a

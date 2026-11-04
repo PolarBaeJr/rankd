@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const DIR = fileURLToPath(new URL('../tournament-actions/', import.meta.url));
 const read = (f: string) => readFileSync(`${DIR}${f}`, 'utf8');
 
-const SOURCES = ['participants.ts', 'brackets.ts', 'events.ts', 'finalize.ts', 'seeding.ts', 'team-category.ts'];
+const SOURCES = ['participants.ts', 'entry-core.ts', 'brackets.ts', 'events.ts', 'finalize.ts', 'seeding.ts', 'team-category.ts'];
 const ALL = SOURCES.map(read).join('\n');
 
 // State guards a stale tab or a mistimed click can meet. Each message tells the

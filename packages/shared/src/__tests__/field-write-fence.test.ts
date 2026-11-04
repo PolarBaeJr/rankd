@@ -75,7 +75,7 @@ const FIELD_TABLES = ['tournament_participants', 'tournament_pairs', 'tournament
  *                   flip to completed is itself fenced (00209).
  *   team_category - a staged team's category (00272), which only sets the
  *                   head starts of its matches. It moves nobody in or out of
- *                   the field and is not in 00202's digest. participants.ts
+ *                   the field and is not in 00202's digest. entry-core.ts
  *                   writes it once, on the pair it has just created;
  *                   team-category.ts writes it on one pair and re-snapshots
  *                   that pair's unplayed matches, until the pair has played
@@ -93,7 +93,8 @@ const UNFENCED_COLUMNS = new Map<string, readonly string[]>([
   ]],
   ['group_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
   ['team_category', [
-    'apps/admin/src/lib/tournament-actions/participants.ts',
+    // The pair add's category write, moved with the add into the entry core.
+    'apps/admin/src/lib/tournament-actions/entry-core.ts',
     'apps/admin/src/lib/tournament-actions/team-category.ts',
   ]],
   // final_position and points USED TO BE CLASSIFIED HERE, for finalize.ts's
