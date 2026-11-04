@@ -134,6 +134,12 @@ export interface DrawCapabilities {
    */
   enterResult: boolean;
   /**
+   * tournaments.results.void.write: the Void button on a court card. A court
+   * helper without it still sees Void on their own court; the server checks
+   * the helper row either way.
+   */
+  voidResult: boolean;
+  /**
    * tournaments.results.edit.write: approving or declining a category change
    * for a team that has already played with head starts (00279). The key
    * correcting a recorded result asks, because the two decide the same thing:

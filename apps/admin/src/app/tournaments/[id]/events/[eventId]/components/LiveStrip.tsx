@@ -10,7 +10,7 @@ import type {
   PairWithPlayers,
 } from '@/lib/tournament-types';
 import {
-  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab, deskCourtSuggestion,
+  absentEntryIds, deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab, deskCourtSuggestion,
 } from '@/lib/live-desk';
 import { getName } from './entry-name';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
@@ -64,12 +64,14 @@ export function LiveStrip({
   }, [isDoubles, pairs, participants]);
 
   const rows = useMemo(() => {
+    // The absentees auto-call skips, so NEXT never names a match it will pass over.
+    const absent = absentEntryIds(isDoubles ? pairs : participants);
     const sideOf = (entryId: string | null) =>
       entryId && nameMap[entryId] !== undefined
-        ? { entryId, label: nameMap[entryId]! }
+        ? { entryId, label: nameMap[entryId]!, absent: absent.has(entryId) }
         : { entryId: null, label: 'TBD' };
     return deskRows(matches, sideOf, isDoubles);
-  }, [matches, nameMap, isDoubles]);
+  }, [matches, nameMap, isDoubles, pairs, participants]);
 
   // HELD AS AN ID AND LOOKED UP IN `matches`, THE UNFILTERED LIST, for the reason
   // the courts tab gives: a score makes the match `completed`, which drops it out

@@ -10,7 +10,7 @@ import {
 import { SearchFilter } from '@badminton/ui';
 import { setMatchCourt, setMatchReadyForPlayer, setMatchLive } from '@/lib/tournament-actions';
 import {
-  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, deskRowGroup, groupsInPlay,
+  absentEntryIds, deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, deskRowGroup, groupsInPlay,
   filterDeskRows, deskRoundLine, deskRowMatchesSearch, deskGroupLabel, deskGroupChipLabel, deskPools, deskCourtSuggestion,
   type DeskState,
 } from '@/lib/live-desk';
@@ -77,6 +77,8 @@ interface DeskSide {
   players: DeskPlayer[];
   /** The entry's round-robin group, null outside a group stage. */
   group: number | null;
+  /** Not here (absentEntryIds), so never the NEXT match. */
+  absent?: boolean;
 }
 
 const entryGroup = (e: unknown): number | null =>
@@ -140,6 +142,7 @@ export function CourtManagementTab({
   // worth something.
   const sides = useMemo(() => {
     const map = new Map<string, DeskSide>();
+    const absent = absentEntryIds(isDoubles ? pairs : participants);
     if (isDoubles) {
       for (const p of pairs) {
         const people: DeskPlayer[] = [];
@@ -149,7 +152,7 @@ export function CourtManagementTab({
         // render the shared form, and a pair reading "A & B" here while the
         // bracket says "A / B" is the kind of drift that makes an exec ask
         // whether they are looking at the same match.
-        map.set(p.id, { entryId: p.id, label: getName(p, isDoubles), players: people, group: entryGroup(p) });
+        map.set(p.id, { entryId: p.id, label: getName(p, isDoubles), players: people, group: entryGroup(p), absent: absent.has(p.id) });
       }
     } else {
       for (const p of participants) {
@@ -158,6 +161,7 @@ export function CourtManagementTab({
           label: getName(p, isDoubles),
           players: p.player ? [{ playerId: p.player.id, name: p.player.full_name }] : [],
           group: entryGroup(p),
+          absent: absent.has(p.id),
         });
       }
     }

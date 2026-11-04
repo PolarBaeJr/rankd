@@ -3,7 +3,7 @@ import {
   deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab,
   deskRowGroup, groupsInPlay, filterDeskRows, deskRoundLine, deskRowMatchesSearch,
   stagedGroupKey, stagedGroupParts, deskGroupLabel, deskGroupChipLabel, deskPools, deskCourtSuggestion,
-  liveEntrants, nextMatchForCourt, planCourtCalls, inlineScoreVerdict, autoCallFailureText,
+  liveEntrants, nextMatchForCourt, planCourtCalls, absentEntryIds, hasAbsentSide, inlineScoreVerdict, autoCallFailureText,
   type DeskMatch,
 } from '../live-desk';
 import { groupsThenTopKnockout, poolsThenPlacement, type MatchRules, type TournamentCourt } from '@badminton/shared';
@@ -107,6 +107,26 @@ describe('nextCallable', () => {
       match({ id: 'w', match_number: 2 }),
     ], sideOf, false);
     expect(nextCallable(rows)).toBeNull();
+  });
+
+  it('passes over a match with an absent side, the same rows auto-call passes over', () => {
+    const entries = [
+      { id: 'a', status: 'no_show' }, { id: 'b', status: 'checked_in' },
+      { id: 'c', status: 'checked_in' }, { id: 'd', status: 'registered' },
+      { id: 'e', status: 'checked_in' }, { id: 'f', status: 'checked_in' },
+    ];
+    const away = absentEntryIds(entries);
+    const absentSideOf = (entryId: string | null) => ({ ...sideOf(entryId), absent: !!entryId && away.has(entryId) });
+    const ms = [
+      match({ id: 'm1', match_number: 1, participant_a_id: 'a', participant_b_id: 'b' }),
+      match({ id: 'm2', match_number: 2, participant_a_id: 'c', participant_b_id: 'd' }),
+      match({ id: 'm3', match_number: 3, participant_a_id: 'e', participant_b_id: 'f' }),
+    ];
+    const rows = deskRows(ms, absentSideOf, false);
+    expect(nextCallable(rows)?.match.id).toBe('m3');
+    expect(rows.map((r) => hasAbsentSide(r))).toEqual([true, true, false]);
+    // A side with no absent flag at all (an older caller) is present.
+    expect(nextCallable(deskRows(ms, sideOf, false))?.match.id).toBe('m1');
   });
 });
 
@@ -464,6 +484,16 @@ describe('the next match for a court', () => {
     expect(nextMatchForCourt(rows, court(1), courts, openKnockout)?.match.id).toBe('s1a');
   });
 
+  it('passes over a match with an absent side, and takes it once they are back', () => {
+    const ms = [group('first', 1, 1, 1, 'a', 'b'), group('second', 1, 1, 2, 'c', 'd')];
+    const absentSideOf = (away: Set<string>) => (entryId: string | null) => ({ ...sideOf(entryId), absent: !!entryId && away.has(entryId) });
+    expect(nextMatchForCourt(deskRows(ms, absentSideOf(new Set(['b'])), false), court(1), courts, groups)?.match.id).toBe('second');
+    expect(nextMatchForCourt(deskRows(ms, absentSideOf(new Set(['b', 'c'])), false), court(1), courts, groups)).toBeNull();
+    expect(nextMatchForCourt(deskRows(ms, absentSideOf(new Set()), false), court(1), courts, groups)?.match.id).toBe('first');
+    expect(planCourtCalls(deskRows(ms, absentSideOf(new Set(['a'])), false), courts, new Set(), groups).map((p) => p.row.match.id))
+      .toEqual(['second']);
+  });
+
   it('plans one match per free court at Start, never a match or an entrant twice', () => {
     const rows = rowsOf([knockout('qf1', 1, 'a', 'b'), knockout('qf2', 2, 'a', 'c'), knockout('qf3', 3, 'd', 'e')]);
     const plan = planCourtCalls(rows, courts, new Set(), openKnockout);
@@ -514,5 +544,24 @@ describe('autoCallFailureText', () => {
     expect(autoCallFailureText({ called: [{ matchId: 'm', court: 'Court 1' }], failed: [] })).toBeNull();
     expect(autoCallFailureText({ called: [], failed: [{ court: 'Court 2', reason: 'boom' }, { court: null, reason: 'down' }] }))
       .toBe('Next match could not be called: Court 2: boom; down');
+  });
+});
+
+describe('absentEntryIds', () => {
+  it('always skips a no-show', () => {
+    expect(absentEntryIds([{ id: 'a', status: 'no_show' }, { id: 'b', status: 'registered' }])).toEqual(new Set(['a']));
+  });
+
+  it('skips the still registered once anyone has checked in', () => {
+    expect(absentEntryIds([
+      { id: 'a', status: 'checked_in' },
+      { id: 'b', status: 'registered' },
+      { id: 'c', status: 'no_show' },
+      { id: 'd', status: 'withdrawn' },
+    ])).toEqual(new Set(['b', 'c']));
+  });
+
+  it('skips no one for being registered when the event never used check-in', () => {
+    expect(absentEntryIds([{ id: 'a', status: 'registered' }, { id: 'b', status: null }])).toEqual(new Set());
   });
 });

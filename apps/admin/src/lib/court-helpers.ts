@@ -5,6 +5,7 @@
 // Every read here degrades on a database older than 00310, so the tournament
 // page and /my-courts still render before the migration is run.
 
+import { ExpectedError } from '@badminton/shared';
 import { hasConsoleAccess } from './permissions';
 import { isCourtsSchemaMissing } from './tournament-courts';
 import type { createAdminClient } from './supabase-server';
@@ -39,6 +40,14 @@ export function courtHelperDecision(input: {
   }
   if (!input.hasHelperRow) return { kind: 'refuse', reason: 'You are not helping on this match\'s court.' };
   return { kind: 'helper', courtId: match.court_id };
+}
+
+/** A void reason as stored: trimmed, 1 to 500 characters. */
+export function normaliseVoidReason(reason: unknown): string {
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (text.length === 0) throw new ExpectedError('Say why the match is voided.');
+  if (text.length > 500) throw new ExpectedError('Keep the reason to 500 characters.');
+  return text;
 }
 
 export interface CourtHelper {

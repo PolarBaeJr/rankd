@@ -655,3 +655,12 @@ html, body { overflow-x: clip; }
   body:has(.print-sheet) { background: #fff; }
   @page { margin: 12mm; }
 }
+
+/* SMALLER TEXT ON A PHONE: every rem scales down an eighth, so more of a court
+   card or a table fits the screen. A form field stays at 16px, and has to beat
+   Tailwind's text-* classes to do it: iOS zooms the page into any field below
+   16px, which on the court screen hides the score under the keyboard. */
+@media (max-width: 639px) {
+  html { font-size: 87.5%; }
+  input, select, textarea { font-size: 16px !important; }
+}

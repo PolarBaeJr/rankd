@@ -2,6 +2,7 @@
 
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { runAction, type ActionResult } from '../action-result';
 import {
   isDoublesEvent,
   placementBonusFor,
@@ -1257,6 +1258,15 @@ export async function recomputeEventStandings(eventId: string): Promise<{
 
   revalidateEventPaths(event.tournament_id, eventId);
   return { moved, bonusesAlreadyPaid, championUndetermined };
+}
+
+/**
+ * finalizeEvent for the console's button: a refusal comes back as a value, so
+ * its message reaches the toast in production instead of being sanitised.
+ * finalizeEvent itself still throws, for the cascade that calls it.
+ */
+export async function finalizeEventAction(eventId: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await finalizeEvent(eventId); });
 }
 
 export async function finalizeEvent(eventId: string) {

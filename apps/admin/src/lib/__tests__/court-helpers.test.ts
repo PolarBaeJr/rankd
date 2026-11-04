@@ -20,10 +20,14 @@ const db = vi.hoisted(() => ({
 const makeClient = vi.hoisted(() => () => ({
   from(table: string) {
     const filters: Array<[string, unknown]> = [];
-    let op: 'select' | 'update' | 'insert' | 'delete' = 'select';
+    let op: 'select' | 'update' | 'insert' | 'delete' | 'upsert' = 'select';
     let payload: Row = {};
     let cols = '*';
-    const rows = () => (db.tables[table] ?? []).filter((r) => filters.every(([c, v]) => r[c] === v));
+    // `.is(col, null)` is tracked apart from `.eq`: in PostgREST it matches a
+    // null column, which `.eq(col, null)` never does.
+    const isFilters: Array<[string, unknown]> = [];
+    const rows = () => (db.tables[table] ?? []).filter((r) =>
+      filters.every(([c, v]) => r[c] === v) && isFilters.every(([c, v]) => (v === null ? r[c] == null : r[c] === v)));
     const embed = (r: Row): Row =>
       cols.includes('tournament_events(')
         ? { ...r, event: (db.tables.tournament_events ?? []).find((e) => e.id === r.event_id) ?? null }
@@ -35,6 +39,10 @@ const makeClient = vi.hoisted(() => () => ({
         if (db.forcedUpdateCount !== null) return { data: null, error: null, count: db.forcedUpdateCount };
         for (const r of hit) Object.assign(r, payload);
         return { data: null, error: null, count: hit.length };
+      }
+      if (op === 'upsert') {
+        db.inserts.push({ table, payload });
+        return { data: null, error: null };
       }
       if (op === 'insert') {
         db.inserts.push({ table, payload });
@@ -53,6 +61,8 @@ const makeClient = vi.hoisted(() => () => ({
     const api = {
       select(c?: string) { if (op === 'select') cols = c ?? '*'; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
+      is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
+      upsert(p: Row) { op = 'upsert'; payload = p; return api; },
       in() { return api; },
       order() { return api; },
       update(p: Row) { op = 'update'; payload = p; return api; },
@@ -101,7 +111,7 @@ vi.mock('../tournament-actions/_internal', async (importOriginal) => ({
 
 import { poolsThenPlacement } from '@badminton/shared';
 import { courtHelperDecision } from '../court-helpers';
-import { enterCourtHelperResult } from '../tournament-actions/results';
+import { enterCourtHelperResult, voidCourtHelperMatch } from '../tournament-actions/results';
 import { addCourtHelper, removeCourtHelper } from '../tournament-actions/court-helpers';
 
 function seed(match: Row = {}) {
@@ -249,6 +259,73 @@ describe('enterCourtHelperResult', () => {
     expect(await enterCourtHelperResult('m1', [{ a: 100, b: 0 }])).toMatchObject({ ok: false });
     expect(await enterCourtHelperResult('m1', [{ a: 10, b: 10 }])).toMatchObject({ ok: false, error: 'No game winner' });
     expect(resultWrite()).toBeUndefined();
+  });
+});
+
+describe('voidCourtHelperMatch', () => {
+  const voidWrite = () => db.updates.find((u) => u.table === 'tournament_matches' && u.payload.status === 'voided');
+  const voidAudit = () => audit.logAudit.mock.calls.find((c) => (c[1] as Row).action === 'match_voided')?.[1] as Row | undefined;
+
+  it('voids a helper\'s live match with the court pinned, and never reaches the standings', async () => {
+    const res = await voidCourtHelperMatch('m1', '  The other team did not come  ');
+    expect(res).toEqual({ ok: true, data: { autoCall: { called: [], failed: [] } } });
+    expect(voidWrite()?.filters).toContainEqual(['court_id', 'c1']);
+    expect(db.tables.tournament_matches![0]!.status).toBe('voided');
+    // Neither the void gate nor recomputeEventStandings' standings gate was asked.
+    expect(gate.asked).toEqual([]);
+    expect(voidAudit()).toMatchObject({
+      performed_by: 'helper-1',
+      details: { reason: 'The other team did not come', via: 'court_helper', court_id: 'c1' },
+    });
+    expect(db.inserts.find((i) => i.table === 'tournament_match_notes')?.payload).toMatchObject({
+      match_id: 'm1', note: 'The other team did not come', author_id: 'helper-1',
+    });
+  });
+
+  it('puts the next match on the freed court with the helper as the actor', async () => {
+    await voidCourtHelperMatch('m1', 'No show');
+    expect(autoCall.fillFreeCourts).toHaveBeenCalledTimes(1);
+    expect(autoCall.fillFreeCourts.mock.calls[0]![1]).toMatchObject({ actorId: 'helper-1', trigger: 'void', preferCourtId: 'c1' });
+  });
+
+  it('refuses when the match left the court before the write', async () => {
+    db.forcedUpdateCount = 0;
+    const res = await voidCourtHelperMatch('m1', 'No show');
+    expect(res).toMatchObject({ ok: false, error: 'This match has left your court. Reload to see your courts.' });
+    expect(voidAudit()).toBeUndefined();
+  });
+
+  it('refuses a helper on a different court', async () => {
+    seed({ court_id: 'c2' });
+    const res = await voidCourtHelperMatch('m1', 'No show');
+    expect(res).toMatchObject({ ok: false, error: 'You are not helping on this match\'s court.' });
+    expect(voidWrite()).toBeUndefined();
+  });
+
+  it('refuses a match that is not on court', async () => {
+    seed({ status: 'ready' });
+    const res = await voidCourtHelperMatch('m1', 'No show');
+    expect(res).toMatchObject({ ok: false, error: 'This match is not being played right now. Reload to see your courts.' });
+    expect(voidWrite()).toBeUndefined();
+  });
+
+  it('voids as the desk for someone holding the void capability, with no court filter', async () => {
+    consoleUser.current = { viewer: { id: 'admin-1' }, level: 'admin', permissions: { kind: 'unrestricted' } };
+    seed({ court_id: null, status: 'ready' });
+    const res = await voidCourtHelperMatch('m1', 'Entered twice');
+    expect(res).toEqual({ ok: true, data: undefined });
+    expect(gate.asked).toContain('tournaments.results.void.write');
+    expect(voidWrite()?.filters.map(([c]) => c)).not.toContain('court_id');
+    expect(voidAudit()).toMatchObject({ performed_by: 'admin-1' });
+    expect((voidAudit()!.details as Row).via).toBeUndefined();
+    // Not live, so nothing was freed and nothing is called.
+    expect(autoCall.fillFreeCourts).not.toHaveBeenCalled();
+  });
+
+  it('refuses a blank or overlong reason before anything is read', async () => {
+    expect(await voidCourtHelperMatch('m1', '   ')).toMatchObject({ ok: false, error: 'Say why the match is voided.' });
+    expect(await voidCourtHelperMatch('m1', 'x'.repeat(501))).toMatchObject({ ok: false, error: 'Keep the reason to 500 characters.' });
+    expect(voidWrite()).toBeUndefined();
   });
 });
 

@@ -25,7 +25,7 @@ import {
   setEventStatus,
   generateSingleEliminationBracket,
   generateRoundRobinMatches,
-  finalizeEvent,
+  finalizeEventAction,
   lockDraw,
   unlockDraw,
   updateTournamentEvent,
@@ -49,8 +49,10 @@ interface Props {
   totalEntries: number;
   checkedIn: number;
   totalMatches: number;
-  /** Progress: decided slots, byes included. Feeds the stats row and Finalize. */
+  /** Progress: decided slots, byes and voids included. Feeds the stats row. */
   completedMatches: number;
+  /** Matches somebody is still waiting to play (isRealIncompleteMatch). Gates Finalize. */
+  undecidedMatches: number;
   /**
    * Matches somebody actually played — isPlayedMatch, so byes are excluded.
    * The redraw is the only control that asks this narrower question; see
@@ -70,9 +72,8 @@ interface Props {
   ratedMatches: number;
   /** How many matches the CURRENT phase holds — what a redraw would replace. */
   phaseMatches: number;
-  /** How many matches the POOL half holds, and how many are decided. */
-  poolTotal: number;
-  poolDecided: number;
+  /** How many POOL matches are still to be played, by the knockout draw's rule. */
+  poolUndecided: number;
   /** Only `generate` is read here; the rest belong to the participants tab. */
   drawCapabilities: DrawCapabilities;
   /** Does the draw that exists right now carry a 3rd place playoff match? */
@@ -81,7 +82,7 @@ interface Props {
   stagesDrawn: number[];
 }
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace, stagesDrawn }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, undecidedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolUndecided, drawCapabilities, hasThirdPlace, stagesDrawn }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -234,7 +235,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         const autoCallFailure = autoCallFailureText(res.data?.autoCall);
         if (autoCallFailure) toast(autoCallFailure, 'error');
       } else if (status === 'live') {
-        await finalizeEvent(event.id as string);
+        const res = await finalizeEventAction(event.id as string);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Event finalized', 'success');
       }
       router.refresh();
@@ -412,7 +414,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // A pool-seeded event usually has NOBODY entered yet — its field arrives at
   // generation, promoted from the pool. Gating on checked-in entries would make
   // the one button that can fill it permanently unpressable.
-  const poolOutstanding = Math.max(0, poolTotal - poolDecided);
+  const poolOutstanding = poolUndecided;
   const actionDisabled =
     (status === 'checkin' && checkedIn < 2 && !seededFromPool)
     // The knockout cannot be drawn out of a half-played pool — the server
@@ -421,9 +423,9 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     // Finalizing refuses unless every match is decided (finalize.ts), and it
     // refused AFTER the click — an exec pressed the one obvious button at the
     // end of an event and got an error for a state the page already knew about.
-    // totalMatches/completedMatches are already props, so the button can say so
+    // undecidedMatches is the server's own count, so the button can say so
     // before it is pressed rather than after.
-    || (status === 'live' && completedMatches < totalMatches)
+    || (status === 'live' && undecidedMatches > 0)
     // A staged event finishes with its last stage, so every stage has to be drawn.
     || (status === 'live' && undrawnStages.length > 0)
     || (status === 'checkin' && staged && !firstStage);
@@ -445,8 +447,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       ? 'At least two players must be checked in'
       : status === 'pool_live' && poolOutstanding > 0
         ? `${poolOutstanding} round-robin match${poolOutstanding === 1 ? '' : 'es'} still to be played`
-      : status === 'live' && completedMatches < totalMatches
-        ? `${totalMatches - completedMatches} match${totalMatches - completedMatches === 1 ? '' : 'es'} still to be decided`
+      : status === 'live' && undecidedMatches > 0
+        ? `${undecidedMatches} match${undecidedMatches === 1 ? '' : 'es'} still to be decided`
       : status === 'live' && undrawnStages.length > 0
         ? `${undrawnStages.join(', ')} still to be drawn`
       : status === 'checkin' && staged && !firstStage

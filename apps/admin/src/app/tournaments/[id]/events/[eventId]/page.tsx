@@ -24,6 +24,7 @@ import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes } from '@/lib/private-notes';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { laterSignup } from '@/lib/entry-sort';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
+import { readMyCourts, type MyCourt } from '@/lib/court-helpers';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import { loadPartnerBoard } from '@/lib/partner-board';
 import { partnerAdvice } from '@/lib/partner-check';
@@ -142,6 +143,8 @@ export default async function EventPage({
     // tournaments.results.* capability has reached a component at all; the
     // bracket and round-robin tabs still gate score entry on status alone.
     enterResult: may('tournaments.results.enter.write'),
+    // The court card's Void; see participant-controls.ts.
+    voidResult: may('tournaments.results.void.write'),
     // Approving or declining a category change after play (00279). The key
     // correcting a recorded result asks; see participant-controls.ts.
     approveCategory: may('tournaments.results.edit.write'),
@@ -173,6 +176,7 @@ export default async function EventPage({
     categoryRequests,
     importRows,
     clubSignups,
+    myCourts,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -333,7 +337,13 @@ export default async function EventPage({
           .eq('event_id', linkedClubEvent.id)
           .then(({ data, error }) => (error ? [] : ((data ?? []) as unknown as { player_id: string; created_at: string }[])))
       : Promise.resolve([] as { player_id: string; created_at: string }[]),
+    // The courts this viewer helps on (00310), so a court card shows Void to a
+    // helper without the void key. A failed read only hides that button.
+    event.format === 'staged'
+      ? readMyCourts(supabase, viewer.id as string).catch(() => [] as MyCourt[])
+      : Promise.resolve([] as MyCourt[]),
   ]);
+  const helperCourtIds = myCourts.filter((c) => c.tournament_id === tournamentId).map((c) => c.court_id);
   const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
   for (const row of importRows) {
     if (row.pair_id) imported[row.pair_id] = row.status;
@@ -534,6 +544,7 @@ export default async function EventPage({
         signedUpAt={signedUpAt}
         partners={partners}
         viewerId={viewer.id}
+        helperCourtIds={helperCourtIds}
       />
     </div>
   );

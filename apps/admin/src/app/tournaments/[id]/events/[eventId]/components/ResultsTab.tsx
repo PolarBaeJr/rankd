@@ -9,6 +9,7 @@ import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Crown, TrendingUp, TrendingDown, Medal, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
+import { finishLabel, knockoutRounds } from '@/lib/finish-labels';
 import type {
   TournamentEventRow,
   TournamentMatchRow,
@@ -24,29 +25,6 @@ interface Props {
   matches: TournamentMatchRow[];
   isDoubles: boolean;
   bonusSettings: TournamentBonusSettings;
-}
-
-const POSITION_LABELS: Record<number, string> = {
-  1: 'Champion', 2: 'Finalist', 3: 'Semi-finalist', 4: 'Semi-finalist',
-  5: 'Quarter-finalist', 6: 'Quarter-finalist', 7: 'Quarter-finalist', 8: 'Quarter-finalist',
-};
-
-/**
- * The finish label, given whether a third-place play-off was actually played.
- *
- * WITHOUT a play-off, 3rd and 4th are both "Semi-finalist" and that is honest:
- * the two beaten semi-finalists were never separated on court, and the numbers
- * beside them are only a tiebreak.
- *
- * WITH one they are not the same, and saying so twice erased the entire point
- * of the match — the club plays a best-of-3 to decide it, and both players came
- * away labelled identically. Whoever won it finished THIRD.
- */
-function positionLabel(position: number | null | undefined, playoffPlayed: boolean): string {
-  if (!position) return '';
-  if (playoffPlayed && position === 3) return '3rd place';
-  if (playoffPlayed && position === 4) return '4th place';
-  return POSITION_LABELS[position] ?? `#${position}`;
 }
 
 const POSITION_COLORS: Record<number, string> = {
@@ -74,6 +52,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles, bon
   // one" — a generated-but-unplayed playoff separates nobody, and a voided one
   // un-separates them again.
   const playoffPlayed = completedMatchList.some((m) => (m as { is_third_place?: boolean | null }).is_third_place === true);
+  const rounds = knockoutRounds(matches, event.format);
 
   async function handleUndo() {
     if (!undoConfirmId) return;
@@ -151,7 +130,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles, bon
               // Singles-only Elo fields — only read when !isDoubles.
               const p = e as ParticipantWithPlayer;
               const pos = e.final_position as number;
-              const label = positionLabel(pos, playoffPlayed);
+              const label = finishLabel(pos, rounds, playoffPlayed);
               const color = POSITION_COLORS[pos] ?? 'var(--text-muted)';
               const bonus = bonusesApply ? placementBonusFor(pos, bonuses) : 0;
 
