@@ -35,7 +35,6 @@ export default async function MyCourtsPage() {
     );
   }
 
-  const releaseFlags = await getReleaseFlags();
   const byTournament = new Map<string, { name: string; courtIds: string[] }>();
   for (const row of mine) {
     const entry = byTournament.get(row.tournament_id) ?? { name: row.tournament_name, courtIds: [] };
@@ -43,7 +42,7 @@ export default async function MyCourtsPage() {
     byTournament.set(row.tournament_id, entry);
   }
 
-  const sections = await Promise.all(
+  const [releaseFlags, sections] = await Promise.all([getReleaseFlags(), Promise.all(
     [...byTournament.entries()].map(async ([tournamentId, { name, courtIds }]) => {
       const [courts, liveUse, { data: events }] = await Promise.all([
         readTournamentCourts(supabase, tournamentId).catch(() => null),
@@ -87,7 +86,7 @@ export default async function MyCourtsPage() {
         events: boardEvents,
       };
     }),
-  );
+  )]);
 
   return (
     <div className="space-y-6">

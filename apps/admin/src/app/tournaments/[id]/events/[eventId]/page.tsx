@@ -179,6 +179,7 @@ export default async function EventPage({
     importRows,
     clubSignups,
     myCourts,
+    releaseFlags,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -344,9 +345,10 @@ export default async function EventPage({
     event.format === 'staged'
       ? readMyCourts(supabase, viewer.id as string).catch(() => [] as MyCourt[])
       : Promise.resolve([] as MyCourt[]),
+    // The kill switches; never throws.
+    getReleaseFlags(),
   ]);
   const helperCourtIds = myCourts.filter((c) => c.tournament_id === tournamentId).map((c) => c.court_id);
-  const releaseFlags = await getReleaseFlags();
   const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
   for (const row of importRows) {
     if (row.pair_id) imported[row.pair_id] = row.status;
