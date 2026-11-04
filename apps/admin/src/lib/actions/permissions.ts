@@ -13,6 +13,7 @@ import { runAction, type ActionResult } from '../action-result';
 // resolvePrivilegeClaimReview needs the same closure test — see the block at the
 // bottom of that module for why one copy rather than two.
 import {
+  ADMIN_TIER_ACCESS,
   assertLevelClosure,
   fromRoleValue,
   listOf,
@@ -20,9 +21,10 @@ import {
   toRoleValue,
   type ExecRole,
 } from '../console-access';
-import { isAdminActor } from '../player-field-access';
+import { isSuperAdminActor } from '../player-field-access';
 import {
   accessLevelFor,
+  atLeast,
   effectiveCapabilities,
   isCapability,
   permissionsOf,
@@ -238,8 +240,13 @@ async function applyPlayerPermissions(
   // subset of yours" is technically what fails — but that sentence tells a
   // treasurer nothing, and "only an admin can change an admin's permissions"
   // tells them exactly who to ask.
-  if (targetLevel === 'admin' && actorLevel !== 'admin') {
-    throw new ExpectedError("Only an admin can change an admin's permissions.");
+  // A super admin target needs a super admin (00321).
+  if (atLeast(targetLevel, 'admin') && !atLeast(actorLevel, targetLevel!)) {
+    throw new ExpectedError(
+      targetLevel === 'super_admin'
+        ? "Only a super admin can change a super admin's permissions."
+        : "Only an admin can change an admin's permissions.",
+    );
   }
 
   if (next.role !== null && !PERMISSION_ROLES.includes(next.role)) {
@@ -292,7 +299,7 @@ async function applyPlayerPermissions(
   // role carries it or it is granted back. That is the same semantics an exec
   // has had since this shipped, and the editor shows what will be lost before
   // the save rather than after.
-  if (next.role !== null && targetLevel === 'admin') {
+  if (next.role !== null && atLeast(targetLevel, 'admin')) {
     throw new ExpectedError(
       'An admin holds every capability by level, so a permission role on one would never be consulted. Make them an executive first.',
     );
@@ -680,7 +687,7 @@ async function setConsoleAccessImpl(
   // never saw.
   const reason = reasonFor(rawReason, 'Changing somebody’s console access');
 
-  const actorIsAdmin = isAdminActor(actor);
+  const actorIsSuperAdmin = isSuperAdminActor(actor);
   const actorLevel = accessLevelFor(actor);
   // From the actor's OWN row, resolved server-side through the same path every
   // gate uses — never from anything the client sent. Same foundation grant
@@ -690,13 +697,15 @@ async function setConsoleAccessImpl(
   const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actorLevel, actor));
 
   // THE LINE THAT DOES NOT MOVE. A capability may hand out `executive` and
-  // `trainer`; the admin level stays admin-only, because a capability that could
-  // mint an admin would make holding it the same thing as being one — and the
-  // hard floor in player-field-access.ts, which exists precisely so that no
-  // capability reaches a level, would be decorative.
-  if (access === 'admin' && !actorIsAdmin) {
+  // `trainer`; the admin levels stay a super admin's (00321), because a
+  // capability that could mint an admin would make holding it the same thing as
+  // being one, and the hard floor in player-field-access.ts, which exists
+  // precisely so that no capability reaches a level, would be decorative. The
+  // database refuses the same write from the browser key
+  // (guard_player_privileged_columns).
+  if (ADMIN_TIER_ACCESS.includes(access) && !actorIsSuperAdmin) {
     throw new ExpectedError(
-      'Only an admin can make somebody an admin.',
+      'Only a super admin can make somebody an admin or a super admin.',
     );
   }
 
@@ -742,8 +751,8 @@ async function setConsoleAccessImpl(
   // the closure test below that would also catch it — an admin holds every
   // capability, so "they hold things you do not" is technically what fails, and
   // that sentence tells a treasurer nothing about who to ask.
-  if (targetLevel === 'admin' && !actorIsAdmin) {
-    throw new ExpectedError("Only an admin can change an admin's console access.");
+  if (atLeast(targetLevel, 'admin') && !actorIsSuperAdmin) {
+    throw new ExpectedError("Only a super admin can change an admin's console access.");
   }
 
   const was = toRoleValue(

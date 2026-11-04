@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import {
+  isAdminRole,
   parseOrThrow,
   otherIncomeSchema,
   clubExpenseSchema,
@@ -317,7 +318,7 @@ async function assertEligiblePayer(
     .eq('id', paidBy)
     .maybeSingle();
   if (!payer) throw new Error('That payer is not a member of the club');
-  if (payer.role !== 'admin' && !payer.is_exec) {
+  if (!isAdminRole(payer.role) && !payer.is_exec) {
     throw new Error('Only an exec or an admin can be recorded as having paid for the club');
   }
 }

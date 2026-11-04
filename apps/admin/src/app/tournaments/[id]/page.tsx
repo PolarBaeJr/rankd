@@ -1,5 +1,5 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
-import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
+import { accessLevelFor, atLeast, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
 import { formatDate, describeTournamentTimes, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags, isDoublesEvent } from '@badminton/shared';
@@ -69,7 +69,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     readMyCourts(supabase, viewer.id as string).catch(() => []),
     getReleaseFlags(),
   ]);
-  const showMyCourts = accessLevelFor(viewer) === 'admin' || viewerCourts.some((c) => c.tournament_id === id);
+  const showMyCourts = atLeast(accessLevelFor(viewer), 'admin') || viewerCourts.some((c) => c.tournament_id === id);
   const formImports = canSeeImports
     ? await loadRegistrationImports(supabase, 'tournament', id, {
         guestWaiversOn: featureFlags.guest_waivers === true,

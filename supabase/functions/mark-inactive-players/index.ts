@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     .in('status', ['competitive', 'recreational'])
     .eq('active_flag', true)
     .lt('last_active_at', cutoff)
-    .neq('role', 'admin')
+    .not('role', 'in', '(admin,super_admin)')
     .eq('is_exec', false)
     .eq('is_banned', false)
     .is('deletion_requested_at', null)

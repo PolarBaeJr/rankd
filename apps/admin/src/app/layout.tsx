@@ -4,7 +4,7 @@ import './globals.css';
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
 import { createAdminClient, getAuthenticatedConsoleUser, touchLastSeen } from '@/lib/supabase-server';
-import { DEFAULT_FEATURE_FLAGS, readFeatureFlags } from '@badminton/shared';
+import { ALL_CONSOLE_PAGES_ON, DEFAULT_FEATURE_FLAGS, readConsolePages, readFeatureFlags } from '@badminton/shared';
 import {
   accessLevelFor,
   effectiveCapabilities,
@@ -181,6 +181,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Never throws: a failed read is every feature at its default.
   const featuresRead = (async () => readFeatureFlags(createAdminClient()))()
     .catch(() => ({ ...DEFAULT_FEATURE_FLAGS }));
+  // The console page switches (00321). Never throws: a failed read is every page on.
+  const consolePagesRead = (async () => readConsolePages(createAdminClient()))()
+    .catch(() => ({ ...ALL_CONSOLE_PAGES_ON }));
   try {
     const viewer = await getAuthenticatedConsoleUser({ skipPasskey: true });
     initialAccessLevel = accessLevelFor(viewer);
@@ -195,6 +198,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     initialAccessLevel = null;
   }
   const features = await featuresRead;
+  const consolePages = await consolePagesRead;
 
   return (
     <html
@@ -233,6 +237,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               initialAccessLevel={initialAccessLevel}
               initialPermissions={initialPermissions}
               features={features}
+              consolePages={consolePages}
             />
             <ExecTourHost
               level={initialAccessLevel}

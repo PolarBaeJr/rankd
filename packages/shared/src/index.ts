@@ -39,6 +39,7 @@ export * from './utils/announcement-markdown';
 export * from './utils/payment-methods';
 export * from './utils/features';
 export * from './utils/release-flags';
+export * from './utils/console-pages';
 export * from './utils/club-socials';
 export * from './utils/membership-settings';
 export * from './utils/etransfer-reference';

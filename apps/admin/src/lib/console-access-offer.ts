@@ -12,11 +12,12 @@
 // THIS IS NOT A BOUNDARY, AND MUST NOT BE MISTAKEN FOR ONE. Every refusal it
 // mirrors is already made — before anything is read — inside
 // setConsoleAccessImpl (lib/actions/permissions.ts): the capability itself, the
-// self-edit, the admin target, minting an admin, and grant closure in both
-// directions. What this decides is only what is DRAWN, and it exists because
+// self-edit, an admin or super admin target, minting either, and grant closure
+// in both directions. Since 00321 the two admin levels are a super admin's to
+// hand out and take away. What this decides is only what is DRAWN, and it exists because
 // this codebase's rule is that a button guaranteed to refuse is worse than no
 // button at all.
-import { EXEC_ROLE_OPTIONS, type ExecRole } from './console-access';
+import { ADMIN_TIER_ACCESS, EXEC_ROLE_OPTIONS, type ExecRole } from './console-access';
 
 export interface ConsoleAccessOffer {
   /** Draw the control at all. */
@@ -25,13 +26,13 @@ export interface ConsoleAccessOffer {
   options: typeof EXEC_ROLE_OPTIONS;
 }
 
-const WITHOUT_ADMIN = EXEC_ROLE_OPTIONS.filter((option) => option.value !== 'admin');
+const WITHOUT_ADMIN_TIER = EXEC_ROLE_OPTIONS.filter((option) => !ADMIN_TIER_ACCESS.includes(option.value));
 
 export function consoleAccessOffer({
   canWrite,
   isSelf,
   current,
-  viewerIsAdmin,
+  viewerIsSuperAdmin,
 }: {
   /** players.consoleaccess.write — the capability setConsoleAccess asks for. */
   canWrite: boolean;
@@ -39,9 +40,10 @@ export function consoleAccessOffer({
   isSelf: boolean;
   /** What the member's three level columns resolve to today. */
   current: ExecRole;
-  viewerIsAdmin: boolean;
+  /** Only a super admin may make, unmake or change an admin (00321). */
+  viewerIsSuperAdmin: boolean;
 }): ConsoleAccessOffer {
-  const options = viewerIsAdmin ? EXEC_ROLE_OPTIONS : WITHOUT_ADMIN;
+  const options = viewerIsSuperAdmin ? EXEC_ROLE_OPTIONS : WITHOUT_ADMIN_TIER;
 
   // SILENTLY ABSENT ON THESE THREE ROWS, where /permissions writes a sentence
   // instead. The difference is that /permissions is a screen about one selected
@@ -55,10 +57,12 @@ export function consoleAccessOffer({
   //                       let this capability promote its own holder, and
   //                       taking your own away loses you the screen that puts
   //                       it back.
-  //   an admin target,    the level no capability hands out is the one no
-  //   viewer not admin    capability takes back — the same act in both
-  //                       directions, so the same rule.
-  const offered = canWrite && !isSelf && !(current === 'admin' && !viewerIsAdmin);
+  //   an admin or super   the levels only a super admin hands out are the
+  //   admin target,       ones only a super admin takes back: the same act in
+  //   viewer not super    both directions, so the same rule.
+  //   admin
+  const offered =
+    canWrite && !isSelf && !(ADMIN_TIER_ACCESS.includes(current) && !viewerIsSuperAdmin);
 
   return { offered, options };
 }

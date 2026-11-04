@@ -3,6 +3,7 @@ import {
   CAPABILITIES,
   EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  PLATFORM_ONLY,
   TRAINER_BASELINE,
   UNRESTRICTED,
   permits,
@@ -343,16 +344,20 @@ const TODAY: Row[] = [
   // and keeps answering after the minter's console is taken away, so handing one
   // out is admin work in a way no capability below it is. 00238 admits the
   // strings to the stored vocabulary without making them assignable.
-  { capability: 'accounts.apikey.read',               admin: T, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
-  { capability: 'accounts.apikey.mint.write',         admin: T, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
-  { capability: 'accounts.apikey.revoke.write',       admin: T, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
+  //
+  // 00321: all three moved up to the super admin (PLATFORM_ONLY), so the admin
+  // column is F. A narrowing, which is the direction this table allows.
+  { capability: 'accounts.apikey.read',               admin: F, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
+  { capability: 'accounts.apikey.mint.write',         admin: F, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
+  { capability: 'accounts.apikey.revoke.write',       admin: F, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
 
   // ---- platform --------------------------------------------------------
   // The other capability with no predecessor. `platform` has no route, so its
   // page gates the settings FORM on /ratings and /accounts — both of which were
   // admin-only in every half, which is where this row's answers come from.
-  { capability: 'platform.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — the form on ratings/page.tsx and accounts/page.tsx' },
-  { capability: 'platform.settings.write',            admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:14' },
+  // 00321: both moved up to the super admin, who opens /platform with them.
+  { capability: 'platform.page',                      admin: F, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — the form on ratings/page.tsx and accounts/page.tsx' },
+  { capability: 'platform.settings.write',            admin: F, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:14' },
 
   // ---- changelog -------------------------------------------------------
   // Club changes. No predecessor: the page and the posting are new in 00286.
@@ -405,6 +410,8 @@ describe('capability equivalence: nobody gained a write', () => {
   for (const row of TODAY) {
     it(`${row.capability} — admin=${row.admin} exec≤${row.exec} trainer=${row.trainer} (was ${row.was})`, () => {
       expect(permits('admin', UNRESTRICTED, row.capability)).toBe(row.admin);
+      // A super admin holds every row (00321).
+      expect(permits('super_admin', UNRESTRICTED, row.capability)).toBe(true);
       // THE EXEC COLUMN IS AN UPPER BOUND NOW, NOT AN EQUALITY, and this one
       // line is the whole of the change to this file. The expectation moved
       // because the club owner narrowed the exec baseline on purpose: 61 of
@@ -457,10 +464,14 @@ describe('capability equivalence: nobody gained a write', () => {
     }
   });
 
-  // Every capability is held by SOMEBODY, and admins hold all of them. A row
-  // with three falses would be a tick box nobody can ever satisfy.
+  // Every capability is held by SOMEBODY: admins hold all of them but
+  // PLATFORM_ONLY, which a super admin holds (00321). A row with three falses
+  // would otherwise be a tick box nobody can ever satisfy.
   it('leaves nothing unreachable', () => {
-    for (const row of TODAY) expect(row.admin, row.capability).toBe(true);
+    for (const row of TODAY) {
+      expect(row.admin || PLATFORM_ONLY.includes(row.capability), row.capability).toBe(true);
+      expect(row.admin, row.capability).toBe(!PLATFORM_ONLY.includes(row.capability));
+    }
   });
 
   // The two independent write-downs, compared. This table was assembled from

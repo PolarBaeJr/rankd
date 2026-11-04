@@ -18,6 +18,7 @@ import {
   permits,
   EDITOR_OFFERABLE,
   EXEC_ASSIGNABLE,
+  PLATFORM_ONLY,
   TRAINER_BASELINE,
   type AccessLevel,
   type Capability,
@@ -328,6 +329,7 @@ function denialFor(level: AccessLevel | null, capability: Capability): string {
   }
   if (TRAINER_BASELINE.includes(capability)) return 'Admin console access required';
   if (EXEC_ASSIGNABLE.includes(capability)) return 'Admin or exec access required';
+  if (PLATFORM_ONLY.includes(capability)) return 'Super admin access required';
   return 'Admin access required';
 }
 

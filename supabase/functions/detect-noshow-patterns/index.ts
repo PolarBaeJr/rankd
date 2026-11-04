@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
   const { data: admins } = await supabase
     .from('players')
     .select('id')
-    .eq('role', 'admin');
+    .in('role', ['admin', 'super_admin']);
 
   for (const [playerId, count] of counts) {
     if (count >= flagThreshold) {

@@ -1,7 +1,7 @@
 // Which admin section owns which platform_settings row.
 //
 // This ONE map is the whole split. Moving a section between Ratings and
-// Accounts means editing a single line here — no page, layout or nav change.
+// Platform means editing a single line here: no page, layout or nav change.
 //
 // The division the club owner asked for was "rating settings and account
 // settings": knobs that move a player's rating go to Ratings, knobs that govern
@@ -11,10 +11,10 @@
 // It is imported by two server pages and by the permissions test; keeping it a
 // plain module means nothing here can ever follow an import into the edge
 // middleware bundle.
-// 'club' is drawn on /accounts too, as its own "Club links" card: they are
-// links the club publishes, not rules about what an account may do.
-// 'release' is the Kill switches card on /accounts.
-export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club' | 'pages' | 'release';
+// Every section but 'ratings' is drawn on /platform (00321), the super admin's
+// page: 'accounts' is the Account rules card, 'club' the Club links card,
+// 'pages' Member pages, 'console' Console pages and 'release' Kill switches.
+export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club' | 'pages' | 'console' | 'release';
 
 // Declaration order is also RENDER order within each page, so the reading order
 // is decided here too rather than by the database's alphabetical `order('key')`.
@@ -29,12 +29,14 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
   // there is an approval queue at all, and declaration order is render order.
   signup_settings: 'accounts',
   // The member-facing page switches have their own card at the top of
-  // /accounts: filed among the account rules, nobody found them. No migration
+  // /platform: filed among the account rules, nobody found them. No migration
   // seeds this row; see SEEDABLE_SETTINGS in platform-setting-fields.ts.
   features: 'pages',
   // The release kill switches: their own card, not among the member pages.
   // Seeded on first save like features.
   release_flags: 'release',
+  // The console page switches (00321): their own card. Seeded on first save.
+  console_pages: 'console',
   challenge_rules: 'accounts',
   repeat_opponent_caps: 'accounts',
   session_caps: 'accounts',
@@ -50,7 +52,7 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
 // A platform_settings row added later without a line above must still be
 // reachable. Filtering to an exact list would make a new key vanish from the
 // console with no error anywhere — the same silent-nothing-happened failure as
-// an audit insert nobody checks. It lands on Accounts and SettingsForm's raw
+// an audit insert nobody checks. It lands on Platform and SettingsForm's raw
 // JSON fallback renders it, which is ugly but visible.
 export const DEFAULT_SECTION: PlatformSettingsSection = 'accounts';
 

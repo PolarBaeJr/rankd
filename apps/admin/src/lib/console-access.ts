@@ -32,8 +32,8 @@ import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 import { accessLevelFor, type AccessLevel } from '@badminton/shared/src/utils/access-level';
 import type { Capability } from './permissions';
 
-/** The four answers, in the order they are offered. */
-export type ExecRole = 'none' | 'executive' | 'trainer' | 'admin';
+/** The five answers, in the order they are offered. 'super_admin' is 00321's. */
+export type ExecRole = 'none' | 'executive' | 'trainer' | 'admin' | 'super_admin';
 
 // ONE question — what console access does this person have — instead of a
 // role select, an is_exec flag and a trainer switch that had to be combined in
@@ -46,9 +46,16 @@ export const EXEC_ROLE_OPTIONS: { value: ExecRole; label: string }[] = [
   { value: 'executive', label: 'Executive' },
   { value: 'trainer', label: 'Varsity trainer' },
   { value: 'admin', label: 'Admin' },
+  // Offered only to a super admin (console-access-offer.ts), and only a super
+  // admin may set it (setConsoleAccess and the 00321 trigger).
+  { value: 'super_admin', label: 'Super admin' },
 ];
 
+/** The answers only a super admin may hand out or take away (00321). */
+export const ADMIN_TIER_ACCESS: readonly ExecRole[] = ['admin', 'super_admin'];
+
 export function toRoleValue(role: string, isExec: boolean, isTrainer: boolean): ExecRole {
+  if (role === 'super_admin') return 'super_admin';
   if (role === 'admin') return 'admin';
   if (isExec) return 'executive';
   if (isTrainer) return 'trainer';
@@ -56,9 +63,15 @@ export function toRoleValue(role: string, isExec: boolean, isTrainer: boolean): 
 }
 
 // Admin implies is_exec: an admin already has every exec power, and the club's
-// admin sits on the exec team, so they belong on the public /exec page too.
-export function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolean; is_trainer: boolean } {
+// admin sits on the exec team, so they belong on the public /exec page too. A
+// super admin likewise.
+export function fromRoleValue(v: ExecRole): {
+  role: 'player' | 'admin' | 'super_admin';
+  is_exec: boolean;
+  is_trainer: boolean;
+} {
   switch (v) {
+    case 'super_admin': return { role: 'super_admin', is_exec: true, is_trainer: false };
     case 'admin':     return { role: 'admin',  is_exec: true,  is_trainer: false };
     case 'executive': return { role: 'player', is_exec: true,  is_trainer: false };
     case 'trainer':   return { role: 'player', is_exec: false, is_trainer: true };

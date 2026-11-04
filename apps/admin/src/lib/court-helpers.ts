@@ -80,7 +80,7 @@ export async function readHelperCandidates(client: AdminClient): Promise<HelperC
   const { data, error } = await client
     .from('players')
     .select('id, full_name, role, is_exec, is_trainer, is_banned, status, active_flag')
-    .or('role.eq.admin,is_exec.eq.true,is_trainer.eq.true')
+    .or('role.in.(admin,super_admin),is_exec.eq.true,is_trainer.eq.true')
     .order('full_name');
   if (error) throw new Error(`Could not read the console members: ${error.message}`);
   return (data ?? [])

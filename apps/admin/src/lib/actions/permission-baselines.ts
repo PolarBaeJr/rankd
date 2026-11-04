@@ -10,6 +10,7 @@ import { setPlayerPermissions } from './permissions';
 import { REASON_MIN } from '../audit-reason';
 import {
   accessLevelFor,
+  atLeast,
   baselineCapabilityRefusal,
   baselineNameRefusal,
   effectiveCapabilities,
@@ -332,7 +333,7 @@ async function updateImpl(
         `${nameOfPerson(holder)} holds this baseline but has no console access. Clear their permissions first.`,
       );
     }
-    if (level === 'admin') {
+    if (atLeast(level, 'admin')) {
       throw new ExpectedError(
         `${nameOfPerson(holder)} is an admin, so nothing stored on them is ever consulted. Clear their permissions first.`,
       );

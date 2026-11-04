@@ -295,7 +295,7 @@ export async function LedgerCard({
           await supabase
             .from('players')
             .select('id, full_name')
-            .or('role.eq.admin,is_exec.eq.true')
+            .or('role.in.(admin,super_admin),is_exec.eq.true')
             .order('full_name'),
           'FEE-101',
         ) as unknown as { id: string; full_name: string }[];

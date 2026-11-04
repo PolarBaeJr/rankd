@@ -42,7 +42,7 @@ export function ConsoleAccessActions({
   current,
   canWrite,
   isSelf,
-  viewerIsAdmin,
+  viewerIsSuperAdmin,
 }: {
   playerId: string;
   playerName: string;
@@ -51,7 +51,8 @@ export function ConsoleAccessActions({
   /** players.consoleaccess.write. The action is the gate; this only decides what is drawn. */
   canWrite: boolean;
   isSelf: boolean;
-  viewerIsAdmin: boolean;
+  /** Only a super admin may make, unmake or change an admin (00321). */
+  viewerIsSuperAdmin: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [access, setAccess] = useState<ExecRole>(current);
@@ -60,7 +61,7 @@ export function ConsoleAccessActions({
   const router = useRouter();
   const { toast } = useToast();
 
-  const { offered, options } = consoleAccessOffer({ canWrite, isSelf, current, viewerIsAdmin });
+  const { offered, options } = consoleAccessOffer({ canWrite, isSelf, current, viewerIsSuperAdmin });
   if (!offered) return null;
 
   // Whether a stored hand-picked set would survive, decided by the same rule
@@ -140,7 +141,7 @@ export function ConsoleAccessActions({
                   ? `${playerName} loses the console entirely.`
                   : current === 'none'
                     ? `${playerName} gets the console, starting from everything that level has always had.`
-                    : access === 'admin'
+                    : access === 'admin' || access === 'super_admin'
                       ? 'Admins hold every capability by level, so nothing narrower is consulted afterwards.'
                       : 'Their level changes. The capability resolver does not look at levels, so a narrowed set goes on applying.'}
               </p>

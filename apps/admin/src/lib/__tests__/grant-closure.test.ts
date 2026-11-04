@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { EXEC_BASELINE, type Capability } from '../permissions';
+import { EXEC_BASELINE, PLATFORM_ONLY, type Capability } from '../permissions';
 
 // GRANT CLOSURE — the primary defence, and what makes permissions.write safe to
 // hand to somebody who is not an admin.
@@ -469,7 +469,11 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
         revokes: [],
       });
       expect(res.ok, capability).toBe(false);
-      expect(res.ok === false && res.error).toMatch(/admin-only/);
+      // A PLATFORM_ONLY capability (00321) is refused one check earlier: an
+      // admin does not hold it, so grant closure says so before the ceiling.
+      expect(res.ok === false && res.error).toMatch(
+        PLATFORM_ONLY.includes(capability) ? /because you do not hold it/ : /admin-only/,
+      );
     }
   });
 

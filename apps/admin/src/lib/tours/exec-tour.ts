@@ -106,12 +106,12 @@ export function execTourSteps(held: ReadonlySet<string>): TourStep[] {
     {
       id: 'feature-switches',
       title: 'Feature switches',
-      body: 'Switch whole parts of the members app on or off, such as challenges or tournaments. Find it under Members, then Accounts.',
-      href: '/accounts',
+      body: 'Switch whole parts of the members app on or off, such as challenges or tournaments. Find it under System, then Platform.',
+      href: '/platform',
       targets: ['[data-tour="member-pages"]'],
       missingTarget: 'skip',
-      // The section renders on platform.page; without the write the switches are read-only.
-      requires: { capabilitiesAll: ['accounts.page', 'platform.page', 'platform.settings.write'] },
+      // /platform opens on platform.page, a super admin's alone (00321).
+      requires: { capabilitiesAll: ['platform.page', 'platform.settings.write'] },
     },
     {
       id: 'settings',

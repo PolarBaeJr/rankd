@@ -58,6 +58,7 @@ export type ClubChangeGroup =
   | 'Member pages'
   | 'Club links'
   | 'Kill switches'
+  | 'Console pages'
   | 'Officer roles'
   | 'Added by hand';
 
@@ -192,6 +193,8 @@ const SECTION_GROUP: Record<PlatformSettingsSection, ClubChangeGroup> = {
   pages: 'Member pages',
   club: 'Club links',
   release: 'Kill switches',
+  // Never reached: a console page switch drafts nothing (00321).
+  console: 'Console pages',
 };
 
 /** Value equality as the database sees it: 24 and 24.0 are the same. */

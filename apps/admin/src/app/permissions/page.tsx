@@ -8,7 +8,7 @@ import {
 // The two row builders, shared with the copy of this editor embedded on a
 // member's own detail page. Pure, and tested in lib/__tests__/person-row.test.ts.
 import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
-import { isAdminActor } from '@/lib/player-field-access';
+import { isAdminActor, isSuperAdminActor } from '@/lib/player-field-access';
 import { PageHeader } from '@badminton/ui';
 import { PermissionEditor, type PersonRow } from './permission-editor';
 import { BaselineManager, type BaselineRow } from './baseline-manager';
@@ -66,7 +66,7 @@ export default async function PermissionsPage() {
     .select(
       'id, full_name, email, exec_title, role, is_exec, is_trainer, is_banned, status, active_flag, permission_role, permission_grants, permission_revokes, permission_baseline_id',
     )
-    .or('role.eq.admin,is_exec.eq.true,is_trainer.eq.true')
+    .or('role.in.(admin,super_admin),is_exec.eq.true,is_trainer.eq.true')
     .order('full_name');
 
   // Built through accessLevelFor rather than from the flags directly, so this
@@ -179,7 +179,7 @@ export default async function PermissionsPage() {
         // ADMIN BY LEVEL, and it decides ONE thing on this screen now: whether
         // "Admin" appears on the console-access menu. Making somebody an admin is
         // the act no capability reaches, and it stays that way.
-        viewerIsAdmin={viewerIsAdmin}
+        viewerIsSuperAdmin={isSuperAdminActor(viewer)}
         // Whether the console-access control is drawn at all, and whether
         // members without a level are searchable. setConsoleAccess checks this
         // again from the actor's own row; this only decides what is rendered.

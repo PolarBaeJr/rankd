@@ -36,10 +36,10 @@ function lastStatement(sql: string, name: string): string | null {
   return end === -1 ? null : sql.slice(at, end + open[1]!.length + 1);
 }
 
-/** The latest CREATE of a function across the migrations, and its file. */
-function latest(name: string): { file: string; statement: string } | null {
+/** The latest CREATE of a function across the migrations before `before`, and its file. */
+function latest(name: string, before = '99999'): { file: string; statement: string } | null {
   let found: { file: string; statement: string } | null = null;
-  for (const file of migrationFiles()) {
+  for (const file of migrationFiles().filter((f) => f < before)) {
     const statement = lastStatement(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'), name);
     if (statement) found = { file, statement };
   }
@@ -111,13 +111,15 @@ const SKIP = `  -- A kill switch is console-only, never member news: no draft.
 
 `;
 
+// Up to 00321, which restates the trigger to skip console_pages as well;
+// super-admin-migration.test.ts holds that version.
 describe('00318: a kill switch save drafts no club change', () => {
   it('restates the 00286 trigger function last', () => {
-    expect(latest(TRIGGER)?.file).toMatch(/^00318_/);
+    expect(latest(TRIGGER, '00321')?.file).toMatch(/^00318_/);
   });
 
   it('returns before any draft when the row is release_flags', () => {
-    const code = latest(TRIGGER)!.statement;
+    const code = latest(TRIGGER, '00321')!.statement;
     expect(code).toContain(`BEGIN\n${SKIP}  IF NEW.updated_by IS NULL`);
     expect(code.indexOf("IF NEW.key = 'release_flags' THEN")).toBeLessThan(code.indexOf('club_change_upsert'));
   });

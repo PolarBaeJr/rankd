@@ -16,6 +16,7 @@
 // parts worth pinning — who is dirty, what the counts add up to, and that a
 // single refusal writes nothing — are the parts that do not need a DOM.
 import {
+  atLeast,
   effectiveCapabilities,
   resolvePermissions,
   CAPABILITIES,
@@ -235,7 +236,7 @@ export type Actor = {
 export function localRefusal(person: BatchPerson, draft: Draft, actor: Actor): string | null {
   if (person.id === actor.id) return 'you cannot change your own permissions';
   if (person.level === null) return 'they have no console access, so there is nothing to store';
-  if (person.level === 'admin') {
+  if (atLeast(person.level, 'admin')) {
     return 'admins hold every capability by level, so nothing stored would be consulted';
   }
 

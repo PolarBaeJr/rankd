@@ -30,7 +30,7 @@ import {
 } from '../player-field-access';
 import { isApprovalEdit } from '../player-approval';
 import { assertLevelClosure } from '../console-access';
-import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '../permissions';
+import { accessLevelFor, effectiveCapabilities, isAdminRole, permissionsOf, permits } from '../permissions';
 import { existingPeopleLike, type ExistingMatch } from '../possible-matches';
 import { runAction, type ActionResult } from '../action-result';
 
@@ -209,7 +209,7 @@ async function createPlayerImpl(data: {
   // members via updatePlayer, so every admin went through real signup
   // (and the passkey enrollment path). The schema also excludes 'admin';
   // this check just gives the friendly message before Zod's enum error.
-  if (data.role === 'admin') throw new Error('Admins cannot be created directly — promote an existing member instead');
+  if (isAdminRole(data.role)) throw new Error('Admins cannot be created directly — promote an existing member instead');
   const parsed = parseOrThrow(adminPlayerCreateSchema, data);
   const actor = await requireCapability('players.create.write');
   // Adding a member is exec work; adding one who is already an exec is not.
@@ -416,7 +416,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   //
   // Same shape as the role restore at the bottom of this file: only an admin
   // acts on an admin's standing, and an exec who tries is told who to ask.
-  if (data.status && !isAdminActor(actor) && oldPlayer?.role === 'admin') {
+  if (data.status && !isAdminActor(actor) && isAdminRole(oldPlayer?.role)) {
     throw new ExpectedError(
       'Only an admin can change another admin\'s status. Ask one to make this change.',
     );
@@ -1108,7 +1108,7 @@ async function resolvePrivilegeClaimReviewImpl(playerId: string, decision: 'rest
   if (!review) throw new Error('There is nothing left to review on this member.');
 
   const restore = decision === 'restore' ? restoreWithheldPrivileges(review) : {};
-  if (restore.role && restore.role !== 'player' && actor.role !== 'admin') {
+  if (restore.role && restore.role !== 'player' && !isAdminRole(actor.role)) {
     throw new Error('Only an admin can restore an admin role. Ask one to resolve this review.');
   }
 

@@ -22,6 +22,11 @@ import {
   RELEASE_FLAGS_SETTING_KEY,
   defaultReleaseFlagsValue,
 } from '@badminton/shared/src/utils/release-flags';
+import {
+  CONSOLE_PAGES,
+  CONSOLE_PAGES_SETTING_KEY,
+  defaultConsolePagesValue,
+} from '@badminton/shared/src/utils/console-pages';
 import { CLUB_SOCIALS_SETTING_KEY, defaultClubSocialsValue } from '@badminton/shared/src/utils/club-socials';
 import {
   MEMBERSHIP_PAYMENTS_SETTING_KEY,
@@ -48,6 +53,7 @@ export const SETTING_LABELS: Record<string, string> = {
   signup_settings: 'Signup Approval',
   features: 'Club Features',
   release_flags: 'Kill switches',
+  console_pages: 'Console pages',
   club_socials: 'Instagram and Discord',
   membership_payments: 'Buying a membership',
 };
@@ -65,6 +71,7 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   signup_settings: 'Whether a new signup is approved automatically or waits for an exec',
   features: 'Which member-facing features are running',
   release_flags: 'Switch a new console change back to what it did before',
+  console_pages: 'Which admin console pages are open to officers',
   club_socials: 'The Instagram and Discord links on the site and in the bot',
   membership_payments: 'Where the membership page sends people to buy a membership',
 };
@@ -588,6 +595,19 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       },
     ]),
   ),
+  // One switch per switchable console page (00321).
+  [CONSOLE_PAGES_SETTING_KEY]: Object.fromEntries(
+    CONSOLE_PAGES.map((page): [string, FieldMeta] => [
+      page.id,
+      {
+        label: page.label,
+        hint: `Off hides ${page.label} from the console nav and shows officers a short notice instead. A super admin can still open it.`,
+        type: 'boolean',
+        summary: page.paths[0],
+        detail: `Off hides ${page.label} from the console nav and shows officers a short notice instead. A super admin can still open it.`,
+      },
+    ]),
+  ),
 };
 
 /**
@@ -603,6 +623,8 @@ export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = 
   [FEATURES_SETTING_KEY]: defaultFeaturesValue,
   // Absent means every switch on, the shipped behaviour.
   [RELEASE_FLAGS_SETTING_KEY]: defaultReleaseFlagsValue,
+  // Absent means every console page open (00321).
+  [CONSOLE_PAGES_SETTING_KEY]: defaultConsolePagesValue,
   // The same defaults the player app and the bot read an absent row as, so the
   // form shows what the site is already showing.
   [CLUB_SOCIALS_SETTING_KEY]: defaultClubSocialsValue,

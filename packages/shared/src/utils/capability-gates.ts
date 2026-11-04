@@ -731,13 +731,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   // too large to render flat, and `accounts` is four entries against
   // tournaments' forty-four.
   //
-  // THE READ IS A FETCH GATE, not a second page. The key list sits inside
-  // /accounts, which `accounts.page` already opens, and what it withholds is
-  // the rows, so it skips the query the way the officer and settings halves of
-  // that page already do, rather than drawing a card over nothing.
+  // THE READ IS A FETCH GATE, not a second page. The key list sits on
+  // /platform since 00321 (all three are PLATFORM_ONLY), and what it withholds
+  // is the rows, so it skips the query rather than drawing a card over nothing.
   'accounts.apikey.read': {
     label: 'Data API keys', area: 'accounts', group: null, mode: 'read',
-    gate: 'app/accounts/page.tsx data API key fetch',
+    gate: 'app/platform/page.tsx data API key fetch',
   },
   'accounts.apikey.mint.write': {
     label: 'Mint a data API key', area: 'accounts', group: null, mode: 'write',
@@ -753,16 +752,14 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- platform ----------------------------------------------------------
-  // THE ONE PAGE CAPABILITY WITH NO ROUTE. Platform settings have no section of
-  // their own — the form is drawn inside /ratings and /accounts, each of which
-  // is its own area — so this gates the FORM rather than a path, and both pages
-  // render it only for a holder. Every area needs a page for the resolver's
-  // invariant to be uniform, and an honest gate is the price of that.
+  // SUPER ADMIN ONLY (PLATFORM_ONLY in ./access-level). /platform is the
+  // section (00321), and the rating settings form on /ratings is the same
+  // settings drawn on the page they tune.
   'platform.page': {
-    label: 'Open Platform settings', area: 'platform', group: null, mode: 'page',
-    gate: 'app/ratings/page.tsx platform settings form',
-    also: ['app/accounts/page.tsx platform settings form'],
-    merged: 'One form, rendered on the two pages that carry the settings it holds.',
+    label: 'Open Platform', area: 'platform', group: null, mode: 'page',
+    gate: 'app/platform/page.tsx PlatformPage',
+    also: ['app/ratings/page.tsx platform settings form'],
+    merged: 'One set of settings, rendered on /platform and, for the rating keys, on the page they tune.',
   },
   'platform.settings.write': {
     label: 'Platform settings', area: 'platform', group: null, mode: 'write',

@@ -18,8 +18,9 @@ import {
   type AccessLevel,
   type PermissionsInput,
 } from '@/lib/permissions';
-import { NAV_LAYOUT, adminNavItemHasContent, adminNavItemOn, type NavItem } from './nav-sections';
+import { NAV_LAYOUT, adminNavItemHasContent, adminNavItemOn, consolePageNavOn, type NavItem } from './nav-sections';
 import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
+import { ALL_CONSOLE_PAGES_ON, type ConsolePages } from '@badminton/shared/src/utils/console-pages';
 import { isChromelessRoute } from '@/lib/chromeless-routes';
 
 // How quickly a promotion, demotion or narrowing reaches an already-open tab.
@@ -29,6 +30,7 @@ export function Sidebar({
   initialAccessLevel = null,
   initialPermissions = null,
   features = ALL_FEATURES_ENABLED,
+  consolePages = ALL_CONSOLE_PAGES_ON,
 }: {
   initialAccessLevel?: AccessLevel | null;
   // The stored triple, not a resolved Permissions: a Set does not survive the
@@ -38,6 +40,8 @@ export function Sidebar({
   // The club feature switches, read by the layout. Not polled with the access
   // level: they change rarely, and saving one re-renders the layout.
   features?: FeatureFlags;
+  // The console page switches (00321), read by the layout like the features.
+  consolePages?: ConsolePages;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -172,6 +176,7 @@ export function Sidebar({
       accessLoaded
       && canAccess(access.level, permissions, item.href)
       && adminNavItemOn(item.href, features, held)
+      && consolePageNavOn(item.href, consolePages, access.level)
       && adminNavItemHasContent(item.href, held),
   );
 

@@ -158,7 +158,7 @@ async function mintImpl(input: MintDataApiKeyInput): Promise<MintedDataApiKey> {
     { keyId: id },
   );
 
-  revalidatePath('/accounts');
+  revalidatePath('/platform');
 
   // The one and only time the plaintext leaves this function. The caller holds
   // it in client state and loses it on reload, which is the intended property.
@@ -223,7 +223,7 @@ async function revokeImpl(input: RevokeDataApiKeyInput): Promise<void> {
     { keyId: row.id },
   );
 
-  revalidatePath('/accounts');
+  revalidatePath('/platform');
 }
 
 /**
@@ -290,7 +290,7 @@ async function updateScopesImpl(input: UpdateDataApiKeyScopesInput): Promise<{ s
     { keyId: before.id },
   );
 
-  revalidatePath('/accounts');
+  revalidatePath('/platform');
   return { scopes };
 }
 
