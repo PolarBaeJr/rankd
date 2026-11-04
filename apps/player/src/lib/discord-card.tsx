@@ -1320,7 +1320,8 @@ export function Card({
               />
             ) : null}
             {/* ALL-TIME, and now it says so on the panel. The points come from
-                get_leaderboard()'s SUM over tournament_participants, which
+                get_leaderboard()'s SUM over tournament_participants and
+                tournament_pairs (00316), which
                 joins nothing to `tournaments` and so has no season predicate at
                 all. Scoping it is a migration; saying which clock it is on is
                 not, and the rail has no room left for a third clause. */}

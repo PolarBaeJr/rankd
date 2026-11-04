@@ -100,6 +100,6 @@ describe('the public pages agree about a member’s name', () => {
     // precisely how this test tells a migration author that the two assertions
     // above are now being read against their file.
     expect(lastDefinitionOf('get_executives').file).toMatch(/^00225_/);
-    expect(lastDefinitionOf('get_leaderboard').file).toMatch(/^00092_/);
+    expect(lastDefinitionOf('get_leaderboard').file).toMatch(/^00316_/);
   });
 });

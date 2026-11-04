@@ -1851,9 +1851,9 @@ function formatLeaderboardRow(e: {
  * since-rollover figure and one all-time figure side by side.
  *
  * The points ladder is all-time on BOTH sides: get_leaderboard() sums
- * tournament_participants.points with no season predicate and no join to
- * tournaments, so there is no rebase to mention and the caveat is a different
- * one.
+ * tournament_participants.points and tournament_pairs.points (00316) with no
+ * season predicate and no join to tournaments, so there is no rebase to
+ * mention and the caveat is a different one.
  *
  * In the footer, not on each row: a row already carries a medal, a name, a
  * rating and a record, and Discord wraps it on a phone. The footer is also

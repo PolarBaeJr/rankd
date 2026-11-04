@@ -129,7 +129,7 @@ function payeeName(lines: string[], collapsed: string): string | null {
 // they are the same shape in most banking fonts, and banks show an address in
 // lower case. A real "i" reads as a lower case i, so an address that differs
 // by an i for an l still never matches: members have sent the fee to
-// "isa139" for "lsa139", which no bank delivers to the club.
+// "iclub1" for "lclub1", which no bank delivers to the club.
 const emailText = (address: string) => address.replace(/[I|]/g, 'l').toLowerCase();
 
 // The labels a bank puts over the recipient, and over the member's own
@@ -184,7 +184,7 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
     payeeEmail: null,
   };
   if (typeof text !== 'string' || !text.trim()) return none;
-  // The read can put a space either side of an address's "@" ("lsa139 @sfu.ca").
+  // The read can put a space either side of an address's "@" ("lclub1 @example.org").
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').replace(/(\w) ?@ ?(\w)/g, '$1@$2').trim())
@@ -201,7 +201,7 @@ export function parseReceiptText(text: string | null | undefined): ReceiptReadou
     // Another campus anywhere on the receipt wins over Main Campus.
     const campus = /\b(surrey|vancouver|harbour centre)\b/i.test(collapsed)
       ? 'other'
-      : /\b(main campus|burnaby)\b/i.test(collapsed)
+      : /\b(Main Campus|Burnaby)\b/i.test(collapsed)
         ? 'main'
         : null;
     const payer = lines
@@ -294,8 +294,8 @@ export function namesMatch(read: string, member: string): boolean {
 const sameText = (a: string, b: string) =>
   a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
 
-// An l and a 1 are one stroke apart in most banking fonts ("lsal39" for
-// "lsa139"); an i keeps its dot and stays distinct.
+// An l and a 1 are one stroke apart in most banking fonts ("lclubl" for
+// "lclub1"); an i keeps its dot and stays distinct.
 const sameEmail = (a: string, b: string) => {
   const key = (address: string) => emailText(address.trim()).replace(/1/g, 'l');
   return key(a) === key(b);
