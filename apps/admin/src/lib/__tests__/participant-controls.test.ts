@@ -29,6 +29,7 @@ const NOBODY: DrawCapabilities = {
   // control and no redraw button may start reading it by accident.
   manageCourts: false,
   enterResult: false,
+  voidResult: false,
   // Settling a category change after play (00279), results.edit.write.
   approveCategory: false,
 };
@@ -45,6 +46,7 @@ const EVERYTHING: DrawCapabilities = {
   generate: true,
   manageCourts: true,
   enterResult: true,
+  voidResult: true,
   approveCategory: true,
 };
 

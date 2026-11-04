@@ -99,12 +99,14 @@ export {
   getMatchOutcomeSummary,
   getCurrentHeadStarts,
   enterCourtHelperResult,
+  voidCourtHelperMatch,
 } from './tournament-actions/results';
 export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,
   finalizeEvent,
+  finalizeEventAction,
 } from './tournament-actions/finalize';
 
 export {

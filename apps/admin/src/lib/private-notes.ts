@@ -128,7 +128,8 @@ export const PAIR_NOTES: PrivateNoteTable = {
  * Void / double-no-show / restore / walkover reasons.
  *
  * FOUR WRITERS, FOUR CAPABILITIES, and no one of them covers the others:
- * voidMatchImpl requires `tournaments.results.void.write`, recordDoubleNoShow
+ * voidMatchImpl requires `tournaments.results.void.write` (or, from the court
+ * card, a helper row on the match's court, 00310), recordDoubleNoShow
  * `…doublenoshow.write`, unvoidMatch `…unvoid.write`, enterWalkover
  * `…walkover.write`. The restore panel quotes the void reason back at whoever
  * is restoring, so an unvoid-only officer must be able to read what a void-only

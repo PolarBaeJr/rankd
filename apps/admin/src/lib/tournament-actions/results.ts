@@ -54,7 +54,7 @@ import {
 } from './_internal';
 import { fillFreeCourts, type AutoCallEvent, type AutoCallReport } from './auto-call';
 import { requireConsoleUser } from '../court-helper-gate';
-import { courtHelperDecision, hasHelperRow } from '../court-helpers';
+import { courtHelperDecision, hasHelperRow, normaliseVoidReason } from '../court-helpers';
 import { permits } from '../permissions';
 
 // ============================================================
@@ -851,8 +851,14 @@ async function refuseOvertakenVoid(
   );
 }
 
-async function voidMatchImpl(matchId: string, reason: string) {
-  const admin = await requireCapability('tournaments.results.void.write');
+async function voidMatchImpl(
+  matchId: string,
+  reason: string,
+  gate: ResultGate = { kind: 'desk' },
+): Promise<{ autoCall: AutoCallReport } | undefined> {
+  const actorId = gate.kind === 'desk'
+    ? (await requireCapability('tournaments.results.void.write')).id
+    : gate.actorId;
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -863,6 +869,23 @@ async function voidMatchImpl(matchId: string, reason: string) {
   if (!match) throw new Error('Match not found');
 
   const event = match.event as Record<string, unknown>;
+
+  // A court helper voids only the match live on their own court, by the same
+  // rule as saving its score, and before anything below touches the row.
+  let pinnedCourtId: string | null = null;
+  if (gate.kind === 'helper') {
+    await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
+    const courtId = (match.court_id as string | null) ?? null;
+    const decision = courtHelperDecision({
+      canDesk: false,
+      match: { status: match.status as string, stage: (match.stage as number | null) ?? null, court_id: courtId },
+      eventFormat: event.format as string | null,
+      hasHelperRow: courtId ? await hasHelperRow(adminClient, courtId, gate.actorId) : false,
+    });
+    if (decision.kind === 'refuse') throw new ExpectedError(decision.reason);
+    if (decision.kind !== 'helper') throw new ExpectedError('You are not helping on this match\'s court.');
+    pinnedCourtId = decision.courtId;
+  }
 
   // Same gate as entering a result or a walkover. Voiding a match in an event
   // that has not started is meaningless — there is nothing to undo — and it
@@ -962,13 +985,18 @@ async function voidMatchImpl(matchId: string, reason: string) {
     .eq('id', matchId)
     .eq('status', match.status)
     .is('elo_snapshot', null);
-  const { error: voidError, count: voidCount } = await matchSlotFilter(voidUpdate, match, doubles);
+  const { error: voidError, count: voidCount } = await matchSlotFilter(
+    pinnedCourtId ? voidUpdate.eq('court_id', pinnedCourtId) : voidUpdate,
+    match,
+    doubles,
+  );
 
   if (voidError) {
     Sentry.captureException(voidError);
     throw new Error(voidError.message);
   }
   if (voidCount === 0) {
+    if (pinnedCourtId) throw new ExpectedError('This match has left your court. Reload to see your courts.');
     await refuseOvertakenVoid(adminClient, matchId, reversedElo);
   }
 
@@ -978,7 +1006,7 @@ async function voidMatchImpl(matchId: string, reason: string) {
   // revalidateEventPaths and leave an UNAUDITED VOID: no record of who did it
   // or why, and a bracket still showing the match as it was.
   const note = await writePrivateNote(
-    adminClient, TOURNAMENT_MATCH_NOTES, matchId, reason, admin.id,
+    adminClient, TOURNAMENT_MATCH_NOTES, matchId, reason, actorId,
   );
   if (note.error) {
     Sentry.captureException(new Error(`Void note not recorded: ${note.error}`), {
@@ -991,7 +1019,7 @@ async function voidMatchImpl(matchId: string, reason: string) {
     event_id: match.event_id,
     match_id: matchId,
     action: 'match_voided',
-    performed_by: admin.id,
+    performed_by: actorId,
     details: {
       // Recorded here regardless, so a note that did not land is degraded
       // rather than lost.
@@ -1001,17 +1029,40 @@ async function voidMatchImpl(matchId: string, reason: string) {
       reversed_elo: reversedElo,
       cleared_next_slot: cleared.winner,
       cleared_third_place_slot: cleared.loser,
+      ...(pinnedCourtId ? { via: 'court_helper', court_id: pinnedCourtId } : {}),
     },
   });
 
+  // A live staged match leaving its court frees it, so the next match goes
+  // on, that court first. The void is saved whatever happens here.
+  let autoCall: AutoCallReport | undefined;
+  if (match.status === 'live' && match.stage != null && event.format === 'staged') {
+    try {
+      autoCall = (await fillFreeCourts(adminClient, {
+        event: event as unknown as AutoCallEvent,
+        actorId,
+        trigger: 'void',
+        preferCourtId: (match.court_id as string | null) ?? null,
+      })) ?? undefined;
+    } catch (err) {
+      Sentry.captureException(err);
+      autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+    }
+  }
 
   // Redo the placings this just invalidated. No-ops unless the event is
-  // completed; see recomputeStandingsAfterCorrection.
+  // completed; see recomputeStandingsAfterCorrection. A helper voids only a
+  // live match, so the event is not completed, and the standings capability
+  // it does not hold is never asked for.
   try {
-    await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was voided');
+    if (gate.kind === 'desk') {
+      await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was voided');
+    }
   } finally {
     revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+    revalidatePath('/my-courts');
   }
+  return autoCall ? { autoCall } : undefined;
 }
 
 // ============================================================
@@ -1967,8 +2018,30 @@ export async function enterWalkover(
   return runAction(async () => { await enterWalkoverImpl(matchId, winnerPosition, reason); });
 }
 
-export async function voidMatch(matchId: string, reason: string): Promise<ActionResult<void>> {
-  return runAction(async () => { await voidMatchImpl(matchId, reason); });
+export async function voidMatch(
+  matchId: string,
+  reason: string,
+): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(() => voidMatchImpl(matchId, reason));
+}
+
+/**
+ * A VOID FROM THE COURT CARD, for a team that is not coming. Someone who holds
+ * the void capability voids as the desk; anyone else needs a helper row on the
+ * court the match is live on, which voidMatchImpl checks and pins.
+ */
+export async function voidCourtHelperMatch(
+  matchId: string,
+  reason: string,
+): Promise<ActionResult<{ autoCall: AutoCallReport } | undefined>> {
+  return runAction(async () => {
+    const text = normaliseVoidReason(reason);
+    const { viewer, level, permissions } = await requireConsoleUser();
+    if (permits(level, permissions, 'tournaments.results.void.write')) {
+      return voidMatchImpl(matchId, text);
+    }
+    return voidMatchImpl(matchId, text, { kind: 'helper', actorId: viewer.id as string });
+  });
 }
 
 export async function undoMatchResult(matchId: string): Promise<ActionResult<void>> {

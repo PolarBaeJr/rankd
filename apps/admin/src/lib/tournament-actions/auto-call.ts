@@ -26,7 +26,7 @@ import {
 import type { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { readLiveCourtUse, readTournamentCourts } from '../tournament-courts';
-import { deskRows, planCourtCalls, type AutoCallReport, type AutoCallTrigger, type DeskMatch } from '../live-desk';
+import { absentEntryIds, deskRows, planCourtCalls, type AutoCallReport, type AutoCallTrigger, type DeskMatch } from '../live-desk';
 
 export type { AutoCallReport, AutoCallTrigger } from '../live-desk';
 
@@ -128,10 +128,19 @@ export async function fillFreeCourts(
   const { data: matches, error } = await readCallableMatches(client, event.id);
   if (error) throw new Error(`Could not read the event's matches: ${error.message}`);
 
+  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
+  // A no-show, or a team not checked in while others are, is not called.
+  const { data: entries, error: entriesError } = await client
+    .from(doubles ? 'tournament_pairs' : 'tournament_participants')
+    .select('id, status')
+    .eq('event_id', event.id);
+  if (entriesError) throw new Error(`Could not read the event's entries: ${entriesError.message}`);
+  const absent = absentEntryIds((entries ?? []) as Array<{ id: string; status: string | null }>);
+
   const rows = deskRows(
     (matches ?? []) as unknown as DeskMatch[],
-    (id) => ({ entryId: id }),
-    isDoublesEvent(event.event_type as TournamentEventType),
+    (id) => ({ entryId: id, absent: !!id && absent.has(id) }),
+    doubles,
   );
   const plan = planCourtCalls(rows, courts, busy, parseFormatConfig(event.format_config), preferCourtId);
 

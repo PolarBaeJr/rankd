@@ -2,9 +2,9 @@
 
 import { useMemo } from 'react';
 import { courtLabel, parseFormatConfig, type FormatConfig, type TournamentCourt } from '@badminton/shared';
-import { enterCourtHelperResult } from '@/lib/tournament-actions';
-import { deskRows, liveEntrants, nextMatchForCourt } from '@/lib/live-desk';
-import { CourtCard, type CourtDeskRow, type CourtScoreSave } from '../tournaments/[id]/events/[eventId]/components/CourtCard';
+import { enterCourtHelperResult, voidCourtHelperMatch } from '@/lib/tournament-actions';
+import { absentEntryIds, deskRows, liveEntrants, nextMatchForCourt } from '@/lib/live-desk';
+import { CourtCard, type CourtDeskRow, type CourtScoreSave, type CourtVoid } from '../tournaments/[id]/events/[eventId]/components/CourtCard';
 import { getName } from '../tournaments/[id]/events/[eventId]/components/entry-name';
 import type { PairWithPlayers, ParticipantWithPlayer, TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 
@@ -26,6 +26,7 @@ interface Props {
 }
 
 const save: CourtScoreSave = (matchId, scores) => enterCourtHelperResult(matchId, scores);
+const voidMatch: CourtVoid = (matchId, reason) => voidCourtHelperMatch(matchId, reason);
 
 /**
  * One tournament's courts for a helper. Each court shows the event whose match
@@ -40,8 +41,11 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props)
         const entries: Array<ParticipantWithPlayer | PairWithPlayers> = e.isDoubles ? e.pairs : e.participants;
         const nameMap: Record<string, string> = {};
         for (const entry of entries) nameMap[entry.id] = getName(entry, e.isDoubles);
+        const absent = absentEntryIds(entries);
         const sideOf = (entryId: string | null) =>
-          entryId && nameMap[entryId] !== undefined ? { entryId, label: nameMap[entryId]! } : { entryId: null, label: 'TBD' };
+          entryId && nameMap[entryId] !== undefined
+            ? { entryId, label: nameMap[entryId]!, absent: absent.has(entryId) }
+            : { entryId: null, label: 'TBD' };
         const rows: CourtDeskRow[] = deskRows(e.matches, sideOf, e.isDoubles);
         return [{ eventId: e.event.id, cfg, rows }];
       }),
@@ -55,7 +59,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props)
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {mine.map((court) => {
         const onCourt = (b: { rows: CourtDeskRow[] }) =>
           b.rows.some((r) => r.state === 'live' && r.match.court_id === court.id);
@@ -92,6 +96,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events }: Props)
             canManageCourts={false}
             busyElsewhere={courtsInUse.has(court.id) && !onCourt(board)}
             save={save}
+            voidMatch={voidMatch}
           />
         );
       })}

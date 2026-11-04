@@ -153,7 +153,8 @@ export function deskRows<M extends DeskMatch, S extends { entryId: string | null
 /**
  * WHICH ONE IS "NEXT", AND WHY IT IS ONE AND NOT A SET.
  *
- * The earliest `callable` row in the order above. Three decisions in that:
+ * The earliest `callable` row in the order above with no absent side
+ * (hasAbsentSide, the rule auto-call uses too). Three decisions in that:
  *
  * A `live` MATCH DOES NOT OUTRANK IT: it is excluded. "Next" means the one to
  * send on now, and a match already being played is not something you call; it is
@@ -178,8 +179,18 @@ export function deskRows<M extends DeskMatch, S extends { entryId: string | null
  * reads down. That is the whole reason ordering by the draw's own sequence and
  * marking a single next are the same feature rather than two.
  */
-export function nextCallable<R extends { state: DeskState }>(rows: R[]): R | null {
-  return rows.find((r) => r.state === 'callable') ?? null;
+export function nextCallable<R extends { state: DeskState } & AbsentSides>(rows: R[]): R | null {
+  return rows.find((r) => r.state === 'callable' && !hasAbsentSide(r)) ?? null;
+}
+
+type AbsentSides = { a?: { entryId: string | null; absent?: boolean }; b?: { entryId: string | null; absent?: boolean } };
+
+/**
+ * A side is not here (absentEntryIds), so the match is not the one to call.
+ * The one rule behind both the desk's NEXT badge and auto-call's pick.
+ */
+export function hasAbsentSide(row: AbsentSides): boolean {
+  return !!row.a?.absent || !!row.b?.absent;
 }
 
 /** A desk side that may know its round-robin group. */
@@ -431,7 +442,21 @@ export function buildEntryMaps<E extends { id: string; seed_number: number | nul
   return { nameMap, seedMap, placeableEntries };
 }
 
-type CourtRow = { match: DeskMatch; a: { entryId: string | null }; b: { entryId: string | null }; state: DeskState };
+/** `absent` is a side auto-call must not put on court (absentEntryIds). */
+type CourtSideRef = { entryId: string | null; absent?: boolean };
+type CourtRow = { match: DeskMatch; a: CourtSideRef; b: CourtSideRef; state: DeskState };
+
+/**
+ * The entries auto-call skips: a no-show, and, once anyone in the event has
+ * checked in, everyone still only registered. An event that never used
+ * check-in skips no one for being registered.
+ */
+export function absentEntryIds(entries: ReadonlyArray<{ id: string; status: string | null }>): Set<string> {
+  const usesCheckIn = entries.some((e) => e.status === 'checked_in');
+  return new Set(
+    entries.filter((e) => e.status === 'no_show' || (usesCheckIn && e.status === 'registered')).map((e) => e.id),
+  );
+}
 
 /** The entries playing right now, except in `exceptMatchId`. */
 export function liveEntrants(rows: readonly CourtRow[], exceptMatchId?: string | null): Set<string> {
@@ -447,7 +472,8 @@ export function liveEntrants(rows: readonly CourtRow[], exceptMatchId?: string |
 /**
  * THE MATCH A FREE COURT TAKES NEXT, in the desk's order: the first callable
  * row whose stage allows the court and whose entrants are not already on court.
- * Matches skipped for now come after the rest.
+ * Matches skipped for now come after the rest, and a match with an absent
+ * side (absentEntryIds) is passed over until that side turns up.
  *
  * A groups stage with courts keeps to the court each row was drawn on, so a
  * pool's second court never takes its first court's queue. Anywhere else a row
@@ -471,6 +497,7 @@ export function nextMatchForCourt<R extends CourtRow>(
   for (const r of queue) {
     if (r.state !== 'callable' || opts.exclude?.has(r.match.id)) continue;
     if ((r.a.entryId && busyEntries.has(r.a.entryId)) || (r.b.entryId && busyEntries.has(r.b.entryId))) continue;
+    if (hasAbsentSide(r)) continue;
     const allowed = allowedTournamentCourts(courts, stageCourtLabels(cfg, r.match));
     if (allowed && !allowed.some((c) => c.id === court.id)) continue;
     const onThisCourt = r.match.court_id
@@ -543,7 +570,7 @@ export function inlineScoreVerdict(
   return verdict.ok ? { winner: verdict.winner, error: null, scores } : { winner: null, error: verdict.error, scores };
 }
 
-export type AutoCallTrigger = 'result' | 'start' | 'draw' | 'skip';
+export type AutoCallTrigger = 'result' | 'start' | 'draw' | 'skip' | 'void';
 
 /**
  * What putting the next matches on court did after a result, a Start or a

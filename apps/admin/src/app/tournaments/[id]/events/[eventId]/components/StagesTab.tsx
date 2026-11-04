@@ -23,16 +23,17 @@ import {
   type TournamentEventStatus,
 } from '@badminton/shared';
 import { Layers, Plus, RefreshCw } from 'lucide-react';
-import { addStageRound, drawStage, placeLateEntrant, redrawStage } from '@/lib/tournament-actions';
+import { addStageRound, drawStage, placeLateEntrant, redrawStage, voidCourtHelperMatch } from '@/lib/tournament-actions';
 import {
   lateEntrantConfirmMessage,
   lateEntryWindow,
+  splitGroupMatches,
   stageDrawControl,
   stageExtendControl,
   uncategorisedWarning,
   unplacedLateEntries,
 } from '@/lib/stage-controls';
-import { autoCallFailureText, deskRows } from '@/lib/live-desk';
+import { absentEntryIds, autoCallFailureText, deskRows } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { CourtCard, type CourtDeskRow } from './CourtCard';
@@ -57,6 +58,9 @@ interface Props {
   busyCourtIds: string[];
   canManageCourts: boolean;
   canEnterResult: boolean;
+  /** Holds the void key; otherwise Void shows only on a court in helperCourtIds. */
+  canVoid?: boolean;
+  helperCourtIds?: string[];
 }
 
 const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named matches' } as const;
@@ -74,6 +78,7 @@ const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named ma
  */
 export function StagesTab({
   event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
+  canVoid = false, helperCourtIds = [],
 }: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -140,10 +145,14 @@ export function StagesTab({
   const roundCountValid = /^\d+$/.test(roundCount.trim()) && Number(roundCount) >= 1 && Number(roundCount) <= 10;
 
   const rows = useMemo<CourtDeskRow[]>(() => {
+    // The same absentees the server's auto-call skips, so Next up agrees with it.
+    const absent = absentEntryIds(entries);
     const sideOf = (entryId: string | null) =>
-      entryId && nameMap[entryId] !== undefined ? { entryId, label: nameMap[entryId]! } : { entryId: null, label: 'TBD' };
+      entryId && nameMap[entryId] !== undefined
+        ? { entryId, label: nameMap[entryId]!, absent: absent.has(entryId) }
+        : { entryId: null, label: 'TBD' };
     return deskRows(matches, sideOf, isDoubles);
-  }, [matches, nameMap, isDoubles]);
+  }, [matches, nameMap, isDoubles, entries]);
   const courtsInUse = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
   const activeCourts = useMemo(() => (courts ?? []).filter((c) => c.active), [courts]);
 
@@ -236,6 +245,7 @@ export function StagesTab({
       canManageCourts={canManageCourts}
       busyElsewhere={courtsInUse.has(court.id) && !rows.some((r) => r.state === 'live' && r.match.court_id === court.id)}
       onMore={setScoreMatchId}
+      voidMatch={canVoid || helperCourtIds.includes(court.id) ? voidCourtHelperMatch : undefined}
     />
   );
 
@@ -501,8 +511,6 @@ const COURT_GRID_STYLE = { gridTemplateColumns: 'repeat(auto-fit, minmax(min(20r
 const bySlot = (ms: TournamentMatchRow[]) =>
   [...ms].sort((x, y) => (x.slot ?? x.round_number) - (y.slot ?? y.round_number) || (x.match_number ?? 0) - (y.match_number ?? 0));
 
-const isDecided = (m: TournamentMatchRow) => m.status === 'completed' || m.status === 'walkover';
-
 /**
  * A DRAWN GROUPS STAGE, ONE COLUMN PER GROUP (one per pool when there are
  * several pools), each with its courts while the stage is played, then its
@@ -536,14 +544,13 @@ function GroupColumns({
   return (
     <div className="space-y-4">
       {shared.length > 0 && <div className={COURT_GRID} style={COURT_GRID_STYLE}>{shared.map((c) => courtCard(c))}</div>}
-      <div className={COURT_GRID} style={COURT_GRID_STYLE}>
+      <div className={`${COURT_GRID} items-start`} style={COURT_GRID_STYLE}>
         {columns.map((col) => {
           const colCourts = perColumn && stage.courts?.mode === 'per_pool'
             ? allowedTournamentCourts(courts!, stage.courts.pools[col.pool - 1] ?? null) ?? []
             : [];
           const colMatches = own.filter((m) => m.pool_number === col.pool && (col.group == null || m.group_number === col.group));
-          const played = colMatches.filter(isDecided);
-          const toPlay = colMatches.filter((m) => !isDecided(m));
+          const { toPlay, played, voided, summary } = splitGroupMatches(colMatches);
           return (
             <div key={col.key} className="min-w-0 space-y-3" role="region" aria-label={col.title || `Pool ${col.pool}`}>
               {col.groups.length > 1 && col.title && (
@@ -556,10 +563,12 @@ function GroupColumns({
               {colMatches.length > 0 && (
                 <details className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
                   <summary className="cursor-pointer select-none px-3 py-2.5 text-sm font-medium text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded-lg">
-                    Matches: {toPlay.length} to play, {played.length} played
+                    Matches: {summary}
                   </summary>
-                  <div className="p-2 space-y-2">
-                    {[...bySlot(toPlay), ...bySlot(played)].map(matchRow)}
+                  {/* Capped only while columns sit side by side, so one open
+                      list does not stretch its row; a phone has one column. */}
+                  <div className="p-2 space-y-2 sm:max-h-80 sm:overflow-y-auto overscroll-contain">
+                    {[...bySlot(toPlay), ...bySlot(played), ...bySlot(voided)].map(matchRow)}
                   </div>
                 </details>
               )}
@@ -654,10 +663,11 @@ function StageMatchRow({
     </span>
   );
   return (
-    <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
+    <div className={`flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] ${isVoided ? 'opacity-60' : ''}`}>
       <div className="min-w-0 flex-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
           {m.match_number != null ? `M${m.match_number} · ` : ''}{heading}
+          {isVoided && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Voided</span>}
         </p>
         <div className="flex items-center gap-2 min-w-0">
           {side(aId, fixture?.a.slot, m.handicap_a)}
