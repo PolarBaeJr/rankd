@@ -19,6 +19,7 @@ import {
   FileCheck,
   Camera,
   History,
+  MapPin,
 } from 'lucide-react';
 import {
   canAccess,
@@ -76,6 +77,9 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: '/matches', label: 'Matches', icon: Target, area: 'matches' },
       { href: '/tournaments', label: 'Tournaments', icon: Trophy, area: 'tournaments' },
       { href: '/events', label: 'Club events', icon: CalendarHeart, area: 'events' },
+      // A court helper's scoring page (00310). Open to every console user, like
+      // the dashboard; it lists only the courts this person was assigned to.
+      { href: '/my-courts', label: 'Assigned courts', icon: MapPin, area: null },
       { href: '/sessions', label: 'Sessions', icon: Calendar, area: 'sessions' },
       { href: '/announcements', label: 'Announcements', icon: Megaphone, area: 'announcements' },
       { href: '/seasons', label: 'Seasons', icon: Medal, area: 'seasons' },
@@ -164,7 +168,7 @@ const group = (id: string, label: string, hrefs: string[], nest?: NavNest[]): Na
 export const NAV_LAYOUT: NavEntry<NavItem>[] = [
   { kind: 'link', item: navItem('/dashboard') },
   group('play', 'Play', ['/sessions', '/matches', '/seasons']),
-  group('events', 'Events', ['/tournaments', '/events']),
+  group('events', 'Events', ['/tournaments', '/events', '/my-courts']),
   group('members', 'Members', ['/players', '/permissions', '/accounts']),
   group(
     'club',

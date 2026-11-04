@@ -47,7 +47,13 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
 export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [search, setSearch] = useState('');
   const { toast } = useToast();
+  // The search narrows what the lists SHOW at the door; every count, the
+  // progress bar and Check In All Present still read the whole event.
+  const query = search.trim().toLowerCase();
+  const found = (...names: Array<string | null | undefined>) =>
+    !query || names.some((n) => (n ?? '').toLowerCase().includes(query));
 
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   // Keyed on checked_in_at, not status. status is a single enum, so
@@ -198,6 +204,10 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
   const canCheckIn = event.status === 'checkin' || event.status === 'registration';
   // Undo only while check-in is open. The draw fixes the field once published.
   const canUndo = event.status === 'checkin';
+  const shownWaiting = peopleWaiting.filter((p) => found(p.name, p.partnerName));
+  const shownHere = peopleHere.filter((p) => found(p.name, p.partnerName));
+  const shownNotCheckedIn = notCheckedIn.filter((e) => found(getName(e, isDoubles)));
+  const shownCheckedIn = checkedIn.filter((e) => found(getName(e, isDoubles)));
 
   return (
     <div className="space-y-6">
@@ -250,6 +260,18 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
         )}
       </div>
 
+      <div className="relative">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search a name"
+          aria-label="Search a name to check in"
+          autoComplete="off"
+          className="w-full min-h-[48px] px-4 rounded-lg bg-[var(--bg-surface)] border border-[var(--border)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--color-accent)]"
+        />
+      </div>
+
       {isDoubles && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
@@ -258,7 +280,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
               Not Yet Here ({peopleWaiting.length})
             </h3>
             <div className="space-y-2">
-              {peopleWaiting.map((person) => (
+              {shownWaiting.map((person) => (
                 <PersonCard
                   key={`${person.pairId}:${person.slot}`}
                   person={person}
@@ -294,6 +316,9 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
               {peopleWaiting.length === 0 && (
                 <p className="text-sm text-[var(--text-muted)] text-center py-4">Everyone is here!</p>
               )}
+              {peopleWaiting.length > 0 && shownWaiting.length === 0 && (
+                <p className="text-sm text-[var(--text-muted)] text-center py-4">Nobody waiting matches &ldquo;{search.trim()}&rdquo;.</p>
+              )}
             </div>
           </div>
 
@@ -303,7 +328,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
               Here ({peopleHere.length})
             </h3>
             <div className="space-y-2">
-              {peopleHere.map((person) => (
+              {shownHere.map((person) => (
                 <PersonCard
                   key={`${person.pairId}:${person.slot}`}
                   person={person}
@@ -343,7 +368,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
             Not Yet Checked In ({notCheckedIn.length})
           </h3>
           <div className="space-y-2">
-            {notCheckedIn.map((entry) => (
+            {shownNotCheckedIn.map((entry) => (
               <EntryCard
                 key={entry.id}
                 entry={entry}
@@ -386,7 +411,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
             Checked In ({checkedIn.length})
           </h3>
           <div className="space-y-2">
-            {checkedIn.map((entry) => (
+            {shownCheckedIn.map((entry) => (
               <EntryCard
                 key={entry.id}
                 entry={entry}

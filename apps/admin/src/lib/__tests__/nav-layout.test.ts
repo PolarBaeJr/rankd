@@ -68,7 +68,7 @@ describe('the console top bar layout', () => {
   });
 
   it('puts club events beside tournaments in the Events menu of an admin', () => {
-    expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events'] });
+    expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events', '/my-courts'] });
   });
 
   // The same links nav-drift.test.ts pins for an unrestricted exec, now in
@@ -79,7 +79,7 @@ describe('the console top bar layout', () => {
     expect(shape(visible)).toEqual([
       '/dashboard',
       { play: ['/sessions', '/matches', '/seasons'] },
-      { events: ['/tournaments', '/events'] },
+      { events: ['/tournaments', '/events', '/my-courts'] },
       { members: ['/players'] },
       { club: ['/announcements', '/fees', '/finances', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'] },
       { system: ['/club-changes'] },
@@ -92,9 +92,10 @@ describe('the console top bar layout', () => {
     );
   });
 
-  it('shows an unrestricted trainer only the roster menu and the two baseline links', () => {
+  it('shows an unrestricted trainer only their courts, the roster menu and the two baseline links', () => {
     expect(shape(visibleFor('trainer', UNRESTRICTED))).toEqual([
       '/dashboard',
+      { events: ['/my-courts'] },
       { members: ['/players'] },
       '/settings',
     ]);
@@ -109,6 +110,8 @@ describe('the console top bar layout', () => {
     const revokes = EXEC_BASELINE.filter((c) => c.endsWith('.page') && c !== 'fees.page');
     expect(shape(visibleFor('exec', resolvePermissions('exec', 'finance', [], revokes)))).toEqual([
       '/dashboard',
+      // Assigned courts is open to every console user, like the dashboard.
+      { events: ['/my-courts'] },
       { club: ['/fees', '/finances'] },
       '/settings',
     ]);
@@ -152,7 +155,7 @@ describe('the console top bar with a feature switched off', () => {
   // An exec reads /events by level since 2026-10-23, but holds no key, so the
   // switch takes /events away and leaves Tournaments standing.
   it('leaves an exec their Events menu when club events are off', () => {
-    expect(shape(visibleWith(off('events')))).toContainEqual({ events: ['/tournaments'] });
+    expect(shape(visibleWith(off('events')))).toContainEqual({ events: ['/tournaments', '/my-courts'] });
   });
 
   it('drops only Sessions from Play when sessions are off', () => {
@@ -184,7 +187,7 @@ describe('the console top bar with a feature switched off', () => {
     const granted = resolvePermissions('exec', 'custom', [...EXEC_BASELINE, 'page.access.tournaments'], []);
     const visible = shape(visibleWith(off('tournaments', 'sessions'), 'exec', granted));
     // Club events is still on, so /events stays beside the kept Tournaments.
-    expect(visible).toContainEqual({ events: ['/tournaments', '/events'] });
+    expect(visible).toContainEqual({ events: ['/tournaments', '/events', '/my-courts'] });
     expect(visible).toContainEqual({ play: ['/matches', '/seasons'] });
   });
 });

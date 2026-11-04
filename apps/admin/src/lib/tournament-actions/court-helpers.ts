@@ -2,7 +2,8 @@
 
 // COURT HELPERS (00310): naming a console member to keep score on a court, and
 // taking them off it. A helper enters the result of the match on that court
-// from /my-courts (enterCourtHelperResult in ./results.ts).
+// from /my-courts (enterCourtHelperResult in ./results.ts), or skips it for now
+// when a team is not there (00314).
 //
 // Every courtId and playerId below is a client-controlled POST field, so the
 // court is read back for the tournament it really belongs to, and the person
@@ -16,8 +17,11 @@ import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import { hasConsoleAccess } from '../permissions';
 import { COURTS_MIGRATION_MISSING, isCourtsSchemaMissing } from '../tournament-courts';
-import { COURT_HELPERS_MIGRATION_MISSING } from '../court-helpers';
-import { requireCapability, assertTournamentNotSuspended } from './_internal';
+import { COURT_HELPERS_MIGRATION_MISSING, courtHelperDecision, hasHelperRow } from '../court-helpers';
+import { requireConsoleUser } from '../court-helper-gate';
+import { permits } from '../permissions';
+import { requireCapability, assertTournamentNotSuspended, revalidateEventPaths } from './_internal';
+import { fillFreeCourts, type AutoCallEvent, type AutoCallReport } from './auto-call';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -113,4 +117,84 @@ async function removeCourtHelperImpl(courtId: string, playerId: string) {
     details: { court_id: courtId, player_id: playerId },
   });
   revalidateHelperPaths(court.tournament_id);
+}
+
+/**
+ * SKIP FOR NOW (00314): a team is not at the court, so the match comes off it
+ * and waits behind every other match that court can take, and the next one
+ * goes on. The desk may skip any live match; a helper only the one on their
+ * own court, by the same rule as saving its score. `back` is true when nothing
+ * else could go on, so the skipped match was called straight back.
+ */
+export async function skipMatchForNow(
+  matchId: string,
+): Promise<ActionResult<{ autoCall: AutoCallReport | null; back: boolean }>> {
+  return runAction(() => skipMatchForNowImpl(matchId));
+}
+
+async function skipMatchForNowImpl(matchId: string) {
+  const { viewer, level, permissions } = await requireConsoleUser();
+  const actorId = viewer.id as string;
+  const adminClient = createAdminClient();
+
+  const { data: match, error: readError } = await adminClient
+    .from('tournament_matches')
+    .select('id, status, stage, court_id, event_id, event:tournament_events(id, tournament_id, format, format_config, status, event_type)')
+    .eq('id', matchId)
+    .maybeSingle();
+  if (readError) throw new Error(`Could not read the match: ${readError.message}`);
+  if (!match) throw new ExpectedError('Match not found');
+  const embed = match.event as unknown as AutoCallEvent | AutoCallEvent[] | null;
+  const event = Array.isArray(embed) ? embed[0] : embed;
+  if (!event) throw new Error('Match is not attached to an event');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  const courtId = (match.court_id as string | null) ?? null;
+  const decision = courtHelperDecision({
+    canDesk: false,
+    match: { status: match.status as string, stage: (match.stage as number | null) ?? null, court_id: courtId },
+    eventFormat: event.format,
+    hasHelperRow: courtId && !permits(level, permissions, 'tournaments.results.enter.write')
+      ? await hasHelperRow(adminClient, courtId, actorId)
+      : true,
+  });
+  if (decision.kind === 'refuse') throw new ExpectedError(decision.reason);
+
+  // Off court only if it is still the live match on this court: a score saved
+  // or a move made in the meantime is refused rather than undone.
+  const { data: skipped, error } = await adminClient
+    .from('tournament_matches')
+    .update({ status: 'ready', deferred_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', matchId)
+    .eq('status', 'live')
+    .eq('court_id', courtId!)
+    .select('id')
+    .maybeSingle();
+  if (error?.code === '42703') throw new ExpectedError('Run migration 00314 first');
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(`Could not skip the match: ${error.message}`);
+  }
+  if (!skipped) throw new ExpectedError('This match changed in the meantime. Reload to see the court.');
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: event.id,
+    match_id: matchId,
+    action: 'match_start_undone',
+    performed_by: actorId,
+    details: { previous_status: 'live', skipped_for_now: true, court_id: courtId },
+  });
+
+  let autoCall: AutoCallReport | null = null;
+  try {
+    autoCall = await fillFreeCourts(adminClient, { event, actorId, trigger: 'skip', preferCourtId: courtId });
+  } catch (err) {
+    Sentry.captureException(err);
+    autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+  }
+
+  revalidateEventPaths(event.tournament_id, event.id);
+  revalidatePath('/my-courts');
+  return { autoCall, back: !!autoCall?.called.some((c) => c.matchId === matchId) };
 }
