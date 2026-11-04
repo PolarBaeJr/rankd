@@ -208,14 +208,17 @@ export interface LateEntrantPlan {
  * where it can; in a group where everyone is level they play everyone. That
  * evens out best in a group with an odd number of teams, where somebody rests
  * each round, so such a group is taken first when it ends level, then the
- * smallest, then the first. Otherwise the smallest group. null when the
- * entrant is already in a group or no group has been drawn.
+ * smallest, then the first. Otherwise the smallest group. `forced` names the
+ * group the desk picked instead, played by the same rule. null when the
+ * entrant is already in a group, no group has been drawn, or the forced group
+ * is not in the stage.
  */
 export function planLateEntrant(
   stage: Pick<GroupsStage, 'key'>,
   results: FormatResults,
   active: ReadonlySet<string>,
   entrantId: string,
+  forced?: { pool: number; group: number },
 ): LateEntrantPlan | null {
   if (results.groups.some((g) => g.stage === stage.key && g.members.includes(entrantId))) return null;
   const options = groupLedger(results, stage.key, active).map((ledger) => {
@@ -229,7 +232,10 @@ export function planLateEntrant(
   if (options.length === 0) return null;
   type Option = (typeof options)[number];
   const order = (x: Option, y: Option) => x.size - y.size || x.pool - y.pool || x.group - y.group;
-  const best = options.filter((o) => o.size % 2 === 1 && o.level).sort(order)[0] ?? [...options].sort(order)[0]!;
+  const best = forced
+    ? options.find((o) => o.pool === forced.pool && o.group === forced.group)
+    : options.filter((o) => o.size % 2 === 1 && o.level).sort(order)[0] ?? [...options].sort(order)[0]!;
+  if (!best) return null;
   return {
     pool: best.pool,
     group: best.group,

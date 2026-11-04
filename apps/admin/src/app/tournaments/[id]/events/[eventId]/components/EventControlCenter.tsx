@@ -32,7 +32,7 @@ import type {
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
-import { lateEntryWindow } from '@/lib/stage-controls';
+import { drawField, lateEntryWindow } from '@/lib/stage-controls';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
@@ -40,6 +40,7 @@ import { CheckInTab } from './CheckInTab';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { StagesTab } from './StagesTab';
+import { getName } from './entry-name';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
 import { CourtManagementTab } from './CourtManagementTab';
@@ -289,6 +290,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         // other side.
         hasThirdPlace={bracketMatches.some((m) => m.is_third_place)}
         stagesDrawn={[...new Set(matches.flatMap((m) => (m.stage != null ? [m.stage] : [])))]}
+        drawLeftOut={staged ? drawField(entries).leftOut.map((e) => getName(e, isDoubles)) : []}
       />
 
       {/* Suspension Banner — server actions enforce the actual blocking */}
@@ -381,6 +383,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             isDoubles={isDoubles}
             waiverStates={waiverStates}
+            matches={matches}
+            canVoidNoShow={drawCapabilities.voidResult && drawCapabilities.markNoShow}
           />
         )}
         {activeTab === 'courts' && (
@@ -423,6 +427,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canManageCourts={drawCapabilities.manageCourts}
             canEnterResult={drawCapabilities.enterResult}
             canVoid={drawCapabilities.voidResult}
+            canMarkNoShow={drawCapabilities.markNoShow}
             helperCourtIds={helperCourtIds}
           />
         )}

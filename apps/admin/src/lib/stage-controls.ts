@@ -118,7 +118,7 @@ export function unplacedLateEntries(
   results: FormatResults,
   entries: ReadonlyArray<{ id: string; status: string }>,
 ): Array<{ id: string; plan: LateEntrantPlan }> {
-  const active = new Set(entries.filter((e) => e.status === 'registered' || e.status === 'checked_in').map((e) => e.id));
+  const active = activeEntryIds(entries);
   const out: Array<{ id: string; plan: LateEntrantPlan }> = [];
   for (const e of entries) {
     if (!active.has(e.id)) continue;
@@ -126,6 +126,104 @@ export function unplacedLateEntries(
     if (plan) out.push({ id: e.id, plan });
   }
   return out;
+}
+
+function activeEntryIds(entries: ReadonlyArray<{ id: string; status: string }>): Set<string> {
+  return new Set(entries.filter((e) => e.status === 'registered' || e.status === 'checked_in').map((e) => e.id));
+}
+
+/**
+ * Every group of the stage a late entry could be put in, each with the plan
+ * the server would follow there (planLateEntrant, forced to that group). The
+ * first is the one it picks on its own. Empty when the entry is already in a
+ * group or has left.
+ */
+export function lateEntrantGroupOptions(
+  stage: GroupsStage,
+  results: FormatResults,
+  entries: ReadonlyArray<{ id: string; status: string }>,
+  entryId: string,
+): LateEntrantPlan[] {
+  const active = activeEntryIds(entries);
+  if (!active.has(entryId)) return [];
+  const own = planLateEntrant(stage, results, active, entryId);
+  if (!own) return [];
+  const others = results.groups
+    .filter((g) => g.stage === stage.key && !(g.pool === own.pool && g.group === own.group))
+    .sort((x, y) => x.pool - y.pool || x.group - y.group)
+    .map((g) => planLateEntrant(stage, results, active, entryId, { pool: g.pool, group: g.group }))
+    .filter((p): p is LateEntrantPlan => p != null);
+  return [own, ...others];
+}
+
+/**
+ * Who stage 1 is drawn from. Once anyone in the event has checked in, only
+ * the checked-in entries: the ones still only registered are left out (not
+ * withdrawn) and can join later as a late entry. An event that never used
+ * check-in draws everyone registered or checked in, as it always did.
+ * publish_stage_draw (00315) applies the same rule under the field lock.
+ */
+export function drawField<E extends { status: string }>(entries: readonly E[]): { field: E[]; leftOut: E[] } {
+  const usesCheckIn = entries.some((e) => e.status === 'checked_in');
+  return {
+    field: entries.filter((e) => e.status === 'checked_in' || (!usesCheckIn && e.status === 'registered')),
+    leftOut: usesCheckIn ? entries.filter((e) => e.status === 'registered') : [],
+  };
+}
+
+/** What the draw confirm says when the draw leaves registered entries out. */
+export function drawLeftOutMessage(names: readonly string[]): string | null {
+  if (names.length === 0) return null;
+  const who = names.length === 1 ? '1 entry has' : `${names.length} entries have`;
+  return `${who} not checked in and will not be drawn: ${names.join(', ')}. `
+    + 'They stay in the event and can be placed in a group later, once they check in.';
+}
+
+/**
+ * A match nothing has happened on yet: waiting or ready, and not a bye. Live,
+ * disputed and settled matches are never in a bulk void.
+ */
+export function isOpenMatch(m: { status: string; is_bye?: boolean | null }): boolean {
+  return (m.status === 'pending' || m.status === 'ready') && m.is_bye !== true;
+}
+
+/**
+ * The matches "Did not come" voids for one entry, and how many of its matches
+ * are on court right now, which it leaves to the court.
+ */
+export function openMatchesOfEntry<M extends { status: string; is_bye?: boolean | null; a: string | null; b: string | null }>(
+  matches: readonly M[],
+  entryId: string,
+): { open: M[]; live: number } {
+  const theirs = matches.filter((m) => m.a === entryId || m.b === entryId);
+  return { open: theirs.filter(isOpenMatch), live: theirs.filter((m) => m.status === 'live').length };
+}
+
+/**
+ * The matches "Void unplayed" takes, a whole stage or one group of it, and how
+ * many there are on court right now, which it leaves to the court. A match
+ * with a side not known yet (a knockout slot still waiting on a result) is
+ * never voided: it is counted as skipped.
+ */
+export function unplayedMatchesIn<M extends { status: string; is_bye?: boolean | null; stage: number | null; pool_number: number | null; group_number: number | null; a: string | null; b: string | null }>(
+  matches: readonly M[],
+  scope: { stage: number; pool?: number | null; group?: number | null },
+): { open: M[]; live: number; skipped: number } {
+  const inScope = matches.filter((m) => m.stage === scope.stage
+    && (scope.pool == null || m.pool_number === scope.pool)
+    && (scope.group == null || m.group_number === scope.group));
+  const unplayed = inScope.filter(isOpenMatch);
+  const open = unplayed.filter((m) => m.a != null && m.b != null);
+  return { open, live: inScope.filter((m) => m.status === 'live').length, skipped: unplayed.length - open.length };
+}
+
+/** What the desk is told after a run of voids. */
+export function bulkVoidSummary(res: { voided: number; failed: number; live: number; skipped: number }): { text: string; ok: boolean } {
+  const parts = [`${res.voided} match${res.voided === 1 ? '' : 'es'} voided`];
+  if (res.failed > 0) parts.push(`${res.failed} could not be voided, reload and check ${res.failed === 1 ? 'it' : 'them'}`);
+  if (res.live > 0) parts.push(`${res.live} on court left alone, void ${res.live === 1 ? 'it' : 'them'} from the court`);
+  if (res.skipped > 0) parts.push(`${res.skipped} still waiting on a side left alone`);
+  return { text: parts.join('; '), ok: res.failed === 0 };
 }
 
 /** What the confirm says before a late entrant is placed. */

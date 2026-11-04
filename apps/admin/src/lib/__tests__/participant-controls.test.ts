@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  checkInNoShowPath,
   participantControls,
   regenerateDrawControl,
   type DrawCapabilities,
@@ -30,6 +31,7 @@ const NOBODY: DrawCapabilities = {
   manageCourts: false,
   enterResult: false,
   voidResult: false,
+  markNoShow: false,
   // Settling a category change after play (00279), results.edit.write.
   approveCategory: false,
 };
@@ -47,6 +49,7 @@ const EVERYTHING: DrawCapabilities = {
   manageCourts: true,
   enterResult: true,
   voidResult: true,
+  markNoShow: true,
   approveCategory: true,
 };
 
@@ -462,5 +465,17 @@ describe('regenerateDrawControl — a way back to Generate', () => {
     }
     expect(regenerateDrawControl(at('bracket_generated', true), NOBODY).blockedReason).toBeNull();
     expect(regenerateDrawControl(at('live', false, 2), NOBODY).blockedReason).toBeNull();
+  });
+});
+
+describe('checkInNoShowPath: the Check-In tab no-show X', () => {
+  it('marks a plain no-show before play, whatever the keys', () => {
+    expect(checkInNoShowPath(false, false)).toBe('mark');
+    expect(checkInNoShowPath(false, true)).toBe('mark');
+  });
+
+  it('voids their unplayed matches once the event is playing, and only with both keys', () => {
+    expect(checkInNoShowPath(true, true)).toBe('void');
+    expect(checkInNoShowPath(true, false)).toBeNull();
   });
 });

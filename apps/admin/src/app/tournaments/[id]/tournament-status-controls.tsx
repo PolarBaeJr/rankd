@@ -18,9 +18,11 @@ interface Props {
   status: string;
   suspendedAt: string | null;
   suspensionReason: string | null;
+  /** Events not yet completed. Finalising the last one closes the tournament by itself. */
+  openEvents: number;
 }
 
-export function TournamentStatusControls({ tournamentId, status, suspendedAt }: Props) {
+export function TournamentStatusControls({ tournamentId, status, suspendedAt, openEvents }: Props) {
   const [loading, setLoading] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [cascadeOpen, setCascadeOpen] = useState(false);
@@ -62,7 +64,7 @@ export function TournamentStatusControls({ tournamentId, status, suspendedAt }: 
         closed.length > 0 ? `${closed.length} closed without results` : null,
       ].filter(Boolean);
       toast(
-        parts.length > 0 ? `Tournament completed — ${parts.join(', ')}` : 'Tournament completed',
+        parts.length > 0 ? `Tournament completed: ${parts.join(', ')}` : 'Tournament completed',
         'success',
       );
       setCascadeOpen(false);
@@ -121,31 +123,38 @@ export function TournamentStatusControls({ tournamentId, status, suspendedAt }: 
   if (status === 'active') {
     return (
       <>
-        <Button variant="ghost" onClick={() => handleStatusChange('completed', 'completed')} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-          <CheckCircle className="w-4 h-4 mr-1.5" />
-          Mark Completed
-        </Button>
-        <Button variant="ghost" onClick={() => setCascadeOpen(true)} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-          <ListChecks className="w-4 h-4 mr-1.5" />
-          Finalise Events &amp; Complete
-        </Button>
+        {/* One tournament-level close. With an event still open it is "Close
+            without results"; once every event is finished (and the tournament
+            did not close by itself) it is the plain Mark Completed. */}
+        {openEvents > 0 ? (
+          <Button variant="ghost" onClick={() => setCascadeOpen(true)} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+            <ListChecks className="w-4 h-4 mr-1.5" />
+            Close without results
+          </Button>
+        ) : (
+          <Button variant="ghost" onClick={() => handleStatusChange('completed', 'completed')} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+            <CheckCircle className="w-4 h-4 mr-1.5" />
+            Mark Completed
+          </Button>
+        )}
         <Button variant="ghost" onClick={() => setSuspendOpen(true)} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
           <Pause className="w-4 h-4 mr-1.5" />
           Suspend
         </Button>
-        <Dialog open={cascadeOpen} onClose={() => setCascadeOpen(false)} title="Finalise events & complete">
+        <Dialog open={cascadeOpen} onClose={() => setCascadeOpen(false)} title="Close without results?">
           <div className="space-y-4">
             <p className="text-sm text-[var(--text-secondary)]">
-              Every event that is ready will be finalised — positions, points and placement
-              bonuses awarded exactly as a normal finish.
+              {openEvents === 1 ? '1 event is' : `${openEvents} events are`} not finished. An unfinished event
+              is <strong>closed without results</strong>: its entrants get no places and no points. There is no undo.
             </p>
             <p className="text-sm text-[var(--text-secondary)]">
-              Any event that was never finished will be <strong>closed without results</strong>:
-              its entrants get no position and no points. There is no undo.
+              An event whose matches are all decided is still finalised first, with places, points and
+              placement bonuses as a normal finish. To finish the tournament with results, finalise each
+              event instead: the tournament closes by itself after the last one.
             </p>
             <div className="flex items-center justify-between pt-2">
               <Button variant="ghost" onClick={() => setCascadeOpen(false)} type="button">Cancel</Button>
-              <Button onClick={handleCascade} loading={loading}>Finalise &amp; Complete</Button>
+              <Button variant="danger" onClick={handleCascade} loading={loading}>Close without results</Button>
             </div>
           </div>
         </Dialog>

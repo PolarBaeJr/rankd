@@ -78,6 +78,7 @@ export {
 } from './tournament-actions/brackets';
 
 export { drawStage, redrawStage, addStageRound, placeLateEntrant } from './tournament-actions/stages';
+export type { LateEntrantChoice } from './tournament-actions/stages';
 
 export {
   setPairCategory,
@@ -100,8 +101,10 @@ export {
   getCurrentHeadStarts,
   enterCourtHelperResult,
   voidCourtHelperMatch,
+  voidOpenMatchesForEntry,
+  voidUnplayedMatches,
 } from './tournament-actions/results';
-export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from './tournament-actions/results';
+export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts, BulkVoidResult } from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,

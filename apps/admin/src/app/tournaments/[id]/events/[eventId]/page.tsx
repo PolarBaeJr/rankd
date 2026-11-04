@@ -145,6 +145,7 @@ export default async function EventPage({
     enterResult: may('tournaments.results.enter.write'),
     // The court card's Void; see participant-controls.ts.
     voidResult: may('tournaments.results.void.write'),
+    markNoShow: may('tournaments.draw.noshow.write'),
     // Approving or declining a category change after play (00279). The key
     // correcting a recorded result asks; see participant-controls.ts.
     approveCategory: may('tournaments.results.edit.write'),
