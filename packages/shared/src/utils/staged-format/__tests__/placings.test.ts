@@ -49,3 +49,30 @@ describe('finalPlacings: who gets a place', () => {
     expect([...places.values()].sort()).toEqual([1, 2, 3]);
   });
 });
+
+describe('finalPlacings: placeNeverDrawn (kill switch placings_skip_never_played off)', () => {
+  const results: FormatResults = {
+    field: [
+      { id: 'a', seed: 1 }, { id: 'b', seed: 2 }, { id: 'late', seed: 6 }, { id: 'never', seed: 4 }, { id: 'gone', seed: 5 },
+    ],
+    groups: [{ stage: 'groups', pool: 1, group: 1, members: ['a', 'b'] }],
+    matches: [match('a', 'b', 'a')],
+    out: ['gone'],
+  };
+
+  it('places the never-drawn at the very bottom, by seed, as before', () => {
+    const places = finalPlacings(cfg, results, { placeNeverDrawn: true });
+    expect(places.get('a')).toBe(1);
+    expect(places.get('b')).toBe(2);
+    expect(places.get('never')).toBe(3);
+    expect(places.get('late')).toBe(4);
+    expect(places.has('gone')).toBe(false);
+  });
+
+  it('defaults to the new rule: the never-drawn get no place', () => {
+    const places = finalPlacings(cfg, results);
+    expect(places.has('never')).toBe(false);
+    expect(places.has('late')).toBe(false);
+    expect([...places.values()].sort()).toEqual([1, 2]);
+  });
+});

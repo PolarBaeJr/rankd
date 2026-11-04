@@ -12,6 +12,7 @@ import {
 import { FIELD_META, SEEDABLE_SETTINGS, SETTING_LABELS } from '../platform-setting-fields';
 import { SETTING_SECTION } from '../platform-setting-sections';
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
+import { RELEASE_FLAGS_SETTING_KEY } from '@badminton/shared/src/utils/release-flags';
 
 // CLUB CHANGES ARE PUBLISHED TO MEMBERS (00286), so every sentence this module
 // can produce is member copy. These hold the phrase map to the settings the
@@ -49,12 +50,18 @@ describe('the phrase map', () => {
       ...Object.keys(SEEDABLE_SETTINGS),
       ...Object.keys(FIELD_META),
     ]);
+    // Never drafted: the trigger skips the kill switches row (00318).
+    keys.delete(RELEASE_FLAGS_SETTING_KEY);
     for (const key of keys) {
       expect(CHANGE_PHRASES[key], `no phrases for ${key}`).toBeDefined();
       for (const field of Object.keys(FIELD_META[key] ?? {})) {
         expect(CHANGE_PHRASES[key]![field], `no phrase for ${key}.${field}`).toBeDefined();
       }
     }
+  });
+
+  it('has no phrases for the kill switches, which are never drafted', () => {
+    expect(CHANGE_PHRASES[RELEASE_FLAGS_SETTING_KEY]).toBeUndefined();
   });
 
   it('names no field the console does not have', () => {

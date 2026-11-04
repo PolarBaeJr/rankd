@@ -63,6 +63,8 @@ interface Props {
   courts: TournamentCourt[] | null;
   /** Courts a live match is on anywhere in the tournament. See deskCourtSuggestion. */
   busyCourtIds: string[];
+  /** Kill switch auto_call_skips_absent; off, NEXT skips nobody, like auto-call. */
+  skipAbsent?: boolean;
 }
 
 /** One person on one side of a match — the unit the ready control acts on. */
@@ -136,13 +138,14 @@ export function CourtManagementTab({
   canEnterResult,
   courts,
   busyCourtIds,
+  skipAbsent = true,
 }: Props) {
   // Entry id -> the people behind it. A singles entry is one person; a doubles
   // entry is two, and 00135 exists because knowing one of four has turned up is
   // worth something.
   const sides = useMemo(() => {
     const map = new Map<string, DeskSide>();
-    const absent = absentEntryIds(isDoubles ? pairs : participants);
+    const absent = absentEntryIds(isDoubles ? pairs : participants, skipAbsent);
     if (isDoubles) {
       for (const p of pairs) {
         const people: DeskPlayer[] = [];
@@ -166,7 +169,7 @@ export function CourtManagementTab({
       }
     }
     return map;
-  }, [isDoubles, pairs, participants]);
+  }, [isDoubles, pairs, participants, skipAbsent]);
 
   // What the shared ScoreEntryDialog needs, derived FRESH rather than reused from
   // `sides` above: its contract is Record<string, string> keyed by entry id, and

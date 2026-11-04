@@ -57,6 +57,7 @@ export type ClubChangeGroup =
   | 'Account rules'
   | 'Member pages'
   | 'Club links'
+  | 'Kill switches'
   | 'Officer roles'
   | 'Added by hand';
 
@@ -190,6 +191,7 @@ const SECTION_GROUP: Record<PlatformSettingsSection, ClubChangeGroup> = {
   accounts: 'Account rules',
   pages: 'Member pages',
   club: 'Club links',
+  release: 'Kill switches',
 };
 
 /** Value equality as the database sees it: 24 and 24.0 are the same. */

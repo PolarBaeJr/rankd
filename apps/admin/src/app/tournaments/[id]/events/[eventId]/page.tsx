@@ -25,6 +25,7 @@ import { hasResultsTab } from '@/lib/event-tabs';
 import { laterSignup } from '@/lib/entry-sort';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import { readMyCourts, type MyCourt } from '@/lib/court-helpers';
+import { getReleaseFlags } from '@/lib/release-flags';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import { loadPartnerBoard } from '@/lib/partner-board';
 import { partnerAdvice } from '@/lib/partner-check';
@@ -178,6 +179,7 @@ export default async function EventPage({
     importRows,
     clubSignups,
     myCourts,
+    releaseFlags,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -343,6 +345,8 @@ export default async function EventPage({
     event.format === 'staged'
       ? readMyCourts(supabase, viewer.id as string).catch(() => [] as MyCourt[])
       : Promise.resolve([] as MyCourt[]),
+    // The kill switches; never throws.
+    getReleaseFlags(),
   ]);
   const helperCourtIds = myCourts.filter((c) => c.tournament_id === tournamentId).map((c) => c.court_id);
   const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
@@ -546,6 +550,7 @@ export default async function EventPage({
         partners={partners}
         viewerId={viewer.id}
         helperCourtIds={helperCourtIds}
+        releaseFlags={releaseFlags}
       />
     </div>
   );

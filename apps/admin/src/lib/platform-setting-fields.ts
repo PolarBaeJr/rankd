@@ -17,6 +17,11 @@ import {
   type FeatureDefinition,
   type FeatureId,
 } from '@badminton/shared/src/utils/features';
+import {
+  RELEASE_FLAGS,
+  RELEASE_FLAGS_SETTING_KEY,
+  defaultReleaseFlagsValue,
+} from '@badminton/shared/src/utils/release-flags';
 import { CLUB_SOCIALS_SETTING_KEY, defaultClubSocialsValue } from '@badminton/shared/src/utils/club-socials';
 import {
   MEMBERSHIP_PAYMENTS_SETTING_KEY,
@@ -42,6 +47,7 @@ export const SETTING_LABELS: Record<string, string> = {
   session_attendance: 'Session Attendance',
   signup_settings: 'Signup Approval',
   features: 'Club Features',
+  release_flags: 'Kill switches',
   club_socials: 'Instagram and Discord',
   membership_payments: 'Buying a membership',
 };
@@ -58,6 +64,7 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   session_attendance: 'Check-in window and default session duration',
   signup_settings: 'Whether a new signup is approved automatically or waits for an exec',
   features: 'Which member-facing features are running',
+  release_flags: 'Switch a new console change back to what it did before',
   club_socials: 'The Instagram and Discord links on the site and in the bot',
   membership_payments: 'Where the membership page sends people to buy a membership',
 };
@@ -568,6 +575,19 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       ];
     }),
   ),
+  // One switch per entry in the release registry, with what off falls back to.
+  [RELEASE_FLAGS_SETTING_KEY]: Object.fromEntries(
+    RELEASE_FLAGS.map((f): [string, FieldMeta] => [
+      f.id,
+      {
+        label: f.label,
+        hint: `${f.description} ${f.off}`,
+        type: 'boolean',
+        summary: `Since ${f.since}`,
+        detail: `${f.description} ${f.off}`,
+      },
+    ]),
+  ),
 };
 
 /**
@@ -581,6 +601,8 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
  */
 export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = {
   [FEATURES_SETTING_KEY]: defaultFeaturesValue,
+  // Absent means every switch on, the shipped behaviour.
+  [RELEASE_FLAGS_SETTING_KEY]: defaultReleaseFlagsValue,
   // The same defaults the player app and the bot read an absent row as, so the
   // form shows what the site is already showing.
   [CLUB_SOCIALS_SETTING_KEY]: defaultClubSocialsValue,

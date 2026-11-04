@@ -5,7 +5,7 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { requireCapability } from './_shared';
-import { ExpectedError, FEATURES_SETTING_KEY } from '@badminton/shared';
+import { ExpectedError, FEATURES_SETTING_KEY, RELEASE_FLAGS_SETTING_KEY } from '@badminton/shared';
 // TWO floors on purpose, and they are not the same number. Rating settings take
 // the console's ordinary REASON_MIN (5) — enough to prove somebody typed
 // something. A legal document takes MIN_REASON_LENGTH (10), because that reason
@@ -179,7 +179,10 @@ export async function updatePlatformSettings(
   revalidatePath('/accounts');
   // The feature switches decide the console's nav, which the root layout
   // draws, so the whole tree re-renders rather than one page.
-  if (checked.some((update) => update.key === FEATURES_SETTING_KEY)) revalidatePath('/', 'layout');
+  // A kill switch changes what every tournament page offers, so they all go too.
+  if (checked.some((update) => update.key === FEATURES_SETTING_KEY || update.key === RELEASE_FLAGS_SETTING_KEY)) {
+    revalidatePath('/', 'layout');
+  }
 }
 
 // THE TWO ROWS THE SITE PRINTS AS LINKS. The player app and the bot re-check

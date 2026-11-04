@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { onTheSpotChecksIn, onTheSpotFeePath, onTheSpotMessage, singlesNeedingPartner } from '../on-the-spot';
+import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotFeePath, onTheSpotMessage, singlesNeedingPartner } from '../on-the-spot';
 
 describe('onTheSpotChecksIn', () => {
   it('checks them in from check-in until the event is completed', () => {
@@ -10,6 +10,19 @@ describe('onTheSpotChecksIn', () => {
     expect(onTheSpotChecksIn('registration')).toBe(false);
     expect(onTheSpotChecksIn('completed')).toBe(false);
     expect(onTheSpotChecksIn(null)).toBe(false);
+  });
+});
+
+describe('onTheSpotCheckInLocked', () => {
+  it('with check_in_after_draw off, locks check-in once the event is past the draw', () => {
+    for (const s of ['bracket_generated', 'live', 'pool_live']) expect(onTheSpotCheckInLocked(s, false), s).toBe(true);
+  });
+
+  it('never locks during check-in, before it, after the event, or with the switch on', () => {
+    for (const s of [null, 'registration', 'checkin', 'completed']) expect(onTheSpotCheckInLocked(s, false), String(s)).toBe(false);
+    for (const s of [null, 'registration', 'checkin', 'bracket_generated', 'live', 'pool_live', 'completed']) {
+      expect(onTheSpotCheckInLocked(s, true), String(s)).toBe(false);
+    }
   });
 });
 
@@ -42,9 +55,15 @@ describe('singlesNeedingPartner', () => {
 
 describe('onTheSpotMessage', () => {
   it('says what happened and what is left to do', () => {
-    expect(onTheSpotMessage({ name: 'Ann', checkedIn: true, waiverUnsigned: false, needsPartner: false })).toBe('Ann added and checked in.');
-    expect(onTheSpotMessage({ name: 'Bo', checkedIn: false, waiverUnsigned: true, needsPartner: true })).toBe(
+    expect(onTheSpotMessage({ name: 'Ann', checkedIn: true, waiverUnsigned: false, checkInLocked: false, needsPartner: false })).toBe('Ann added and checked in.');
+    expect(onTheSpotMessage({ name: 'Bo', checkedIn: false, waiverUnsigned: true, checkInLocked: false, needsPartner: true })).toBe(
       'Bo added. Waiver not signed: they can sign it on their phone, then check them in. They need a partner before a group can take them.',
+    );
+  });
+
+  it('says when check-in is locked after the draw', () => {
+    expect(onTheSpotMessage({ name: 'Cy', checkedIn: false, waiverUnsigned: false, checkInLocked: true, needsPartner: false })).toBe(
+      'Cy added. Check-in is locked after the draw, so they stay registered.',
     );
   });
 });

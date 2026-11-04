@@ -162,9 +162,16 @@ export function lateEntrantGroupOptions(
  * withdrawn) and can join later as a late entry. An event that never used
  * check-in draws everyone registered or checked in, as it always did.
  * publish_stage_draw (00315) applies the same rule under the field lock.
+ *
+ * `checkedInOnly` is the kill switch check_in_after_draw: off, everyone
+ * registered or checked in is drawn, as before 00315, and publish_stage_draw
+ * asks the same switch (00318).
  */
-export function drawField<E extends { status: string }>(entries: readonly E[]): { field: E[]; leftOut: E[] } {
-  const usesCheckIn = entries.some((e) => e.status === 'checked_in');
+export function drawField<E extends { status: string }>(
+  entries: readonly E[],
+  checkedInOnly = true,
+): { field: E[]; leftOut: E[] } {
+  const usesCheckIn = checkedInOnly && entries.some((e) => e.status === 'checked_in');
   return {
     field: entries.filter((e) => e.status === 'checked_in' || (!usesCheckIn && e.status === 'registered')),
     leftOut: usesCheckIn ? entries.filter((e) => e.status === 'registered') : [],

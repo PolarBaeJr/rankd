@@ -18,6 +18,7 @@ import {
   stagesView,
   type FormatConfig,
   type GroupsStage,
+  type LateEntrantPlan,
   type StageView,
   type StageViewGroup,
   type TournamentCourt,
@@ -52,6 +53,7 @@ import {
 } from '@/lib/stage-controls';
 import { absentEntryIds, autoCallFailureText, deskRows } from '@/lib/live-desk';
 import type { ActionResult } from '@/lib/action-result';
+import { ALL_RELEASE_FLAGS_ON, type ReleaseFlags } from '@badminton/shared/src/utils/release-flags';
 import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { CourtCard, type CourtDeskRow } from './CourtCard';
@@ -86,6 +88,8 @@ interface Props {
   /** An entry just added on the spot: its placement opens once it is listed. */
   pendingLateEntryId?: string | null;
   onPendingLateHandled?: () => void;
+  /** The kill switches (release-flags.ts); each control here is hidden while its switch is off. */
+  releaseFlags?: ReleaseFlags;
 }
 
 /** What the void dialog is about to do: one entry's open matches, or a stage's or a group's. */
@@ -109,7 +113,7 @@ const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named ma
 export function StagesTab({
   event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
   canVoid = false, canMarkNoShow = false, helperCourtIds = [],
-  onAddOnTheSpot, pendingLateEntryId = null, onPendingLateHandled,
+  onAddOnTheSpot, pendingLateEntryId = null, onPendingLateHandled, releaseFlags = ALL_RELEASE_FLAGS_ON,
 }: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -185,24 +189,31 @@ export function StagesTab({
     [isDoubles, lateOpen, participants, pairs],
   );
   // Once check-in is in use, the ones still only registered (drawField).
-  const notCheckedIn = useMemo(() => new Set(drawField(entries).leftOut.map((e) => e.id)), [entries]);
+  const checkedInOnly = releaseFlags.check_in_after_draw;
+  const notCheckedIn = useMemo(
+    () => new Set(drawField(entries, checkedInOnly).leftOut.map((e) => e.id)),
+    [entries, checkedInOnly],
+  );
   const sidedMatches = useMemo(
     () => matches.map((m) => { const { a, b } = matchSides(m, isDoubles); return { ...m, a, b }; }),
     [matches, isDoubles],
   );
   const canBulkVoid = isLive && canVoid;
+  const canVoidUnplayed = canBulkVoid && releaseFlags.void_unplayed;
+  const canDidNotCome = canBulkVoid && canMarkNoShow && releaseFlags.did_not_come;
+  const skipAbsent = releaseFlags.auto_call_skips_absent;
   const roundsView = roundsFor ? views.find((v) => v.stage.key === roundsFor) ?? null : null;
   const roundCountValid = /^\d+$/.test(roundCount.trim()) && Number(roundCount) >= 1 && Number(roundCount) <= 10;
 
   const rows = useMemo<CourtDeskRow[]>(() => {
     // The same absentees the server's auto-call skips, so Next up agrees with it.
-    const absent = absentEntryIds(entries);
+    const absent = absentEntryIds(entries, skipAbsent);
     const sideOf = (entryId: string | null) =>
       entryId && nameMap[entryId] !== undefined
         ? { entryId, label: nameMap[entryId]!, absent: absent.has(entryId) }
         : { entryId: null, label: 'TBD' };
     return deskRows(matches, sideOf, isDoubles);
-  }, [matches, nameMap, isDoubles, entries]);
+  }, [matches, nameMap, isDoubles, entries, skipAbsent]);
   const courtsInUse = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
   const activeCourts = useMemo(() => (courts ?? []).filter((c) => c.active), [courts]);
 
@@ -216,7 +227,7 @@ export function StagesTab({
     const late = lateEntries.find((l) => l.id === pendingLateEntryId);
     const first = views.find((v) => v.number === 1);
     if (!late || !first) return;
-    openLate(first, late.id, late.plan.pool, late.plan.group);
+    startLate(first, late.id, late.plan);
     onPendingLateHandled?.();
   }, [pendingLateEntryId, lateEntries, views, onPendingLateHandled]);
 
@@ -257,6 +268,29 @@ export function StagesTab({
     toast(action === 'draw' ? `${view.stage.name} drawn` : `${view.stage.name} redrawn`, 'success');
     const failure = autoCallFailureText(res.data?.autoCall);
     if (failure) toast(failure, 'error');
+    router.refresh();
+  }
+
+  // Kill switch late_placement_picker: off, one confirm places them where the
+  // console picks, as before; on, the dialog picks the group and court.
+  function startLate(view: StageView, entryId: string, plan: LateEntrantPlan) {
+    if (releaseFlags.late_placement_picker) openLate(view, entryId, plan.pool, plan.group);
+    else void placeLateAuto(view, entryId, plan);
+  }
+
+  async function placeLateAuto(view: StageView, entryId: string, plan: LateEntrantPlan) {
+    const groupLabel = stageGroupLabel(view.stage as GroupsStage, plan.pool, plan.group);
+    const ok = await confirm({
+      title: `Place ${nameMap[entryId] ?? 'this entry'} in a group?`,
+      message: lateEntrantConfirmMessage(plan, groupLabel, plan.opponents.map((o) => nameMap[o] ?? 'Unknown')),
+      confirmLabel: 'Place in a group',
+    });
+    if (!ok) return;
+    setBusy(`${view.stage.key}:late:${entryId}`);
+    const res = await placeLateEntrant(event.id, view.stage.key, entryId);
+    setBusy(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast(`${nameMap[entryId] ?? 'Entry'} placed, with ${res.data.matches} match${res.data.matches === 1 ? '' : 'es'} added`, 'success');
     router.refresh();
   }
 
@@ -345,7 +379,7 @@ export function StagesTab({
       canManageCourts={canManageCourts}
       busyElsewhere={courtsInUse.has(court.id) && !rows.some((r) => r.state === 'live' && r.match.court_id === court.id)}
       onMore={setScoreMatchId}
-      voidMatch={canVoid || helperCourtIds.includes(court.id) ? voidCourtHelperMatch : undefined}
+      voidMatch={releaseFlags.desk_helper_void && (canVoid || helperCourtIds.includes(court.id)) ? voidCourtHelperMatch : undefined}
     />
   );
 
@@ -423,7 +457,7 @@ export function StagesTab({
                           Add on the spot
                         </Button>
                       )}
-                      {canBulkVoid && view.drawn && !view.complete && unplayedMatchesIn(sidedMatches, { stage: view.number }).open.length > 0 && (
+                      {canVoidUnplayed && view.drawn && !view.complete && unplayedMatchesIn(sidedMatches, { stage: view.number }).open.length > 0 && (
                         <Button
                           variant="ghost"
                           disabled={busy !== null}
@@ -524,7 +558,7 @@ export function StagesTab({
                             variant="ghost"
                             loading={busy === key}
                             disabled={busy !== null && busy !== key}
-                            onClick={() => openLate(view, id, plan.pool, plan.group)}
+                            onClick={() => startLate(view, id, plan)}
                             className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                           >
                             Place in a group
@@ -554,10 +588,10 @@ export function StagesTab({
                   nameMap={nameMap}
                   courtCard={courtCard}
                   matchRow={(m) => matchRow(view, m)}
-                  onVoidGroup={canBulkVoid && busy === null
+                  onVoidGroup={canVoidUnplayed && busy === null
                     ? (pool, group, label) => askVoidScope(view.number, pool, group, label)
                     : undefined}
-                  onAbsent={canBulkVoid && canMarkNoShow && busy === null ? askVoidEntry : undefined}
+                  onAbsent={canDidNotCome && busy === null ? askVoidEntry : undefined}
                 />
               ) : (
                 view.pools.map((pool) => (

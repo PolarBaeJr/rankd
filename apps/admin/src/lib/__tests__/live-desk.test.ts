@@ -565,3 +565,12 @@ describe('absentEntryIds', () => {
     expect(absentEntryIds([{ id: 'a', status: 'registered' }, { id: 'b', status: null }])).toEqual(new Set());
   });
 });
+
+describe('absentEntryIds with auto_call_skips_absent off', () => {
+  it('skips nobody, so auto-call and NEXT call the next match whoever is in it', () => {
+    const entries = [{ id: 'a', status: 'checked_in' }, { id: 'b', status: 'registered' }, { id: 'c', status: 'no_show' }];
+    expect(absentEntryIds(entries, false).size).toBe(0);
+    expect([...absentEntryIds(entries)].sort()).toEqual(['b', 'c']);
+  });
+});
+

@@ -56,6 +56,7 @@ import { fillFreeCourts, type AutoCallReport } from './auto-call';
 import { readTournamentCourts } from '../tournament-courts';
 import { resolveStageCourts, rowForInsert, unknownStageCourtsMessage } from './stage-rows';
 import { drawField } from '../stage-controls';
+import { releaseFlagOn } from '../release-flags';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -292,11 +293,14 @@ async function drawStageImpl(
   let digests: Array<Record<string, string | number | null>> | null = null;
   let randomised = false;
   let results: FormatResults | undefined;
+  let checkedInOnly = true;
 
   if (fromField) {
     await assertNobodyLeftUnpaired(adminClient, eventId, doubles);
-    // Once check-in is in use, only those checked in are drawn (drawField).
-    const drawn = drawField(entries);
+    // Once check-in is in use, only those checked in are drawn (drawField),
+    // unless the kill switch check_in_after_draw is off.
+    checkedInOnly = await releaseFlagOn('check_in_after_draw');
+    const drawn = drawField(entries, checkedInOnly);
     let field = drawn.field;
     if (field.length < 2) {
       throw new ExpectedError(drawn.leftOut.length > 0
@@ -419,7 +423,7 @@ async function drawStageImpl(
     adminClient.from('tournament_matches').insert(rows.map((r) => rowForInsert(eventId, r, doubles, courtIds)) as never).select('id'),
   );
 
-  if (fromField) await assertFieldDidNotGrow(adminClient, eventId, doubles, drawnIds.length, true);
+  if (fromField) await assertFieldDidNotGrow(adminClient, eventId, doubles, drawnIds.length, checkedInOnly);
   await publishStage(adminClient, eventId, k, generation, doubles, drawnIds, digests, fromField ? null : sourceFingerprint);
 
   await logAudit(adminClient, {
@@ -607,10 +611,13 @@ async function placeLateEntrantImpl(
   choice: LateEntrantChoice | null | undefined,
 ): Promise<{ matches: number }> {
   const loaded = await loadExtendableStage(eventId, stageKey);
+  // Kill switch late_placement_picker: off, any pick is ignored and the
+  // entry goes where planLateEntrant puts it, as before.
+  const picked = (await releaseFlagOn('late_placement_picker')) ? choice : null;
   // Client-controlled POST fields, so each is checked for shape here.
-  const pool = choice?.pool ?? null;
-  const group = choice?.group ?? null;
-  const courtId = choice?.courtId ?? null;
+  const pool = picked?.pool ?? null;
+  const group = picked?.group ?? null;
+  const courtId = picked?.courtId ?? null;
   if ((pool == null) !== (group == null)
     || (pool != null && !(Number.isInteger(pool) && Number.isInteger(group) && pool >= 1 && group! >= 1))) {
     throw new ExpectedError('Pick a group of this stage.');

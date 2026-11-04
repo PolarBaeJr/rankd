@@ -33,6 +33,7 @@ import type {
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
+import { ALL_RELEASE_FLAGS_ON, type ReleaseFlags } from '@badminton/shared/src/utils/release-flags';
 import { drawField, lateEntryWindow } from '@/lib/stage-controls';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
@@ -123,9 +124,11 @@ interface Props {
   viewerId: string;
   /** The courts this viewer helps on (00310), for the court card's Void. */
   helperCourtIds?: string[];
+  /** The kill switches (release-flags.ts). The server actions ask them again. */
+  releaseFlags?: ReleaseFlags;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, helperCourtIds = [] }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, helperCourtIds = [], releaseFlags = ALL_RELEASE_FLAGS_ON }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -215,7 +218,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const [spotOpen, setSpotOpen] = useState(false);
   const [pendingLate, setPendingLate] = useState<string | null>(null);
   const clearPendingLate = useCallback(() => setPendingLate(null), []);
-  const canAddOnTheSpot = drawCapabilities.soloAdd && status !== 'completed';
+  const canAddOnTheSpot = releaseFlags.add_on_the_spot && drawCapabilities.soloAdd && status !== 'completed';
   const takenPlayerIds = new Set<string>([
     ...participants.filter((p) => p.status !== 'withdrawn' && p.status !== 'disqualified').map((p) => p.player_id),
     ...pairs.filter((p) => p.status !== 'withdrawn' && p.status !== 'disqualified')
@@ -303,7 +306,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         // other side.
         hasThirdPlace={bracketMatches.some((m) => m.is_third_place)}
         stagesDrawn={[...new Set(matches.flatMap((m) => (m.stage != null ? [m.stage] : [])))]}
-        drawLeftOut={staged ? drawField(entries).leftOut.map((e) => getName(e, isDoubles)) : []}
+        drawLeftOut={staged ? drawField(entries, releaseFlags.check_in_after_draw).leftOut.map((e) => getName(e, isDoubles)) : []}
       />
 
       {/* Suspension Banner — server actions enforce the actual blocking */}
@@ -333,6 +336,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
           courts={courts}
           busyCourtIds={busyCourtIds}
           onOpenCourts={() => setActiveTab('courts')}
+          skipAbsent={releaseFlags.auto_call_skips_absent}
         />
       )}
 
@@ -375,6 +379,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         <AddOnTheSpotDialog
           eventId={event.id}
           eventStatus={status}
+          checkInAfterDraw={releaseFlags.check_in_after_draw}
           isDoubles={isDoubles}
           players={allPlayers}
           takenPlayerIds={takenPlayerIds}
@@ -417,6 +422,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waiverStates={waiverStates}
             matches={matches}
             canVoidNoShow={drawCapabilities.voidResult && drawCapabilities.markNoShow}
+            didNotComeOn={releaseFlags.did_not_come}
+            checkInAfterDraw={releaseFlags.check_in_after_draw}
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
           />
         )}
@@ -435,6 +442,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canEnterResult={drawCapabilities.enterResult}
             courts={courts}
             busyCourtIds={busyCourtIds}
+            skipAbsent={releaseFlags.auto_call_skips_absent}
           />
         )}
         {activeTab === 'pool' && (
@@ -462,6 +470,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canVoid={drawCapabilities.voidResult}
             canMarkNoShow={drawCapabilities.markNoShow}
             helperCourtIds={helperCourtIds}
+            releaseFlags={releaseFlags}
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
             pendingLateEntryId={pendingLate}
             onPendingLateHandled={clearPendingLate}

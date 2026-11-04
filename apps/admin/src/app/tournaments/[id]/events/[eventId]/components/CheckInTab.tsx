@@ -14,7 +14,7 @@ import {
   undoNoShow,
   voidOpenMatchesForEntry,
 } from '@/lib/tournament-actions';
-import { checkInNoShowPath } from '@/lib/participant-controls';
+import { checkInNoShowPath, checkInWindow } from '@/lib/participant-controls';
 import { bulkVoidSummary, openMatchesOfEntry } from '@/lib/stage-controls';
 import { useToast } from '@/components/toast-provider';
 import { CheckCircle, XCircle, Clock, Users, UserCheck, UserPlus, Undo2 } from 'lucide-react';
@@ -44,6 +44,10 @@ interface Props {
   canVoidNoShow?: boolean;
   /** Opens Add on the spot, while the desk may add. */
   onAddOnTheSpot?: () => void;
+  /** Kill switch did_not_come; off, the X is a plain no-show. */
+  didNotComeOn?: boolean;
+  /** Kill switch check_in_after_draw; off, the tab locks at the draw. */
+  checkInAfterDraw?: boolean;
 }
 
 /** Whose signature this entry needs — one person, or both halves of a pair. */
@@ -55,11 +59,11 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
     : [(entry as ParticipantWithPlayer).player_id];
 }
 
-export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot }: Props) {
+export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot, didNotComeOn = true, checkInAfterDraw = true }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [didNotCome, setDidNotCome] = useState<{ id: string; name: string; count: number; live: number } | null>(null);
   const [voidReason, setVoidReason] = useState('');
-  const noShowPath = checkInNoShowPath(matches.length > 0 && eventIsPlaying(event.status), canVoidNoShow);
+  const noShowPath = checkInNoShowPath(matches.length > 0 && eventIsPlaying(event.status), canVoidNoShow, didNotComeOn);
   const sidedMatches = useMemo(
     () => matches.map((m) => { const { a, b } = matchSides(m, isDoubles); return { ...m, a, b }; }),
     [matches, isDoubles],
@@ -240,9 +244,9 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
   }
 
   // Check-in stays open through the draw and the play (00315): a staged event
-  // draws only who is here, and a team that turns up later joins as a late entry.
-  const canCheckIn = event.status !== 'completed';
-  const canUndo = event.status !== 'registration' && event.status !== 'completed';
+  // draws only who is here, and a team that turns up later joins as a late
+  // entry. With check_in_after_draw off it locks at the draw (checkInWindow).
+  const { canCheckIn, canUndo } = checkInWindow(event.status, checkInAfterDraw);
   const shownWaiting = peopleWaiting.filter((p) => found(p.name, p.partnerName));
   const shownHere = peopleHere.filter((p) => found(p.name, p.partnerName));
   const shownNotCheckedIn = notCheckedIn.filter((e) => found(getName(e, isDoubles)));

@@ -449,9 +449,11 @@ type CourtRow = { match: DeskMatch; a: CourtSideRef; b: CourtSideRef; state: Des
 /**
  * The entries auto-call skips: a no-show, and, once anyone in the event has
  * checked in, everyone still only registered. An event that never used
- * check-in skips no one for being registered.
+ * check-in skips no one for being registered. With the kill switch
+ * auto_call_skips_absent off (`skip` false) nobody is skipped, as before.
  */
-export function absentEntryIds(entries: ReadonlyArray<{ id: string; status: string | null }>): Set<string> {
+export function absentEntryIds(entries: ReadonlyArray<{ id: string; status: string | null }>, skip = true): Set<string> {
+  if (!skip) return new Set();
   const usesCheckIn = entries.some((e) => e.status === 'checked_in');
   return new Set(
     entries.filter((e) => e.status === 'no_show' || (usesCheckIn && e.status === 'registered')).map((e) => e.id),

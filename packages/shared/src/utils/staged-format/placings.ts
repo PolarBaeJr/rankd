@@ -90,8 +90,15 @@ function knockoutOrder(cfg: FormatConfig, stage: FormatStage, results: FormatRes
  * An entry in no group and on no match of any stage was never drawn (left out
  * for not checking in, say) and gets no place, so no ladder points. A no-show
  * who was drawn is still placed, at the bottom of the last stage it reached.
+ *
+ * `placeNeverDrawn` (the console's kill switch placings_skip_never_played,
+ * off) puts the never-drawn back at the very bottom, by seed, as before.
  */
-export function finalPlacings(cfg: FormatConfig, results: FormatResults): Map<string, number> {
+export function finalPlacings(
+  cfg: FormatConfig,
+  results: FormatResults,
+  opts: { placeNeverDrawn?: boolean } = {},
+): Map<string, number> {
   const out = new Set(results.out ?? []);
   const participants = results.field.map((e) => e.id).filter((id) => !out.has(id));
   const placed = new Map<string, number>();
@@ -118,11 +125,16 @@ export function finalPlacings(cfg: FormatConfig, results: FormatResults): Map<st
 
   const rest = participants.filter((id) => !placed.has(id));
   const order: string[] = [];
-  for (let si = cfg.stages.length - 1; si >= 0; si--) {
-    const ids = new Set(rest.filter((id) => lastStage.get(id) === si));
+  const bottom = opts.placeNeverDrawn ? -1 : 0;
+  for (let si = cfg.stages.length - 1; si >= bottom; si--) {
+    const ids = new Set(rest.filter((id) => (lastStage.get(id) ?? -1) === si));
     if (ids.size === 0) continue;
-    const stage = cfg.stages[si]!;
-    if (stage.kind === 'groups') {
+    const stage = cfg.stages[si];
+    if (!stage) {
+      const seeds = seedMap(results);
+      order.push(...[...ids].sort((x, y) =>
+        (seeds.get(x) ?? Infinity) - (seeds.get(y) ?? Infinity) || (x < y ? -1 : x > y ? 1 : 0)));
+    } else if (stage.kind === 'groups') {
       order.push(...groupsOrder(cfg, stage, results, ids));
     } else if (stage.kind === 'knockout') {
       order.push(...knockoutOrder(cfg, stage, results, ids));

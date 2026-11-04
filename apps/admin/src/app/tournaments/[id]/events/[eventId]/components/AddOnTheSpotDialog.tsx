@@ -4,11 +4,13 @@ import { useState } from 'react';
 import { Button, Checkbox, Dialog, Input, PlayerPicker } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { addOnTheSpot, type OnTheSpotResult } from '@/lib/tournament-actions/on-the-spot';
-import { onTheSpotChecksIn, onTheSpotMessage } from '@/lib/on-the-spot';
+import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotMessage } from '@/lib/on-the-spot';
 
 interface Props {
   eventId: string;
   eventStatus: string;
+  /** Kill switch check_in_after_draw: off, past the draw they are left registered. */
+  checkInAfterDraw: boolean;
   isDoubles: boolean;
   players: Array<{ id: string; full_name: string; avatar_url?: string | null; handle?: string | null }>;
   /** Players already entered, left out of both pickers. */
@@ -19,7 +21,7 @@ interface Props {
 }
 
 /** Add on the spot: whoever is standing at the desk, a member or a guest by name. */
-export function AddOnTheSpotDialog({ eventId, eventStatus, isDoubles, players, takenPlayerIds, onClose, onAdded }: Props) {
+export function AddOnTheSpotDialog({ eventId, eventStatus, checkInAfterDraw, isDoubles, players, takenPlayerIds, onClose, onAdded }: Props) {
   const [kind, setKind] = useState<'member' | 'guest'>('member');
   const [playerId, setPlayerId] = useState('');
   const [guestName, setGuestName] = useState('');
@@ -45,7 +47,7 @@ export function AddOnTheSpotDialog({ eventId, eventStatus, isDoubles, players, t
     });
     setSaving(false);
     if (!res.ok) { toast(res.error, 'error'); return; }
-    toast(onTheSpotMessage(res.data), res.data.waiverUnsigned ? 'error' : 'success');
+    toast(onTheSpotMessage(res.data), res.data.waiverUnsigned || res.data.checkInLocked ? 'error' : 'success');
     onAdded(res.data);
   }
 
@@ -100,7 +102,9 @@ export function AddOnTheSpotDialog({ eventId, eventStatus, isDoubles, players, t
         />
         <p className="text-xs text-[var(--text-muted)]">
           {chargeFee ? 'They will show as owing the event fee.' : 'No fee is recorded for them.'}
-          {onTheSpotChecksIn(eventStatus) && ' They are checked in as soon as they are added, unless their waiver is not signed.'}
+          {onTheSpotCheckInLocked(eventStatus, checkInAfterDraw)
+            ? ' Check-in is locked after the draw, so they stay registered.'
+            : onTheSpotChecksIn(eventStatus) && ' They are checked in as soon as they are added, unless their waiver is not signed.'}
         </p>
         <div className="flex justify-between gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>

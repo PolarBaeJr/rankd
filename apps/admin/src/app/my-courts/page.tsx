@@ -5,6 +5,7 @@ import { busyCourtIds, eventIsPlaying, isDoublesEvent, type TournamentEventType 
 import { createAdminClient } from '@/lib/supabase-server';
 import { requireConsoleUser } from '@/lib/court-helper-gate';
 import { readMyCourts } from '@/lib/court-helpers';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { PairWithPlayers, ParticipantWithPlayer, TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 import { LiveTournament } from '../tournaments/live-tournament';
@@ -41,7 +42,7 @@ export default async function MyCourtsPage() {
     byTournament.set(row.tournament_id, entry);
   }
 
-  const sections = await Promise.all(
+  const [releaseFlags, sections] = await Promise.all([getReleaseFlags(), Promise.all(
     [...byTournament.entries()].map(async ([tournamentId, { name, courtIds }]) => {
       const [courts, liveUse, { data: events }] = await Promise.all([
         readTournamentCourts(supabase, tournamentId).catch(() => null),
@@ -85,7 +86,7 @@ export default async function MyCourtsPage() {
         events: boardEvents,
       };
     }),
-  );
+  )]);
 
   return (
     <div className="space-y-6">
@@ -107,6 +108,8 @@ export default async function MyCourtsPage() {
             courtIds={section.courtIds}
             busyCourtIds={section.busyCourtIds}
             events={section.events}
+            courtVoid={releaseFlags.desk_helper_void}
+            skipAbsent={releaseFlags.auto_call_skips_absent}
           />
         </section>
       ))}

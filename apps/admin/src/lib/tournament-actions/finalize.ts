@@ -28,6 +28,7 @@ import {
 import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings, type TournamentBonusSettings } from '../platform-settings';
 import { closesWithLastEvent } from '../tournament-close';
+import { releaseFlagOn } from '../release-flags';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -449,7 +450,11 @@ async function stagedPositionsAndPoints(
     (entriesRes.data ?? []).map((e) => ({ id: e.id as string, seed: e.seed_number as number | null, status: e.status as string })),
     rows,
   );
-  const positions = finalPlacings(cfg, results);
+  // Kill switch placings_skip_never_played: off, an entry never drawn is placed
+  // at the bottom by seed again.
+  const positions = finalPlacings(cfg, results, {
+    placeNeverDrawn: !(await releaseFlagOn('placings_skip_never_played')),
+  });
   const wins = new Map<string, number>();
   for (const m of results.matches) {
     if (isTalliedStatus(m.status) && m.winner && m.a && m.b) wins.set(m.winner, (wins.get(m.winner) ?? 0) + 1);
@@ -1289,6 +1294,9 @@ export async function finalizeEventAction(eventId: string): Promise<ActionResult
  */
 async function closeTournamentAfterLastEvent(eventId: string): Promise<void> {
   try {
+    // Kill switch auto_close_tournament: off, the tournament stays open until
+    // somebody presses Mark Completed, as before.
+    if (!(await releaseFlagOn('auto_close_tournament'))) return;
     const adminClient = createAdminClient();
     const { data: event, error: eventError } = await adminClient.from('tournament_events')
       .select('tournament_id, status').eq('id', eventId).maybeSingle();
