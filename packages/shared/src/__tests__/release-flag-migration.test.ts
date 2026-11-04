@@ -9,7 +9,9 @@ import { join } from 'node:path';
  * two CREATE OR REPLACE statements converge. Each function 00315 restated asks
  * the switch for its new branch only. Each of 00315, 00317 and 00318 has a
  * hand-run down script under supabase/rollbacks that restates the previous
- * definition verbatim, and that directory is not exported.
+ * definition verbatim, and that directory is not exported. The club-changes
+ * trigger (00286) is restated to skip the kill switches row, so a flip is
+ * never drafted as member news.
  */
 
 const SUPABASE_DIR = join(__dirname, '../../../../supabase');
@@ -101,6 +103,31 @@ describe('00318: the three functions ask the switch for their new branch only', 
   });
 });
 
+const TRIGGER = 'club_change_from_platform_settings';
+const SKIP = `  -- A kill switch is console-only, never member news: no draft.
+  IF NEW.key = 'release_flags' THEN
+    RETURN NULL;
+  END IF;
+
+`;
+
+describe('00318: a kill switch save drafts no club change', () => {
+  it('restates the 00286 trigger function last', () => {
+    expect(latest(TRIGGER)?.file).toMatch(/^00318_/);
+  });
+
+  it('returns before any draft when the row is release_flags', () => {
+    const code = latest(TRIGGER)!.statement;
+    expect(code).toContain(`BEGIN\n${SKIP}  IF NEW.updated_by IS NULL`);
+    expect(code.indexOf("IF NEW.key = 'release_flags' THEN")).toBeLessThan(code.indexOf('club_change_upsert'));
+  });
+
+  it('is otherwise 00286 to the character, its revoke kept', () => {
+    expect(lastStatement(migration('00318'), TRIGGER)!.replace(SKIP, '')).toBe(lastStatement(migration('00286'), TRIGGER));
+    expect(migration('00318')).toContain(`REVOKE ALL ON FUNCTION public.${TRIGGER}() FROM PUBLIC, anon, authenticated;`);
+  });
+});
+
 describe('the down scripts', () => {
   it('exist for 00315, 00317 and 00318', () => {
     for (const v of ['00315', '00317', '00318']) expect(existsSync(join(ROLLBACKS_DIR, `${v}_down.sql`)), v).toBe(true);
@@ -118,6 +145,8 @@ describe('the down scripts', () => {
     for (const name of ['publish_stage_draw', 'set_field_entry_status', 'set_pair_member_check_in']) {
       expect(lastStatement(down, name), name).toBe(lastStatement(migration('00315'), name));
     }
+    expect(lastStatement(down, TRIGGER)).toBe(lastStatement(migration('00286'), TRIGGER));
+    expect(down).toContain(`REVOKE ALL ON FUNCTION public.${TRIGGER}() FROM PUBLIC, anon, authenticated;`);
     expect(down).toContain("p.prosrc LIKE '%release_flag_on%'");
     expect(down).toContain('DROP FUNCTION IF EXISTS public.release_flag_on(text);');
   });

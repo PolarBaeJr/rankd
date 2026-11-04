@@ -6,8 +6,8 @@ import { ExpectedError, isDoublesEvent, parseOrThrow } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
-import { assertReleaseFlag } from '../release-flags';
-import { onTheSpotChecksIn, onTheSpotFeePath } from '../on-the-spot';
+import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
+import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotFeePath } from '../on-the-spot';
 import { assertEventWaiverSigned, requireCapability, revalidateEventPaths } from './_internal';
 import {
   addPairCore,
@@ -47,6 +47,8 @@ export interface OnTheSpotResult {
   name: string;
   checkedIn: boolean;
   waiverUnsigned: boolean;
+  /** Kill switch check_in_after_draw off and the event past the draw: left registered. */
+  checkInLocked: boolean;
   /** A single in a doubles event: paired before a group can take them. */
   needsPartner: boolean;
 }
@@ -132,10 +134,11 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
   }
 
   // Checked in through the ordinary check-in, so the waiver is never bypassed:
-  // an unsigned waiver leaves the entry registered.
+  // an unsigned waiver, or check-in locked after the draw, leaves the entry registered.
   let checkedIn = false;
   let waiverUnsigned = false;
-  if (onTheSpotChecksIn(event.status)) {
+  const checkInLocked = onTheSpotCheckInLocked(event.status, await releaseFlagOn('check_in_after_draw'));
+  if (onTheSpotChecksIn(event.status) && !checkInLocked) {
     try {
       await assertEventWaiverSigned(adminClient, event.tournament_id, { id: entry.id, members });
     } catch (err) {
@@ -166,6 +169,7 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
       fee_path: feePath,
       checked_in: checkedIn,
       waiver_unsigned: waiverUnsigned,
+      check_in_locked: checkInLocked,
     },
   });
 
@@ -176,6 +180,7 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
     name,
     checkedIn,
     waiverUnsigned,
+    checkInLocked,
     needsPartner: doubles && !input.partnerId,
   };
 }
