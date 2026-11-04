@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLiveChannel } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
+import { QUIET_REFRESH_EVENT } from '@/lib/quiet-refresh';
 
 /**
  * WATCHING A DRAW MOVE, FROM THE CONSOLE SIDE.
@@ -93,6 +94,7 @@ export function LiveTournament({
   tournamentId,
   eventIds,
   draw = false,
+  quiet = false,
 }: {
   /** UNIQUE PER SURFACE, so the tournament page and one of its event pages
    *  never share a topic. */
@@ -105,8 +107,15 @@ export function LiveTournament({
    *  the tournament overview lists events and counts and would otherwise be
    *  woken by every score in every event it is merely summarising. */
   draw?: boolean;
+  /** Kill switch quiet_refresh: hand each nudge to the page's RefreshOnReturn,
+   *  which waits until nobody is typing, in a dialog or saving. */
+  quiet?: boolean;
 }) {
   const router = useRouter();
+  const refresh = useCallback(() => {
+    if (quiet) window.dispatchEvent(new Event(QUIET_REFRESH_EVENT));
+    else router.refresh();
+  }, [quiet, router]);
 
   // AND THE SAME NUDGE WHEN THE CHANNEL ITSELF COMES BACK. This is the console
   // half of the surface that opens the most bindings anywhere — three per event
@@ -117,6 +126,8 @@ export function LiveTournament({
   // dead is worse here than on a phone: this is where the next round is called
   // from. Nothing replays the gap, so recovery re-fetches. See
   // use-live-channel.ts.
+  // A recovery re-reads at once, quiet or not: it is rare, and the gap it
+  // covers is unknown.
   const subscribe = useLiveChannel(() => router.refresh());
 
   // THE DEPENDENCY IS THE JOINED KEY, NOT THE ARRAY. `eventIds` is built by a
@@ -133,7 +144,7 @@ export function LiveTournament({
 
     const nudge = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => router.refresh(), COALESCE_MS);
+      timer = setTimeout(refresh, COALESCE_MS);
     };
 
     // ONE LISTENER PER FILTER. postgres_changes takes a single filter
@@ -261,7 +272,7 @@ export function LiveTournament({
       stopWatching();
       void supabase.removeChannel(channel);
     };
-  }, [channelName, tournamentId, key, draw, router, subscribe]);
+  }, [channelName, tournamentId, key, draw, refresh, subscribe]);
 
   return null;
 }

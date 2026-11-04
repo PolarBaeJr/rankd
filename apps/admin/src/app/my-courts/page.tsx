@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { requireConsoleUser } from '@/lib/court-helper-gate';
 import { readMyCourts } from '@/lib/court-helpers';
 import { getReleaseFlags } from '@/lib/release-flags';
+import { readMyCourtsFingerprint } from '@/lib/live-fingerprint';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { PairWithPlayers, ParticipantWithPlayer, TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 import { LiveTournament } from '../tournaments/live-tournament';
@@ -19,6 +20,11 @@ import { RefreshOnReturn } from './refresh-on-return';
 export default async function MyCourtsPage() {
   const { viewer } = await requireConsoleUser();
   const supabase = createAdminClient();
+  // What quiet refresh compares its probe against, started before the page's
+  // own reads so a change during the render reads as a change.
+  const fingerprintRead = getReleaseFlags().then((flags) =>
+    flags.quiet_refresh ? readMyCourtsFingerprint(supabase, viewer.id as string).catch(() => null) : undefined,
+  );
   const mine = await readMyCourts(supabase, viewer.id as string);
 
   if (mine.length === 0) {
@@ -87,10 +93,11 @@ export default async function MyCourtsPage() {
       };
     }),
   )]);
+  const fingerprint = await fingerprintRead;
 
   return (
     <div className="space-y-6">
-      <RefreshOnReturn />
+      <RefreshOnReturn quiet={fingerprint !== undefined ? { probe: '/my-courts/fingerprint', fingerprint } : undefined} />
       <PageHeader title="My courts" sub="The courts you are keeping score on. Save the score when a match ends; the next match goes on by itself." />
       {sections.map((section) => (
         <section key={section.tournamentId} className="space-y-3" aria-label={section.name}>
@@ -101,6 +108,7 @@ export default async function MyCourtsPage() {
             tournamentId={section.tournamentId}
             eventIds={section.events.map((e) => e.event.id)}
             draw
+            quiet={fingerprint !== undefined}
           />
           <h2 className="text-lg font-semibold text-[var(--text-primary)]">{section.name}</h2>
           <MyCourtsBoard

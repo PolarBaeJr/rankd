@@ -592,3 +592,19 @@ export function autoCallFailureText(report: AutoCallReport | undefined | null): 
     .map((f) => (f.court ? `${f.court}: ${f.reason}` : f.reason))
     .join('; ')}`;
 }
+
+/** An entry in the court card's Options menu. */
+export type CourtOption = 'more' | 'skip' | 'void';
+
+/**
+ * What the court card's Options menu holds, in order, each only while its own
+ * gate allows it: the full score dialog (onMore given), Skip for now (may
+ * enter the result) and Void match (voidMatch given). Empty means no button.
+ */
+export function courtCardOptions(gates: { more: boolean; skip: boolean; void: boolean }): CourtOption[] {
+  const options: CourtOption[] = [];
+  if (gates.more) options.push('more');
+  if (gates.skip) options.push('skip');
+  if (gates.void) options.push('void');
+  return options;
+}

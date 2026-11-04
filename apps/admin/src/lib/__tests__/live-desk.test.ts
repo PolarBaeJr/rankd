@@ -4,6 +4,7 @@ import {
   deskRowGroup, groupsInPlay, filterDeskRows, deskRoundLine, deskRowMatchesSearch,
   stagedGroupKey, stagedGroupParts, deskGroupLabel, deskGroupChipLabel, deskPools, deskCourtSuggestion,
   liveEntrants, nextMatchForCourt, planCourtCalls, absentEntryIds, hasAbsentSide, inlineScoreVerdict, autoCallFailureText,
+  courtCardOptions,
   type DeskMatch,
 } from '../live-desk';
 import { groupsThenTopKnockout, poolsThenPlacement, type MatchRules, type TournamentCourt } from '@badminton/shared';
@@ -574,3 +575,16 @@ describe('absentEntryIds with auto_call_skips_absent off', () => {
   });
 });
 
+
+describe('courtCardOptions', () => {
+  it('holds each action only while its gate allows it, in menu order', () => {
+    expect(courtCardOptions({ more: true, skip: true, void: true })).toEqual(['more', 'skip', 'void']);
+    expect(courtCardOptions({ more: false, skip: true, void: false })).toEqual(['skip']);
+    expect(courtCardOptions({ more: false, skip: false, void: true })).toEqual(['void']);
+    expect(courtCardOptions({ more: true, skip: true, void: false })).toEqual(['more', 'skip']);
+  });
+
+  it('is empty, so there is no button, when nothing is allowed', () => {
+    expect(courtCardOptions({ more: false, skip: false, void: false })).toEqual([]);
+  });
+});

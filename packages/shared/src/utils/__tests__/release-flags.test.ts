@@ -45,6 +45,7 @@ describe('the registry', () => {
       'auto_close_tournament',
       'placings_skip_never_played',
       'add_on_the_spot',
+      'quiet_refresh',
       'ladder_doubles_points',
     ]);
   });

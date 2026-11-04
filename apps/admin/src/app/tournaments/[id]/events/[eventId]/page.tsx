@@ -26,6 +26,7 @@ import { laterSignup } from '@/lib/entry-sort';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import { readMyCourts, type MyCourt } from '@/lib/court-helpers';
 import { getReleaseFlags } from '@/lib/release-flags';
+import { readEventFingerprint } from '@/lib/live-fingerprint';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import { loadPartnerBoard } from '@/lib/partner-board';
 import { partnerAdvice } from '@/lib/partner-check';
@@ -59,6 +60,12 @@ export default async function EventPage({
   const may = (capability: Capability) => permits(level, permissions, capability);
 
   const supabase = createAdminClient();
+
+  // What quiet refresh compares its probe against. Started before the page's
+  // own reads, so a change landing during the render reads as a change.
+  const fingerprintRead = getReleaseFlags().then((flags) =>
+    flags.quiet_refresh ? readEventFingerprint(supabase, tournamentId, eventId).catch(() => null) : undefined,
+  );
 
   // The tournament and the event first, and together: everything below needs
   // the event's type to know whether to read pairs or participants, and there is
@@ -474,6 +481,7 @@ export default async function EventPage({
     ...m,
     notes: maySeeMatchNotes ? matchNotes.get(m.id as string) ?? m.notes ?? null : null,
   }));
+  const fingerprint = await fingerprintRead;
 
   return (
     <div className="space-y-6">
@@ -508,10 +516,13 @@ export default async function EventPage({
         tournamentId={tournamentId}
         eventIds={[eventId]}
         draw
+        quiet={fingerprint !== undefined}
       />
       {/* Realtime's fallback on the desk too: a dropped channel or a phone
           that slept still catches up within seconds. */}
-      <RefreshOnReturn />
+      <RefreshOnReturn
+        quiet={fingerprint !== undefined ? { probe: `/tournaments/${tournamentId}/events/${eventId}/fingerprint`, fingerprint } : undefined}
+      />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
           href={`/tournaments/${tournamentId}`}
