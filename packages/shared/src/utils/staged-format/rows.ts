@@ -47,8 +47,10 @@ export function matchSides(m: MatchSideColumns, doubles: boolean): { a: string |
 /**
  * The event's play as the staged functions read it. Rows without a stage are
  * ignored. A group's members are everyone who appears in its matches; the
- * field is in seed order, unseeded last; withdrawn and disqualified entries
- * are `out`, and no-shows `absent`.
+ * field is in seed order, unseeded last; withdrawn, disqualified and no-show
+ * entries are `out`. A no-show marked after the draw (Did not come) sits on
+ * 0-0 once its matches are voided, which ranked it above anyone with a loss
+ * and sent it through; out, it takes no place, no points and no spot onward.
  */
 export function formatResultsFrom(
   cfg: FormatConfig,
@@ -83,7 +85,6 @@ export function formatResultsFrom(
     field: seeded.map((e) => ({ id: e.id, seed: e.seed })),
     groups: [...groups.values()],
     matches: results,
-    out: entries.filter((e) => isOutOfEvent(e.status)).map((e) => e.id),
-    absent: entries.filter((e) => e.status === 'no_show').map((e) => e.id),
+    out: entries.filter((e) => isOutOfEvent(e.status) || e.status === 'no_show').map((e) => e.id),
   };
 }

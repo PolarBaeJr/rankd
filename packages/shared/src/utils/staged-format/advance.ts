@@ -52,7 +52,7 @@ function forfeitLookup(cfg: FormatConfig) {
 
 const outSet = (results: FormatResults) => new Set(results.out ?? []);
 
-/** One group's table, best first, departed entries left out and no-shows last. */
+/** One group's table, best first, departed entries left out. */
 export function groupTable(
   cfg: FormatConfig,
   stage: GroupsStage,
@@ -66,9 +66,7 @@ export function groupTable(
   const out = outSet(results);
   const active = [...tally.values()].filter((r) => !out.has(r.id));
   const normalise = unevenSchedule(active.map((r) => r.id), ms, out);
-  const ranked = rankStandings(active, stage.tiebreaks, ms, normalise ? { normalise: true } : {});
-  const absent = new Set(results.absent ?? []);
-  const rows = [...ranked.filter((r) => !absent.has(r.id)), ...ranked.filter((r) => absent.has(r.id))];
+  const rows = rankStandings(active, stage.tiebreaks, ms, normalise ? { normalise: true } : {});
   return { rows, complete: ms.length > 0 && ms.every((m) => isSettledStatus(m.status)) };
 }
 

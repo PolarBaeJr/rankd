@@ -27,9 +27,9 @@ export function eventHasDraw(eventStatus: string | null | undefined): boolean {
 }
 
 // The two statuses that take an entry OUT of the event. 'no_show' is not one of
-// them: one marked at check-in is simply left out of the draw, and one marked
-// after it (Did not come) is still ranked and placed, below everyone who came
-// (FormatResults.absent).
+// them here: one marked at check-in is simply left out of the draw. A staged
+// event's tables and placings also count one marked after the draw (Did not
+// come) as out (formatResultsFrom).
 const OUT_OF_EVENT_STATUSES = new Set<string>(['withdrawn', 'disqualified']);
 
 export function isOutOfEvent(entryStatus: string | null | undefined): boolean {
