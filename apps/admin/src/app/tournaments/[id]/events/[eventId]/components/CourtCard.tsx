@@ -341,7 +341,7 @@ function useVoidOnCourt(row: CourtDeskRow, courtName: string, voidMatch: CourtVo
   const [pending, setPending] = useState(false);
 
   async function submit() {
-    if (!voidMatch || !reason.trim()) return;
+    if (!voidMatch || !reason.trim() || pending) return;
     setPending(true);
     const res = await voidMatch(row.match.id, reason.trim());
     setPending(false);
@@ -357,13 +357,11 @@ function useVoidOnCourt(row: CourtDeskRow, courtName: string, voidMatch: CourtVo
 
   const dialog = open ? (
     <Dialog open onClose={() => { if (!pending) setOpen(false); }} title="Void this match?">
-      <form
-        className="space-y-4"
-        // The dialog renders inside the score form's React tree, and a submit
-        // bubbles through the portal: without the stop, voiding would save the
-        // typed score too.
-        onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void submit(); }}
-      >
+      {/* NOT A <form>. Dialog renders in place, so this sits inside the score
+          form in the DOM, and a nested form's submit never reaches React: the
+          browser reloaded the page and nothing was voided. Enter is handled
+          here and stopped, or it would submit the score form instead. */}
+      <div className="space-y-4">
         <p className="text-sm text-[var(--text-muted)]">
           {row.a.label} vs {row.b.label} is voided and counts for neither side. {courtName} takes its next match.
         </p>
@@ -372,16 +370,17 @@ function useVoidOnCourt(row: CourtDeskRow, courtName: string, voidMatch: CourtVo
           value={reason}
           maxLength={500}
           onChange={(e) => setReason(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }}
           placeholder="For example: the other team did not come"
           autoFocus
         />
         <div className="flex justify-between gap-2">
           <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
-          <Button type="submit" variant="danger" loading={pending} disabled={!reason.trim() || pending}>
+          <Button type="button" variant="danger" loading={pending} disabled={!reason.trim() || pending} onClick={() => void submit()}>
             Void match
           </Button>
         </div>
-      </form>
+      </div>
     </Dialog>
   ) : null;
 
