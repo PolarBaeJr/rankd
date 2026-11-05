@@ -48,7 +48,7 @@ export function matchSides(m: MatchSideColumns, doubles: boolean): { a: string |
  * The event's play as the staged functions read it. Rows without a stage are
  * ignored. A group's members are everyone who appears in its matches; the
  * field is in seed order, unseeded last; withdrawn and disqualified entries
- * are `out`.
+ * are `out`, and no-shows `absent`.
  */
 export function formatResultsFrom(
   cfg: FormatConfig,
@@ -84,5 +84,6 @@ export function formatResultsFrom(
     groups: [...groups.values()],
     matches: results,
     out: entries.filter((e) => isOutOfEvent(e.status)).map((e) => e.id),
+    absent: entries.filter((e) => e.status === 'no_show').map((e) => e.id),
   };
 }

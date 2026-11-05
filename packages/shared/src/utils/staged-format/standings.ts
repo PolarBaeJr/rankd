@@ -35,6 +35,12 @@ export interface FormatResults {
   matches: readonly StageMatchResult[];
   /** Withdrawn or disqualified: counted in others' records, never ranked or placed. */
   out?: readonly string[];
+  /**
+   * Marked as a no-show after the draw: still ranked and placed, but below
+   * everyone who came, so a record of no matches never takes a place from one
+   * with a loss.
+   */
+  absent?: readonly string[];
 }
 
 export interface StageStandingRow {
