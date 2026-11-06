@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
@@ -54,6 +55,28 @@ async function createServerSupabaseClient() {
       },
     }
   );
+}
+
+/**
+ * Stamps the console user's own visit (00320), after the response so the page
+ * never waits on it. On the session client because touch_last_seen resolves
+ * the caller from auth.uid(); the service role would touch nobody. Errors go to
+ * Sentry and nowhere else: a missed stamp is a stale "Last seen", not a fault.
+ */
+export async function touchLastSeen(): Promise<void> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    after(async () => {
+      try {
+        const { error } = await supabase.rpc('touch_last_seen');
+        if (error) Sentry.captureException(error, { tags: { step: 'touch-last-seen' } });
+      } catch (err) {
+        Sentry.captureException(err, { tags: { step: 'touch-last-seen' } });
+      }
+    });
+  } catch (err) {
+    Sentry.captureException(err, { tags: { step: 'touch-last-seen' } });
+  }
 }
 
 export function createAdminClient() {

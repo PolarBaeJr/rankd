@@ -2231,6 +2231,7 @@ export type Database = {
           joined_at: string
           last_active_at: string
           last_name: string | null
+          last_seen_at: string | null
           media_consent: boolean
           media_consent_changed_at: string | null
           member_code: string | null
@@ -2286,6 +2287,7 @@ export type Database = {
           joined_at?: string
           last_active_at?: string
           last_name?: string | null
+          last_seen_at?: string | null
           media_consent?: boolean
           media_consent_changed_at?: string | null
           member_code?: string | null
@@ -2341,6 +2343,7 @@ export type Database = {
           joined_at?: string
           last_active_at?: string
           last_name?: string | null
+          last_seen_at?: string | null
           media_consent?: boolean
           media_consent_changed_at?: string | null
           member_code?: string | null
@@ -2384,6 +2387,49 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: true
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      possible_duplicate_dismissals: {
+        Row: {
+          at: string
+          dismissed_by: string | null
+          player_a: string
+          player_b: string
+        }
+        Insert: {
+          at?: string
+          dismissed_by?: string | null
+          player_a: string
+          player_b: string
+        }
+        Update: {
+          at?: string
+          dismissed_by?: string | null
+          player_a?: string
+          player_b?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "possible_duplicate_dismissals_dismissed_by_fkey"
+            columns: ["dismissed_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "possible_duplicate_dismissals_player_a_fkey"
+            columns: ["player_a"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "possible_duplicate_dismissals_player_b_fkey"
+            columns: ["player_b"]
+            isOneToOne: false
+            referencedRelation: "players"
             referencedColumns: ["id"]
           },
         ]
@@ -5185,6 +5231,7 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: { marked_event_id: string; marked_event_type: string }[]
       }
+      touch_last_seen: { Args: Record<PropertyKey, never>; Returns: undefined }
       unpair_tournament_pair: {
         Args: {
           p_added_by: string

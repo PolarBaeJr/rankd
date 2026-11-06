@@ -146,7 +146,8 @@ describe('00311: a non-member who enters the tournament keeps their partner', ()
 
 describe('00311: merges', () => {
   it('restates merge_players_disposable as 00310 had it plus the two partner columns', () => {
-    expect(latestBody('merge_players_disposable')?.file).toMatch(/^00311_/);
+    // 00320 restates it again; this pins what 00311 shipped.
+    expect(migration()).toContain('CREATE OR REPLACE FUNCTION public.merge_players_disposable()');
     const before = disposableRows('00310_');
     expect(before).toHaveLength(29);
     const after = disposableRows('00311_');

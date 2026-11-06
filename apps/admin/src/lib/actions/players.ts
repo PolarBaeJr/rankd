@@ -1,6 +1,7 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { auditablePlayer } from '../auditable-player';
@@ -29,7 +30,8 @@ import {
 } from '../player-field-access';
 import { isApprovalEdit } from '../player-approval';
 import { assertLevelClosure } from '../console-access';
-import { accessLevelFor, effectiveCapabilities, isAdminRole, permissionsOf } from '../permissions';
+import { accessLevelFor, effectiveCapabilities, isAdminRole, permissionsOf, permits } from '../permissions';
+import { existingPeopleLike, type ExistingMatch } from '../possible-matches';
 import { runAction, type ActionResult } from '../action-result';
 
 export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string): Promise<ActionResult<void>> {
@@ -177,6 +179,9 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
   revalidatePath('/dashboard');
 }
 
+/** Made, or not made because somebody like them is already on the roster. */
+export type CreatePlayerOutcome = { id: string; matches?: undefined } | { id?: undefined; matches: ExistingMatch[] };
+
 export async function createPlayer(data: {
   first_name: string;
   last_name?: string;
@@ -185,7 +190,8 @@ export async function createPlayer(data: {
   role?: string;
   is_exec?: boolean;
   is_trainer?: boolean;
-}): Promise<ActionResult<string>> {
+  create_anyway?: boolean;
+}): Promise<ActionResult<CreatePlayerOutcome>> {
   return runAction(() => createPlayerImpl(data));
 }
 
@@ -197,7 +203,8 @@ async function createPlayerImpl(data: {
   role?: string;
   is_exec?: boolean;
   is_trainer?: boolean;
-}) {
+  create_anyway?: boolean;
+}): Promise<CreatePlayerOutcome> {
   // Admin accounts cannot be created here — only promoted from existing
   // members via updatePlayer, so every admin went through real signup
   // (and the passkey enrollment path). The schema also excludes 'admin';
@@ -213,6 +220,19 @@ async function createPlayerImpl(data: {
 
   const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).maybeSingle();
   if (existing) throw new Error('A player with this email already exists');
+
+  // 00320. Somebody of the same name may already be on the roster under
+  // another address. Their names go back only to somebody who may read the
+  // roster: players.create.write alone is the page-without-the-roster case,
+  // and "Did you mean" would hand it the roster one name at a time.
+  const actorLevel = accessLevelFor(actor);
+  if (parsed.create_anyway !== true && permits(actorLevel, permissionsOf(actorLevel, actor), 'players.read')) {
+    const matches = await existingPeopleLike(adminClient, {
+      full_name: joinName(data.first_name, data.last_name),
+      email: data.email,
+    });
+    if (matches.length > 0) return { matches };
+  }
 
   // 'guest' (00292) is a recreational record flagged is_guest, not a status.
   // A guest holds no console access, so neither marker goes with it.
@@ -287,7 +307,7 @@ async function createPlayerImpl(data: {
   });
 
   revalidatePath('/players');
-  return playerId;
+  return { id: playerId as string };
 }
 
 export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInput): Promise<ActionResult<void>> {
@@ -749,6 +769,36 @@ export async function mergePlayers(
       // badge cannot disagree about what a review says.
       elo_review: parseEloReview(row?.elo_review ?? null),
     };
+  });
+}
+
+/**
+ * "Not the same person" on the roster's Possible duplicates card (00320). The
+ * pair is stored ordered, so it is one row whichever way round it was pressed,
+ * and the card never shows it again. The merge capability, because this is the
+ * merge decision answered no.
+ */
+export async function dismissPossibleDuplicate(firstId: string, secondId: string): Promise<ActionResult<void>> {
+  return runAction(async () => {
+    const actor = await requireCapability('players.merge.write');
+    parseOrThrow(z.string().uuid(), firstId);
+    parseOrThrow(z.string().uuid(), secondId);
+    if (firstId === secondId) throw new ExpectedError('Pick two different records.');
+    const [playerA, playerB] = firstId < secondId ? [firstId, secondId] : [secondId, firstId];
+    const adminClient = createAdminClient();
+    const { error } = await adminClient
+      .from('possible_duplicate_dismissals')
+      .upsert({ player_a: playerA, player_b: playerB, dismissed_by: actor.id }, { onConflict: 'player_a,player_b', ignoreDuplicates: true });
+    if (error) throw new Error(error.message);
+    await logAdminAudit(adminClient, {
+      actor_id: actor.id,
+      action_type: 'possible_duplicate_dismissed',
+      target_type: 'player',
+      target_id: playerA,
+      new_value: { player_a: playerA, player_b: playerB },
+      reason: 'Marked as two different people',
+    });
+    revalidatePath('/players');
   });
 }
 

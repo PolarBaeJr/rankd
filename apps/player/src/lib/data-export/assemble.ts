@@ -1023,6 +1023,13 @@ export async function assembleMemberExport(
     (q) => q.eq('preferred_partner_player_id', playerId),
   );
   withheldRows.tournament_checkin_tokens = 0;
+  // An officer's "not the same person" (00320) about the member and somebody
+  // else. Counted, never read: each row names another member.
+  withheldRows.possible_duplicate_dismissals = await reader.countOnly(
+    'possible_duplicate_dismissals',
+    'player_a',
+    (q) => q.or(orEq(['player_a', 'player_b'], playerId)),
+  );
 
   // Officer free text written ABOUT the member. COUNTED AND NEVER READ, so the
   // owner can see the stakes of the pending decision without the text moving.

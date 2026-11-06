@@ -402,16 +402,18 @@ describe('CAPABILITY_GATES', () => {
   // same reason the /session ones did not.
   //
   // 211 BECAME 212 with club event check-in (00293): setClubEventCheckIn.
-  it('names 212 distinct enforcement points, none of them claimed twice', () => {
+  // 212 BECAME 213 with "Not the same person" (00320): dismissPossibleDuplicate,
+  // merged into players.merge.write. No capability added.
+  it('names 213 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(212);
-    expect(new Set(sites).size).toBe(212);
-    expect(ENFORCEMENT_POINTS).toBe(212);
+    expect(sites.length).toBe(213);
+    expect(new Set(sites).size).toBe(213);
+    expect(ENFORCEMENT_POINTS).toBe(213);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

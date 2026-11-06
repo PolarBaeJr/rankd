@@ -39,12 +39,13 @@ export {
   requireWaiverResignature,
   previewPlayerMerge,
   mergePlayers,
+  dismissPossibleDuplicate,
   resolvePrivilegeClaimReview,
   resolveEloReview,
   previewDiscordForceLink,
   forceLinkDiscordAccount,
 } from './actions/players';
-export type { MergePreviewRow, DiscordForceLinkPreview } from './actions/players';
+export type { MergePreviewRow, DiscordForceLinkPreview, CreatePlayerOutcome } from './actions/players';
 
 export {
   voidMatch,

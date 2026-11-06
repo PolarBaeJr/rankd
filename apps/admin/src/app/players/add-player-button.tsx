@@ -5,6 +5,7 @@ import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { createPlayer } from '@/lib/actions';
+import type { ExistingMatch } from '@/lib/possible-matches';
 import { Plus } from 'lucide-react';
 
 // Guest first and the default (00292): somebody added by hand has no login
@@ -36,10 +37,13 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
   const [status, setStatus] = useState('guest');
   const [role, setRole] = useState('player');
   const [isTrainer, setIsTrainer] = useState(false);
+  // 00320. Members already on the roster by the name typed, offered before a
+  // second record is made.
+  const [matches, setMatches] = useState<ExistingMatch[] | null>(null);
   const { toast } = useToast();
   const router = useRouter();
 
-  function handleSubmit() {
+  function handleSubmit(createAnyway = false) {
     if (!firstName.trim() || !email.trim()) {
       toast('Name and email are required', 'error');
       return;
@@ -54,8 +58,11 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
           role: 'player',
           is_exec: isAdmin && status !== 'guest' && role === 'exec',
           is_trainer: isAdmin && status !== 'guest' && isTrainer,
+          ...(createAnyway ? { create_anyway: true } : {}),
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
+        if (res.data.matches) { setMatches(res.data.matches); return; }
+        setMatches(null);
         toast('Player created', 'success');
         setOpen(false);
         setFirstName('');
@@ -81,13 +88,13 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
           <Input
             label="First Name"
             value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
+            onChange={(e) => { setFirstName(e.target.value); setMatches(null); }}
             placeholder="John"
           />
           <Input
             label="Last Name"
             value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
+            onChange={(e) => { setLastName(e.target.value); setMatches(null); }}
             placeholder="Doe"
           />
           <Input
@@ -126,10 +133,37 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
               />
             </>
           )}
+          {matches && matches.length > 0 && (
+            <div className="space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+              {matches.map((match) => (
+                <div key={match.id} className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="m-0 text-sm text-[var(--text-primary)]">
+                    Did you mean {match.name}
+                    {match.identifier ? ` (${match.identifier})` : ''}?
+                    <span className="block text-xs text-[var(--text-muted)]">{match.reasons.join(' · ')}</span>
+                  </p>
+                  {/* Nothing to create: they are already on the roster, so this
+                      opens them instead. */}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => { setOpen(false); setMatches(null); router.push(`/players/${match.id}`); }}
+                  >
+                    Use this member
+                  </Button>
+                </div>
+              ))}
+              <div className="flex justify-end">
+                <Button size="sm" variant="ghost" onClick={() => handleSubmit(true)} loading={isPending}>
+                  Create anyway
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
-              onClick={handleSubmit}
+              onClick={() => handleSubmit()}
               loading={isPending}
               disabled={!firstName.trim() || !email.trim()}
             >

@@ -3,7 +3,7 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
-import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedConsoleUser, touchLastSeen } from '@/lib/supabase-server';
 import { ALL_CONSOLE_PAGES_ON, DEFAULT_FEATURE_FLAGS, readConsolePages, readFeatureFlags } from '@badminton/shared';
 import {
   accessLevelFor,
@@ -190,6 +190,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     initialPermissions = permissionTripleOf(viewer);
     heldCapabilities = [...effectiveCapabilities(initialAccessLevel, permissionsOf(initialAccessLevel, viewer))];
     toursSeen = (viewer.tours_seen as Record<string, unknown> | null) ?? {};
+    // 00320. The console's own visit, once the stamp is fifteen minutes old.
+    // touchLastSeen never throws, so it cannot take the sidebar down with it.
+    const lastSeen = viewer.last_seen_at ? new Date(viewer.last_seen_at).getTime() : 0;
+    if (Date.now() - lastSeen > 15 * 60 * 1000) await touchLastSeen();
   } catch {
     initialAccessLevel = null;
   }

@@ -108,8 +108,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'players.merge.write': {
     label: 'Merge duplicate members', area: 'players', group: null, mode: 'write',
     gate: 'actions/players.ts mergePlayers',
-    also: ['actions/players.ts previewPlayerMerge'],
-    merged: 'The preview is the dry run of the same act, over the same two rows.',
+    also: ['actions/players.ts previewPlayerMerge', 'actions/players.ts dismissPossibleDuplicate'],
+    merged: 'The preview is the dry run of the same act, over the same two rows. "Not the same person" (00320) is the same decision answered no, over the same pair.',
   },
   'players.reliability.write': {
     label: 'Adjust a reliability score', area: 'players', group: null, mode: 'write',

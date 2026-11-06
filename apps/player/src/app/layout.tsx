@@ -17,6 +17,8 @@ import { StandingBanner } from '@/components/standing-banner';
 import { LegalFooter } from '@/components/legal-footer';
 import { MemberTourHost } from '@/components/member-tour-host';
 import { cookies } from 'next/headers';
+import { after } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, featureAccessFor, getAccountStanding, playerPathVisible, type AccountStanding, type FeatureId } from '@badminton/shared';
 import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
 import { createServerSupabaseClient, getActiveSeason, getViewer } from '@/lib/supabase-server';
@@ -297,6 +299,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       ]);
       missingLegalDocs = gate.status === 'unavailable' ? LEGAL_DOCUMENT_ORDER.slice() : gate.missing;
       unreadCount = unread.count ?? 0;
+      // 00320. The visit, for the console's "Last seen". Last in this block so
+      // nothing above waits on it, run after the response so the page does
+      // not either, and only once the stamp is fifteen minutes old;
+      // touch_last_seen applies the same rule on its own side. On the member's
+      // session, because the function resolves them from auth.uid() and the
+      // service role would touch nobody.
+      const lastSeen = player.last_seen_at ? new Date(player.last_seen_at).getTime() : 0;
+      if (Date.now() - lastSeen > 15 * 60 * 1000) {
+        after(async () => {
+          try {
+            const { error } = await supabase.rpc('touch_last_seen');
+            if (error) Sentry.captureException(error, { tags: { step: 'touch-last-seen' } });
+          } catch (err) {
+            Sentry.captureException(err, { tags: { step: 'touch-last-seen' } });
+          }
+        });
+      }
     } catch (err) {
       // Same shape as before — the chrome degrades, the page still renders —
       // but it says so now. Leaving missingLegalDocs empty here lowers the gate;
