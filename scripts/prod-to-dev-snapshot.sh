@@ -19,7 +19,7 @@
 # faithful copy is the wrong answer for both:
 #   - Discord config is staging's own, never prod's (see the capture/scrub pair
 #     below): inheriting prod's would aim the staging bot at the real guild.
-#   - $STAGING_ADMIN_EMAILS are re-granted admin on staging, because prod roles
+#   - $STAGING_ADMIN_EMAILS are re-granted super admin (admin before 00321) on staging, because prod roles
 #     leave the owner unable to use the staging admin console at all.
 #   - THE MEMBERS ARE SCRUBBED. Names, emails, phones, bios, officer notes,
 #     audit diffs and every bearer token are replaced or deleted at the end of
@@ -165,6 +165,22 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# PULL FIRST, THEN RUN THE PULLED COPY. Nothing else updates this checkout, so
+# without this the replay below only ever saw the migrations of whenever
+# somebody last pulled by hand, and every migration merged to staging since was
+# dropped by the 04:00 restore and never put back (00315 to 00320, 2026-11-04).
+# The re-exec matters: bash reads a script as it runs, and the pulled file is a
+# new one, so only a fresh process runs the new version. A failed pull is not
+# fatal: the run goes ahead on the old checkout and says so.
+if [ "${SNAPSHOT_PULLED:-0}" != "1" ]; then
+  if git -C "$SCRIPT_DIR/.." pull --ff-only -q 2>&1; then
+    echo "[$(date -u +%FT%TZ)] checkout at $(git -C "$SCRIPT_DIR/.." log --oneline -1)"
+  else
+    echo "WARNING: git pull failed; running the checkout as it is" >&2
+  fi
+  SNAPSHOT_PULLED=1 exec "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" "$@"
+fi
 # THE NAMES WERE WRONG, AND THAT IS WHY NOTHING HAS RUN SINCE 7 JULY 2026.
 # `supabase_db_badminton` / `..._dev` do not exist on the Pi and have not for
 # weeks: the stacks are compose projects `supabase` and `supabase-staging`
@@ -747,8 +763,20 @@ for f in "$MIGRATIONS_DIR"/*.sql; do
 
   if ! docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
         -v ON_ERROR_STOP=1 -q $single < "$f"; then
-    echo "FATAL: $base failed to apply; staging is half-migrated" >&2
-    exit 1
+    # A file that wraps itself may have committed part of its work, so staging
+    # really is half-migrated: stop, as before.
+    if [ -z "$single" ]; then
+      echo "FATAL: $base failed to apply; staging is half-migrated" >&2
+      exit 1
+    fi
+    # Otherwise --single-transaction rolled the whole file back and staging is
+    # prod's data plus the migrations before it. Stop replaying (later files
+    # may build on this one), finish the run so staging still works and the
+    # scrub still runs, and fail at the end. This is the nightly proof that the
+    # pending migrations stack on today's prod data.
+    REPLAY_FAILED="$base"
+    echo "REPLAY FAILED: $base does not apply on top of prod's data; later migrations skipped" >&2
+    break
   fi
 
   # Recorded only after psql actually succeeded -- db-migrate.sh's rule that a
@@ -770,6 +798,7 @@ for f in "$MIGRATIONS_DIR"/*.sql; do
   replayed=$((replayed + 1))
 done
 echo "[$(date -u +%FT%TZ)] replayed $replayed migration(s)."
+echo "$(date -u +%FT%TZ) replayed=$replayed failed=${REPLAY_FAILED:-none}" > "$OUT_DIR/replay-status"
 
 # ---------------------------------------------------------------------------
 # SCRUB PROD'S DISCORD CONFIG, THEN PUT STAGING'S BACK.
@@ -999,7 +1028,13 @@ WITH t AS (
    WHERE btrim(e) <> ''
 ), upd AS (
   UPDATE public.players p
-     SET role = 'admin', is_exec = TRUE, active_flag = TRUE, inactive_since = NULL
+     -- Super admin once 00321 has replayed, so the staging account reaches
+     -- /platform; plain admin before it. Cast at run time: a literal
+     -- 'super_admin'::user_role fails to parse where the label does not exist.
+     SET role = (CASE WHEN EXISTS (SELECT 1 FROM pg_enum en JOIN pg_type ty ON ty.oid = en.enumtypid
+                                    WHERE ty.typname = 'user_role' AND en.enumlabel = 'super_admin')
+                      THEN 'super_admin' ELSE 'admin' END)::public.user_role,
+         is_exec = TRUE, active_flag = TRUE, inactive_since = NULL
     FROM t
    WHERE p.email = t.email
   RETURNING p.email
@@ -1783,6 +1818,10 @@ find "$OUT_DIR" -maxdepth 1 -name 'acls-*.sql' -mtime +14 -delete 2>/dev/null ||
 find "$OUT_DIR" -maxdepth 1 -name 'publications-*.sql' -mtime +14 -delete 2>/dev/null || true
 
 echo "[$(date -u +%FT%TZ)] snapshot $TS complete."
+if [ -n "${REPLAY_FAILED:-}" ]; then
+  echo "FATAL: snapshot complete, but $REPLAY_FAILED did not apply on top of prod's data" >&2
+  exit 2
+fi
 echo "  public: $(ls -lh "$PUBLIC_DUMP" 2>/dev/null | awk '{print $5}')"
 echo "  auth:   $(ls -lh "$AUTH_DUMP"   2>/dev/null | awk '{print $5}')"
 echo "  acl statements:         $(grep -c ';' "$ACL_SQL" 2>/dev/null || true)"
