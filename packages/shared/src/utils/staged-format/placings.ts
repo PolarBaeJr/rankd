@@ -88,8 +88,8 @@ function knockoutOrder(cfg: FormatConfig, stage: FormatStage, results: FormatRes
  *  3. still level: seed, then id, so the answer never depends on input order.
  *
  * An entry in no group and on no match of any stage was never drawn (left out
- * for not checking in, say) and gets no place, so no ladder points. A no-show
- * who was drawn is still placed, at the bottom of the last stage it reached.
+ * for not checking in, say) and gets no place, so no ladder points. Nor does a
+ * no-show who was drawn: formatResultsFrom puts it in `out`.
  *
  * `placeNeverDrawn` (the console's kill switch placings_skip_never_played,
  * off) puts the never-drawn back at the very bottom, by seed, as before.

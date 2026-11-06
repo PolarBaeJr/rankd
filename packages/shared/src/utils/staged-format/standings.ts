@@ -33,7 +33,7 @@ export interface FormatResults {
   field: ReadonlyArray<{ id: string; seed: number | null }>;
   groups: readonly StageGroupResult[];
   matches: readonly StageMatchResult[];
-  /** Withdrawn or disqualified: counted in others' records, never ranked or placed. */
+  /** Withdrawn, disqualified or a no-show: counted in others' records, never ranked or placed. */
   out?: readonly string[];
 }
 

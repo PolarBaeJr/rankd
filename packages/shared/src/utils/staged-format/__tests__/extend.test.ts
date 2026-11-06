@@ -451,4 +451,18 @@ describe('groupTable on an uneven schedule', () => {
     expect(rawOrder(results).map((r) => r.id)).toEqual(['a', 'b', 'c']);
     expect(groupTable(cfg, stage, results, 1, 1).rows.map((r) => r.id)).toEqual(['b', 'a', 'c']);
   });
+
+  it('leaves a no-show out of the table, so it never takes a place from one who came', () => {
+    // The staging event: d was marked as not coming, so its matches were voided
+    // and it sat on 0-0, level on wins with c's 0-1 and ahead of it on seed,
+    // which sent it through in c's place.
+    const members = ['a', 'b', 'd', 'c'];
+    const played = [match('a', 'b', 'a'), match('b', 'c', 'b')];
+    const voided = [match('a', 'd', null, 'voided'), match('b', 'd', null, 'voided'), match('c', 'd', null, 'voided')];
+    const results = resultsWith(members, [...played, ...voided]);
+    expect(groupTable(cfg, stage, results, 1, 1).rows.map((r) => r.id)).toEqual(['a', 'b', 'd', 'c']);
+    const rows = members.map((id) => ({ id, seed: null, status: id === 'd' ? 'no_show' : 'checked_in' }));
+    expect(formatResultsFrom(cfg, rows, []).out).toEqual(['d']);
+    expect(groupTable(cfg, stage, { ...results, out: ['d'] }, 1, 1).rows.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
 });
