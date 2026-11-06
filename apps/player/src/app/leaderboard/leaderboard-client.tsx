@@ -901,7 +901,8 @@ export default function LeaderboardClient({
                     since-rollover figure and three all-time ones in a single
                     line with no visual seam. Tournament points are all-time
                     too: get_leaderboard() sums tournament_participants.points
-                    with no season predicate and no join to tournaments.
+                    and tournament_pairs.points (00316) with no season
+                    predicate and no join to tournaments.
 
                     Nothing stores a per-season record, so this can only be
                     labelled, not scoped. It sits on its own line because the
