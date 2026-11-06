@@ -5,7 +5,7 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { requireCapability } from './_shared';
-import { ExpectedError, FEATURES_SETTING_KEY, RELEASE_FLAGS_SETTING_KEY } from '@badminton/shared';
+import { CONSOLE_PAGES_SETTING_KEY, ExpectedError, FEATURES_SETTING_KEY, RELEASE_FLAGS_SETTING_KEY } from '@badminton/shared';
 // TWO floors on purpose, and they are not the same number. Rating settings take
 // the console's ordinary REASON_MIN (5) — enough to prove somebody typed
 // something. A legal document takes MIN_REASON_LENGTH (10), because that reason
@@ -25,8 +25,9 @@ import {
 } from '@badminton/shared';
 import { clubToday } from '@badminton/shared';
 
-// Platform configuration. Admin-only, and this is the boundary that matters:
-// /ratings and /accounts merely decide who is shown the form.
+// Platform configuration. Super admin only since 00321 (platform.settings.write
+// is PLATFORM_ONLY), and this is the boundary that matters: /ratings and
+// /platform merely decide who is shown the form.
 //
 // THE REASON IS REQUIRED, AND IT USED NOT TO BE. It arrived as an OPTIONAL
 // parameter when /ratings was rebuilt, because /ratings had a reason box and
@@ -174,13 +175,21 @@ export async function updatePlatformSettings(
     });
   }
 
-  // The form now lives on /ratings and /accounts, not /settings.
+  // The form lives on /ratings and /platform (00321), not /settings.
   revalidatePath('/ratings');
-  revalidatePath('/accounts');
+  revalidatePath('/platform');
   // The feature switches decide the console's nav, which the root layout
   // draws, so the whole tree re-renders rather than one page.
   // A kill switch changes what every tournament page offers, so they all go too.
-  if (checked.some((update) => update.key === FEATURES_SETTING_KEY || update.key === RELEASE_FLAGS_SETTING_KEY)) {
+  // A console page switch (00321) changes the nav the same way.
+  if (
+    checked.some(
+      (update) =>
+        update.key === FEATURES_SETTING_KEY
+        || update.key === RELEASE_FLAGS_SETTING_KEY
+        || update.key === CONSOLE_PAGES_SETTING_KEY,
+    )
+  ) {
     revalidatePath('/', 'layout');
   }
 }

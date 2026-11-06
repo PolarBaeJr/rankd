@@ -18,6 +18,9 @@
 import { ExpectedError } from '@badminton/shared';
 import {
   accessLevelFor,
+  atLeast,
+  isAdminRole,
+  isSuperAdminRole,
   permissionsOf,
   permits,
   type AccessLevel,
@@ -274,8 +277,14 @@ export function assertNoConsoleAccessFields(payloads: Record<string, unknown>[])
   }
 }
 
+/** An admin or a super admin (00321). */
 export function isAdminActor(actor: { role?: string | null } | null | undefined): boolean {
-  return actor?.role === 'admin';
+  return isAdminRole(actor?.role);
+}
+
+/** A super admin: the one level that may make or unmake an admin (00321). */
+export function isSuperAdminActor(actor: { role?: string | null } | null | undefined): boolean {
+  return isSuperAdminRole(actor?.role);
 }
 
 // The actor's LEVEL markers and their stored permissions. The permission
@@ -339,7 +348,7 @@ export function assertPlayerFieldAccess(
   fields: readonly string[] = ADMIN_ONLY_PLAYER_FIELDS,
 ): void {
   const level = levelOf(actor);
-  if (level === 'admin') return;
+  if (atLeast(level, 'admin')) return;
 
   if (level !== 'exec') {
     // Trainer, or an actor with no resolvable level. Allow-list, not deny-list:

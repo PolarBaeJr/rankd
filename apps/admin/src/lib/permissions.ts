@@ -9,9 +9,10 @@
 // resolves to. See @badminton/shared's access-level.ts for the vocabulary and
 // the two baselines.
 //
-//  - admin    role = 'admin'. Superuser BY LEVEL: permits() short-circuits
-//             before any set is consulted, so a capability added next year is
-//             automatically theirs.
+//  - super_admin  role = 'super_admin' (00321). Every capability, so a
+//             capability added next year is automatically theirs.
+//  - admin    role = 'admin'. Every capability EXCEPT PLATFORM_ONLY: the
+//             platform settings and the data API keys are the super admin's.
 //  - exec     is_exec. EXEC_BASELINE: every read and page outside the admin
 //             areas (EXEC_READS, derived) and one write, filing an expense. An
 //             officer with no permission_role can see the club's business and
@@ -69,9 +70,11 @@ export {
   effectiveCapabilities,
   featureAccessCapability,
   hasConsoleAccess,
+  isAdminRole,
   isBuiltinPermissionRole,
   isCapability,
   isInGoodStanding,
+  isSuperAdminRole,
   normaliseBaselineCapabilities,
   pageOf,
   permissionsOf,
@@ -79,6 +82,7 @@ export {
   permits,
   resolvePermissions,
   shippedDefaultFor,
+  ADMIN_ROLES,
   AREAS,
   BASELINE_NAME_MAX,
   BUILTIN_BASELINE_IDS,
@@ -89,6 +93,7 @@ export {
   EXEC_BASELINE,
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
+  PLATFORM_ONLY,
   ROLE_DEFAULTS,
   TRAINER_BASELINE,
   UNRESTRICTED,
@@ -188,6 +193,8 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // not deliberately given it — someone who could reach it and hold
   // permissions.write could hand themselves anything they already have.
   '/permissions': 'permissions.page',
+  // 00321: the super admin's section. Nobody else holds platform.page.
+  '/platform': 'platform.page',
 };
 
 // Sub-routes that ask for something NARROWER than the section they sit inside,
@@ -275,7 +282,7 @@ export function canAccess(
   const capability = sectionCapability(pathname);
   // Fail closed on a path nobody claimed. An admin still gets in, so a new
   // section is reachable by the person who can fix the omission.
-  if (capability === undefined) return level === 'admin';
+  if (capability === undefined) return atLeast(level, 'admin');
   return effectiveCapabilities(level, permissions).has(capability);
 }
 

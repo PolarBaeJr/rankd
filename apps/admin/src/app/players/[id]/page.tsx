@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@/lib/permissions';
+import { accessLevelFor, atLeast, effectiveCapabilities, permissionsOf, permits } from '@/lib/permissions';
 // THE WHOLE PERMISSION EDITOR, in its one-person mode. Imported across routes
 // rather than copied, because a second console-access control is a second place
 // that can disagree about what Admin means — see console-access.ts.
@@ -75,7 +75,7 @@ export default async function PlayerDetailPage({
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(accessLevelFor(viewer), viewer);
-  const isAdmin = level === 'admin';
+  const isAdmin = atLeast(level, 'admin');
   // Ask for the capability the edit form's Save invokes, not for a level —
   // anyone holding only players.read sees this page exactly as a trainer does,
   // read-only. Same reasoning as /players itself.
@@ -944,7 +944,7 @@ export default async function PlayerDetailPage({
             // the target is holders[0] and there is nobody else to reach.
             others={[]}
             viewerId={viewer.id}
-            viewerIsAdmin={isAdmin}
+            viewerIsSuperAdmin={level === 'super_admin'}
             viewerCanGrantConsole={isAdmin || canConsoleAccess}
             viewerCanComposeCapabilities={canComposePermissions}
             viewerCapabilities={[...viewerSet]}

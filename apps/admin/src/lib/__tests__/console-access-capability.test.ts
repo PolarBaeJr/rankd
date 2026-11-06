@@ -130,6 +130,8 @@ const CONSOLE_CAP: Cap = 'players.consoleaccess.write';
 
 const ADMIN = 'aaaaaaaa-0000-4000-8000-000000000001';
 const ADMIN_2 = 'aaaaaaaa-0000-4000-8000-000000000002';
+/** A super admin (00321): the one level that may make or unmake an admin. */
+const SUPER = 'aaaaaaaa-0000-4000-8000-000000000009';
 /** Holds every capability an admin may compose — the widest legitimate holder. */
 const FULL_HOLDER = 'ffffffff-0000-4000-8000-000000000001';
 /** Holds the trainer baseline plus the console capability, and nothing else. */
@@ -170,6 +172,7 @@ beforeEach(() => {
     players: [
       person(ADMIN, { role: 'admin', is_exec: true }),
       person(ADMIN_2, { role: 'admin', is_exec: true }),
+      person(SUPER, { role: 'super_admin', is_exec: true }),
       // A composed exec holding the whole ceiling. Every element is in
       // EDITOR_OFFERABLE, so this is a row an admin could actually write through
       // setPlayerPermissions — asserted at the bottom of this file rather than
@@ -273,7 +276,7 @@ describe('the admin level is not grantable by any capability', () => {
     store.actor = rowFor(FULL_HOLDER);
     const res = await setConsoleAccess(MEMBER, 'admin', WHY);
     expect(res.ok).toBe(false);
-    expect(errorOf(res)).toBe('Only an admin can make somebody an admin.');
+    expect(errorOf(res)).toBe('Only a super admin can make somebody an admin or a super admin.');
     expect(rowFor(MEMBER).role).toBe('player');
     expect(audits()).toHaveLength(0);
   });
@@ -282,14 +285,29 @@ describe('the admin level is not grantable by any capability', () => {
     store.actor = rowFor(FULL_HOLDER);
     const res = await setConsoleAccess(TARGET_EXEC, 'admin', WHY);
     expect(res.ok).toBe(false);
-    expect(errorOf(res)).toBe('Only an admin can make somebody an admin.');
+    expect(errorOf(res)).toBe('Only a super admin can make somebody an admin or a super admin.');
     expect(rowFor(TARGET_EXEC).role).toBe('player');
   });
 
-  it('still lets an admin make an admin', async () => {
+  // 00321: an admin no longer mints an admin, nor a super admin.
+  it('refuses an admin making an admin or a super admin', async () => {
+    for (const access of ['admin', 'super_admin'] as const) {
+      const res = await setConsoleAccess(MEMBER, access, WHY);
+      expect(res.ok).toBe(false);
+      expect(errorOf(res)).toBe('Only a super admin can make somebody an admin or a super admin.');
+    }
+    expect(rowFor(MEMBER).role).toBe('player');
+  });
+
+  it('lets a super admin make an admin and a super admin', async () => {
+    store.actor = rowFor(SUPER);
     const res = await setConsoleAccess(MEMBER, 'admin', WHY);
-    expect(res.ok).toBe(true);
+    expect(res.ok, errorOf(res)).toBe(true);
     expect(rowFor(MEMBER).role).toBe('admin');
+    const promoted = await setConsoleAccess(ADMIN_2, 'super_admin', WHY);
+    expect(promoted.ok, errorOf(promoted)).toBe(true);
+    expect(rowFor(ADMIN_2).role).toBe('super_admin');
+    expect(rowFor(ADMIN_2).is_exec).toBe(true);
   });
 
   // The vocabulary itself, as a second line of defence: no capability string
@@ -314,7 +332,7 @@ describe('taking console access away', () => {
     store.actor = rowFor(FULL_HOLDER);
     const res = await setConsoleAccess(ADMIN_2, 'none', WHY);
     expect(res.ok).toBe(false);
-    expect(errorOf(res)).toBe("Only an admin can change an admin's console access.");
+    expect(errorOf(res)).toBe("Only a super admin can change an admin's console access.");
     expect(rowFor(ADMIN_2).role).toBe('admin');
     expect(rowFor(ADMIN_2).is_exec).toBe(true);
   });
@@ -323,8 +341,18 @@ describe('taking console access away', () => {
     store.actor = rowFor(FULL_HOLDER);
     const res = await setConsoleAccess(ADMIN_2, 'executive', WHY);
     expect(res.ok).toBe(false);
-    expect(errorOf(res)).toBe("Only an admin can change an admin's console access.");
+    expect(errorOf(res)).toBe("Only a super admin can change an admin's console access.");
     expect(rowFor(ADMIN_2).role).toBe('admin');
+  });
+
+  it('refuses an admin stripping another admin or a super admin (00321)', async () => {
+    for (const target of [ADMIN_2, SUPER]) {
+      const res = await setConsoleAccess(target, 'executive', WHY);
+      expect(res.ok).toBe(false);
+      expect(errorOf(res)).toBe("Only a super admin can change an admin's console access.");
+    }
+    expect(rowFor(ADMIN_2).role).toBe('admin');
+    expect(rowFor(SUPER).role).toBe('super_admin');
   });
 
   it('lets a holder take the console from somebody inside their own set', async () => {
@@ -636,6 +664,9 @@ describe('a holder’s change is visible in the access log', () => {
     ['admin', MEMBER, { role: 'admin', is_exec: true, is_trainer: false }],
     ['none', TARGET_EXEC, { role: 'player', is_exec: false, is_trainer: false }],
   ] as const)('lets an admin set %s, writing all three columns', async (access, subject, columns) => {
+    // Admin is a super admin's to hand out (00321), so that one case runs as
+    // the super admin; the audit's actor is whoever acted.
+    if (access === 'admin') store.actor = rowFor(SUPER);
     const res = await setConsoleAccess(subject, access, WHY);
     expect(res.ok, errorOf(res)).toBe(true);
 
@@ -647,7 +678,7 @@ describe('a holder’s change is visible in the access log', () => {
     // ...and it reaches the one screen that answers "who was given what, and
     // when". An admin's change going unlogged is the 2026-08-15 shape exactly.
     const audit = levelAudits()[0]!;
-    expect(audit.actor_id).toBe(ADMIN);
+    expect(audit.actor_id).toBe(access === 'admin' ? SUPER : ADMIN);
     expect(audit.reason).toBe(WHY);
     expect(audit.new_value).toEqual(columns);
     expect(isAccessChange(audit as { action_type: string; new_value?: unknown })).toBe(true);

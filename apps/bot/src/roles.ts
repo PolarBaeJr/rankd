@@ -24,8 +24,8 @@
 /**
  * The roles this bot manages. `admin` is NOT in this list and must never be:
  * it is managed by hand in Discord, it carries a lock icon a bot cannot assign
- * anyway, and `players.role = 'admin'` grants everything on the app side
- * without needing a Discord mirror.
+ * anyway, and `players.role = 'admin'` (or `'super_admin'`, 00321) grants the
+ * console on the app side without needing a Discord mirror.
  */
 export const MANAGED_ROLES = [
   'linked',

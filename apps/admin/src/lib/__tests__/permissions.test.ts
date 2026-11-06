@@ -152,6 +152,21 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   { path: '/accounts', admin: true, exec: false, trainer: false },
 ];
 
+// 00321: /platform is the super admin's alone, the one section an admin cannot
+// open, so it sits outside the three-level matrix.
+describe('canAccess: /platform', () => {
+  it('admits a super admin and nobody else', () => {
+    expect(canAccess('super_admin', UNRESTRICTED, '/platform')).toBe(true);
+    for (const level of ['admin', 'exec', 'trainer', null] as const) {
+      expect(canAccess(level, UNRESTRICTED, '/platform')).toBe(false);
+    }
+  });
+
+  it('lets a super admin into every section an admin opens', () => {
+    for (const row of MATRIX) expect(canAccess('super_admin', UNRESTRICTED, row.path), row.path).toBe(true);
+  });
+});
+
 describe('canAccess — three-level matrix', () => {
   for (const row of MATRIX) {
     it(`${row.path}: admin=${row.admin} exec=${row.exec} trainer=${row.trainer}`, () => {

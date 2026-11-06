@@ -89,7 +89,7 @@ export function formatRelativeTime(dateString: string): string {
 }
 
 export function isAdmin(role: UserRole): boolean {
-  return role === 'admin';
+  return role === 'admin' || role === 'super_admin';
 }
 
 export function getWinRate(wins: number, losses: number): string {

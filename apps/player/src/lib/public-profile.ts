@@ -1,4 +1,5 @@
 import type { PlayerStatus } from '@badminton/shared';
+import { isAdminRole } from '@badminton/shared';
 import { createServiceRoleClient } from './supabase-server';
 
 /**
@@ -92,7 +93,7 @@ export async function getPublicProfile(
   // fix" would publish rows the member client could not reach: pending-approval
   // members are visible only to themselves and to admins.
   const isSelf = !!viewer?.id && viewer.id === data.id;
-  const isAdmin = viewer?.role === 'admin';
+  const isAdmin = isAdminRole(viewer?.role);
   if (!mayViewRow(data.status, isSelf, isAdmin)) return null;
   // A guest (00292) is a Google Form entrant, not a member: no public profile.
   if (data.is_guest && !isAdmin) return null;

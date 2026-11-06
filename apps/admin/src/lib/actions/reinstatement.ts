@@ -14,7 +14,7 @@ import {
   requireActiveSeasonId,
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
-import { ExpectedError } from '@badminton/shared';
+import { ExpectedError, isAdminRole } from '@badminton/shared';
 import { isAdminActor } from '../player-field-access';
 import { runAction, type ActionResult } from '../action-result';
 
@@ -113,7 +113,7 @@ async function banPlayerImpl(input: BanInput) {
   // is_banned arm to guard_last_admin_role, which is the half no app code can
   // reach, since the same over-count lets guard_last_admin_role permit the
   // DEMOTION or DELETION of the last unbanned admin.
-  if (target.role === 'admin') {
+  if (isAdminRole(target.role)) {
     const { data: doors, error: doorsError } = await adminClient.rpc('admins_with_passkeys', {
       p_excluding_player: input.player_id,
     });

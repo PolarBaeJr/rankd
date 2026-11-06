@@ -25,74 +25,40 @@ import { formatRelativeTime } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import Link from 'next/link';
-import { PlatformSettingsForm } from '@/components/platform-settings-form';
-import { settingsForSection } from '@/lib/platform-setting-sections';
-import { withSeededSettings } from '@/lib/platform-setting-fields';
-import { FEATURES, FEATURES_SETTING_KEY, parseFeatureFlags } from '@badminton/shared/src/utils/features';
-import { RELEASE_FLAGS, RELEASE_FLAGS_SETTING_KEY, parseReleaseFlags } from '@badminton/shared/src/utils/release-flags';
-import { DataApiKeysCard } from './DataApiKeysCard';
 import { AccountsRail, type AccountsRailSection } from './accounts-rail';
 
-// TWO QUESTIONS, ONE PAGE, AND THEY ARE BOTH CALLED "ACCOUNTS".
+// THE OFFICERS' ACCOUNTS: who holds the console and who can undo things with
+// it, and what the four named roles mean.
 //
-// The screen the club asked for is about the OFFICERS' accounts — who holds the
-// console and who can undo things with it. The page that was already here is
-// about MEMBERS' accounts — challenge limits, session caps, what a membership
-// may do. Both are on it now, and the settings half is not optional: this route
-// is the catch-all in platform-setting-sections.ts (DEFAULT_SECTION =
-// 'accounts'), so a platform_settings key added next year with no line in that
-// map lands HERE. Replacing the page with an officers screen would have made
-// six settings groups, and every future one, unreachable from the console with
-// no error anywhere — the silent-nothing-happened failure that file was written
-// to prevent.
+// THE MEMBERS' HALF MOVED TO /platform (00321). The member page switches, the
+// kill switches, the account rules, the club links and the data API keys are
+// all PLATFORM_ONLY now, the super admin's alone, so an admin opening this page
+// would have been shown none of them. platform-setting-sections.ts still has
+// its catch-all (DEFAULT_SECTION = 'accounts'), and that section is drawn on
+// /platform: a platform_settings key added later with no line in that map
+// stays reachable there.
 //
-// THREE CAPABILITIES, THREE ANSWERS, and the second and third are checked here
-// rather than inherited from the first:
+// TWO CAPABILITIES, TWO ANSWERS:
 //
 //   accounts.page      opens the route. requireCapability, as before.
-//   permissions.page   the OFFICER data — names, emails, last sign-ins,
+//   permissions.page   the OFFICER data: names, emails, last sign-ins,
 //                      capability counts and the access audit trail. There is
-//                      no `accounts.<resource>.read`, and inventing one would
-//                      mean editing the vocabulary; this is the capability that
-//                      already governs exactly this data, on /permissions.
-//   platform.page      the settings form, exactly as /ratings does it.
+//                      no `accounts.<resource>.read`; this is the capability
+//                      that already governs exactly this data, on /permissions.
 //
-// The gated halves skip their FETCHES rather than hiding rendered output. A
+// The gated half skips its FETCHES rather than hiding rendered output. A
 // hidden card whose query still ran ships officer emails into the RSC payload
-// for anyone with devtools — the same reasoning as /fees and dashboard/page.tsx.
+// for anyone with devtools, the same reasoning as /fees and dashboard/page.tsx.
 //
-// NONE OF THE THREE IS IN EDITOR_OFFERABLE — the ceiling on what anybody below
-// admin may be composed up to — so today only an admin holds any of them and
-// both withheld branches are unreachable. (That constant used to be an alias of
-// EXEC_BASELINE, which is why this note named the baseline; the baseline has
-// since narrowed and the ceiling is its own list.) They are written anyway, for
-// the reason /ratings gives for platform.page: the route map decides who may
-// OPEN a section, and a page that re-checks what it draws does not have to be
-// re-audited when that changes.
-//
-// `accounts.page` BRIEFLY LEFT THAT LIST AND CAME BACK, which is worth a line
-// because the data API's key panel below is the reason it moved. The panel was
-// going to be exec work, the page had to be offerable for the key capabilities
-// to survive the resolver's pruning, and then minting was made admin-only: a
-// key reads the club's data from outside every gate in access-level.ts and
-// keeps answering after the minter's console is gone. With nothing on this
-// route offerable, the page went back to being withheld too.
+// Neither is in EDITOR_OFFERABLE, so today only an admin or a super admin holds
+// either, and the withheld branch is unreachable. It is written anyway: the
+// route map decides who may OPEN a section, and a page that re-checks what it
+// draws does not have to be re-audited when that changes.
 export default async function AccountsPage() {
   const viewer = await requireCapability('accounts.page');
   const viewerLevel = accessLevelFor(viewer);
   const viewerPermissions = permissionsOf(accessLevelFor(viewer), viewer);
   const showOfficers = permits(viewerLevel, viewerPermissions, 'permissions.page');
-  const showPlatformSettings = permits(viewerLevel, viewerPermissions, 'platform.page');
-  // THE FOURTH ANSWER, and it is a FETCH gate rather than a render one. See
-  // capability-gates.ts on `accounts.apikey.read`: what it withholds is the
-  // rows, so the query below is skipped exactly the way the officer and
-  // settings halves skip theirs. The two write capabilities decide only which
-  // CONTROLS the card draws; the real gate on both acts is the
-  // requireCapability inside actions/data-api-keys.ts, and render-gating a
-  // button has never stopped a POST.
-  const showDataApiKeys = permits(viewerLevel, viewerPermissions, 'accounts.apikey.read');
-  const canMintDataApiKey = permits(viewerLevel, viewerPermissions, 'accounts.apikey.mint.write');
-  const canRevokeDataApiKey = permits(viewerLevel, viewerPermissions, 'accounts.apikey.revoke.write');
 
   const adminClient = createAdminClient();
 
@@ -112,7 +78,7 @@ export default async function AccountsPage() {
         .select(
           'id, user_id, full_name, email, avatar_url, exec_title, role, is_exec, is_trainer, is_banned, status, active_flag, permission_role, permission_grants, permission_revokes',
         )
-        .or('role.eq.admin,is_exec.eq.true,is_trainer.eq.true')
+        .or('role.in.(admin,super_admin),is_exec.eq.true,is_trainer.eq.true')
         .order('full_name')
     : { data: null };
 
@@ -198,50 +164,6 @@ export default async function AccountsPage() {
 
   const summary = officerAccessSummary(officers.map(({ person }) => person as OfficerInput));
 
-  const { data: settings } = showPlatformSettings
-    ? await adminClient.from('platform_settings').select('*').order('key')
-    : { data: null };
-
-  // THE ISSUED KEYS.
-  //
-  // `key_hash` IS NOT IN THIS SELECT and must never be. Not rendering it is not
-  // the same as not fetching it: an unrendered column still travels in the RSC
-  // payload, which is the argument this page already makes at :55-57 about
-  // gated fetches versus gated renders. The hash is not usable as a credential,
-  // but it is a probe against a candidate list and there is no reason for it to
-  // leave the database.
-  //
-  // BOTH EMBEDS NAME THEIR FOREIGN KEY. `data_api_keys` has two columns
-  // referencing `players` (minted_by and revoked_by), so an unqualified
-  // `players(...)` embed is ambiguous and PostgREST refuses the whole select.
-  const { data: apiKeyRows, error: apiKeysError } = showDataApiKeys
-    ? await adminClient
-        .from('data_api_keys')
-        .select(
-          'id, key_prefix, label, scopes, created_at, expires_at, revoked_at, consumer:data_api_consumers!data_api_keys_consumer_id_fkey(name), minter:players!data_api_keys_minted_by_fkey(full_name)',
-        )
-        .order('created_at', { ascending: false })
-    : { data: null, error: null };
-
-  // AN ERROR HERE IS A KNOWN STATE, NOT A FAULT, which is why it is not
-  // reported the way the access-log read above is. 00241 creates these tables
-  // and ships UNAPPLIED: applying it is the owner's, so until they run it
-  // PostgREST answers this select with "table not found" and supabase-js
-  // returns { data: null }. The same shape as the `roleRows` fallback below.
-  // Either way the honest sentence is that the key store is not reachable, and
-  // the card says so rather than claiming the club has issued nothing.
-  const apiKeys = (apiKeyRows ?? []).map((row) => ({
-    id: row.id as string,
-    consumer: embedded<{ name: string }>(row.consumer)?.name ?? 'Unknown consumer',
-    key_prefix: row.key_prefix as string,
-    label: (row.label as string | null) ?? null,
-    scopes: (row.scopes as string[] | null) ?? [],
-    created_at: row.created_at as string,
-    expires_at: (row.expires_at as string | null) ?? null,
-    revoked_at: (row.revoked_at as string | null) ?? null,
-    minted_by_name: embedded<{ full_name: string }>(row.minter)?.full_name ?? null,
-  }));
-
   // WHAT THE ROLES ACTUALLY SAY, READ FROM THE TABLE RATHER THAN FROM THE CODE.
   //
   // This card is club-facing documentation of the four jobs, and until 00104 it
@@ -284,48 +206,14 @@ export default async function AccountsPage() {
           capabilities: ROLE_DEFAULTS[role],
         }));
 
-  // The saved switches, for the rail's count. An absent row reads as every
-  // feature on, exactly as the member app reads it.
-  const featureFlags = parseFeatureFlags(settings?.find((row) => row.key === FEATURES_SETTING_KEY)?.value ?? null);
-  const featuresOn = FEATURES.filter((f) => featureFlags[f.id]).length;
-  const releaseFlags = parseReleaseFlags(settings?.find((row) => row.key === RELEASE_FLAGS_SETTING_KEY)?.value ?? null);
-  const releaseOn = RELEASE_FLAGS.filter((f) => releaseFlags[f.id]).length;
-
   // The rail lists what is actually on the page, so a withheld section never
   // leaves a link to nothing.
   const sections: AccountsRailSection[] = [
-    ...(showPlatformSettings
-      ? [
-          {
-            id: 'member-pages',
-            label: 'Member pages',
-            sub: 'Switch pages on or off',
-            badge: `${featuresOn} / ${FEATURES.length} on`,
-            tone: featuresOn === FEATURES.length ? ('success' as const) : ('warning' as const),
-          },
-          {
-            id: 'kill-switches',
-            label: 'Kill switches',
-            sub: 'Undo a new console change',
-            badge: `${releaseOn} / ${RELEASE_FLAGS.length} on`,
-            tone: releaseOn === RELEASE_FLAGS.length ? ('success' as const) : ('warning' as const),
-          },
-        ]
-      : []),
     ...(showOfficers
       ? [
           { id: 'officers', label: 'Officers', sub: 'Who holds the console', badge: String(officers.length) },
           { id: 'roles', label: 'What roles can do', sub: 'Read-only summary' },
         ]
-      : []),
-    ...(showPlatformSettings
-      ? [
-          { id: 'account-rules', label: 'Account rules', sub: 'What a membership may do' },
-          { id: 'club-links', label: 'Club links', sub: 'Instagram, Discord, membership' },
-        ]
-      : []),
-    ...(showDataApiKeys
-      ? [{ id: 'data-api-keys', label: 'Data API keys', sub: 'Who reads the data from outside' }]
       : []),
   ];
 
@@ -334,10 +222,9 @@ export default async function AccountsPage() {
       <PageHeader
         eyebrow={showOfficers ? `ACCESS · ${plural(officers.length, 'OFFICER')}` : 'ACCESS'}
         title="Accounts"
-        // The mockup's line — "Who can see what, and who can undo it" —
-        // describes only the officers half. This page is both halves, and a sub
-        // that names one of them is half false.
-        sub="Who holds the console and what they can undo, and what a member's account may do"
+        // The members' half moved to /platform (00321), so the line names the
+        // officers half alone.
+        sub="Who holds the console and what they can undo"
         watermark="A"
         actions={
           showOfficers ? (
@@ -363,42 +250,6 @@ export default async function AccountsPage() {
 
         {/* MIDDLE */}
         <div className="flex min-w-0 flex-col gap-5">
-          {showPlatformSettings && (
-            <section id="member-pages" className="scroll-mt-32" data-tour="member-pages">
-              <Card className="overflow-hidden p-0">
-                <SectionCardHeader
-                  title="Member pages"
-                  sub="Switch a page off and members see a short notice instead. Admins, and anyone given its access key, can still open it."
-                  aside="Saved with a reason, logged"
-                />
-                <div className="px-6 pt-5">
-                  <PlatformSettingsForm
-                    settings={settingsForSection(withSeededSettings(settings ?? []), 'pages')}
-                    layout="tiles"
-                  />
-                </div>
-              </Card>
-            </section>
-          )}
-
-          {showPlatformSettings && (
-            <section id="kill-switches" className="scroll-mt-32">
-              <Card className="overflow-hidden p-0">
-                <SectionCardHeader
-                  title="Kill switches"
-                  sub="If a new console change breaks on the day, switch it off and the console goes back to what it did before. Each switch says what off falls back to."
-                  aside="Saved with a reason, logged"
-                />
-                <div className="px-6 pt-5">
-                  <PlatformSettingsForm
-                    settings={settingsForSection(withSeededSettings(settings ?? []), 'release')}
-                    layout="tiles"
-                  />
-                </div>
-              </Card>
-            </section>
-          )}
-
           {showOfficers ? (
             <>
               {/* The anchor lives on a wrapper because Card takes no id, and
@@ -571,75 +422,6 @@ export default async function AccountsPage() {
             </Card>
           )}
 
-          {showPlatformSettings && (
-            <section id="account-rules" className="scroll-mt-32">
-              <Card className="overflow-hidden p-0">
-                <SectionCardHeader
-                  title="Account rules"
-                  sub="What a member's account may do: challenges, match caps, no-shows, inactivity, check-in."
-                />
-                <div className="px-6 py-5">
-                  <PlatformSettingsForm
-                    settings={settingsForSection(withSeededSettings(settings ?? []), 'accounts')}
-                    layout="grouped"
-                  />
-                </div>
-              </Card>
-            </section>
-          )}
-
-          {showPlatformSettings && (
-            <section id="club-links" className="scroll-mt-32">
-              <Card className="overflow-hidden p-0">
-                <SectionCardHeader
-                  title="Club links"
-                  sub="The links the club publishes: Instagram, Discord, and where to buy a membership."
-                />
-                <div className="px-6 py-5">
-                  <PlatformSettingsForm
-                    settings={settingsForSection(withSeededSettings(settings ?? []), 'club')}
-                    layout="links"
-                  />
-                </div>
-              </Card>
-            </section>
-          )}
-
-          {showDataApiKeys ? (
-            // The anchor lives on a wrapper for the same reason the officers
-            // one does: Card takes no id and packages/ui is not this change's
-            // to edit.
-            <section id="data-api-keys" className="scroll-mt-32">
-              {apiKeysError ? (
-                <Card>
-                  <CardHeading title="Data API keys" />
-                  <p className="mt-3 text-[13px] text-[var(--mute)]">
-                    The key store cannot be read. Migration 00241 creates it and has to be
-                    applied to this database before the panel works; until then this is
-                    expected rather than a fault.
-                  </p>
-                </Card>
-              ) : (
-                <DataApiKeysCard
-                  keys={apiKeys}
-                  canMint={canMintDataApiKey}
-                  canRevoke={canRevokeDataApiKey}
-                  canEditScopes={canMintDataApiKey}
-                />
-              )}
-            </section>
-          ) : (
-            // WITHHELD, NOT EMPTY, exactly as the officers half above. A page
-            // with no key card at all reads as a club that has never thought
-            // about the question.
-            <Card>
-              <CardHeading title="Data API keys" />
-              <p className="mt-3 text-[13px] text-[var(--mute)]">
-                Who holds a data API key is not shown to you. It needs the Data API keys
-                capability.
-              </p>
-            </Card>
-          )}
         </div>
 
         {/* RIGHT */}
@@ -735,20 +517,6 @@ export default async function AccountsPage() {
 // Presentation helpers. Nothing here decides anything — every authorisation
 // answer on this page comes from officer-access.ts or from permits().
 // ---------------------------------------------------------------------------
-
-/**
- * One embedded row from a PostgREST many-to-one join.
- *
- * PostgREST returns a many-to-one embed as an OBJECT, but supabase-js types it
- * as an ARRAY whenever the client carries no generated Database type, which
- * this one deliberately does not (see supabase-server.ts). Unwrapping rather
- * than casting blind means the row survives whichever shape arrives, instead of
- * reading `.name` off an array and rendering "undefined".
- */
-function embedded<T>(value: unknown): T | null {
-  if (Array.isArray(value)) return (value[0] as T | undefined) ?? null;
-  return (value as T | null) ?? null;
-}
 
 /**
  * The header strip of a full-bleed card in the middle column: display title,
