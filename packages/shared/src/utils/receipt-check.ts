@@ -20,7 +20,8 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { MEMBERSHIP_PAYMENTS_SETTING_KEY, parseMembershipPaymentSettings } from './membership-settings';
-import { decideAutoConfirm, parseReceiptText, type ReceiptFlag } from './receipt-read';
+import { decideAutoConfirm, orderNumbersOneOff, parseReceiptText, type ReceiptFlag } from './receipt-read';
+import { readReleaseFlags } from './release-flags';
 
 export type OcrRead = { text: string } | { error: 'timeout' | 'failed' };
 
@@ -89,6 +90,24 @@ async function clubPayee(admin: SupabaseClient): Promise<{ email: string | null;
   return { email: settings.etransferEmail, name: settings.etransferPayeeName };
 }
 
+/**
+ * An order number already used on a waiting or confirmed receipt that is one
+ * digit off this one, or null. A failed read throws, like every other read
+ * here: the receipt stays claimed and is tried again.
+ */
+async function usedOrderOneOff(admin: SupabaseClient, submissionId: string, reference: string): Promise<string | null> {
+  const { data, error } = await admin
+    .from('fee_submissions')
+    .select('reference_key')
+    .eq('method', 'sfu_rec')
+    .in('status', ['submitted', 'confirmed'])
+    .neq('id', submissionId)
+    .not('reference_key', 'is', null);
+  if (error) throw new Error(`Receipt check could not read the used order numbers: ${error.message}`);
+  const used = ((data ?? []) as { reference_key: string }[]).map((r) => r.reference_key);
+  return used.find((key) => orderNumbersOneOff(key, reference)) ?? null;
+}
+
 /** Reads one claimed receipt and settles or holds it. */
 async function checkClaimed(admin: SupabaseClient, row: Claimed, ocr: ReceiptOcr): Promise<ReceiptCheckOutcome> {
   if (!row.screenshot_path) return flag(admin, row.submission_id, 'unreadable_format');
@@ -121,6 +140,19 @@ async function checkClaimed(admin: SupabaseClient, row: Claimed, ocr: ReceiptOcr
       hash,
       method: readout.kind,
     });
+  }
+  // A second screenshot of a used receipt, read a digit off, would pass the
+  // unique index; the exact same number is the database's to catch.
+  if (decision.method === 'sfu_rec' && decision.reference && (await readReleaseFlags(admin)).near_duplicate_order) {
+    const near = await usedOrderOneOff(admin, row.submission_id, decision.reference);
+    if (near) {
+      return flag(admin, row.submission_id, 'reference_used', {
+        detail: `The order number is one digit off O-${near.toUpperCase()}, already on another receipt`,
+        reference: decision.reference,
+        hash,
+        method: decision.method,
+      });
+    }
   }
   const { data, error: confirmError } = await admin.rpc('auto_confirm_fee_submission', {
     p_submission_id: row.submission_id,

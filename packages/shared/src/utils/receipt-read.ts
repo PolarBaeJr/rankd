@@ -380,3 +380,31 @@ export function decideAutoConfirm(read: ReceiptReadout, ctx: AutoConfirmContext)
   // whose screenshot is hashed, answering 'no_reference' for any other.
   return { confirm: true, method: 'e_transfer', reference: read.reference, amountCents: read.amountCents };
 }
+
+// An SFU Rec order number as the uniqueness key holds it (fee_reference_key,
+// 00297): lower case, the "O-" gone.
+const orderKey = (reference: string) => reference.trim().toLowerCase().replace(/^#\s*/, '').replace(/^[o0]\s*-\s*/, '');
+
+/**
+ * Whether two SFU Rec order numbers are one digit apart: one dropped, added
+ * or changed. The order number is kept only so a receipt is used once (the
+ * unique index on reference_key), and a read can drop or double a repeated
+ * digit, so a second screenshot of a used receipt could pass that index under
+ * a number one digit off. The receipt check holds such a receipt for an exec.
+ * The same number is not "one off": the database answers that itself.
+ */
+export function orderNumbersOneOff(a: string, b: string): boolean {
+  const x = orderKey(a);
+  const y = orderKey(b);
+  if (x === y || Math.abs(x.length - y.length) > 1) return false;
+  if (x.length === y.length) {
+    let differ = 0;
+    for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) differ += 1;
+    return differ === 1;
+  }
+  const [short, long] = x.length < y.length ? [x, y] : [y, x];
+  for (let i = 0; i < long.length; i += 1) {
+    if (long.slice(0, i) + long.slice(i + 1) === short) return true;
+  }
+  return false;
+}

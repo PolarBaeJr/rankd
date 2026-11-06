@@ -46,6 +46,7 @@ describe('the registry', () => {
       'placings_skip_never_played',
       'add_on_the_spot',
       'quiet_refresh',
+      'near_duplicate_order',
       'ladder_doubles_points',
     ]);
   });

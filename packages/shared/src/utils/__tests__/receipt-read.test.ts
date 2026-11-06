@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { RECEIPT_FLAGS, decideAutoConfirm, namesMatch, parseReceiptText, type AutoConfirmContext } from '../receipt-read';
+import {
+  RECEIPT_FLAGS,
+  decideAutoConfirm,
+  namesMatch,
+  orderNumbersOneOff,
+  parseReceiptText,
+  type AutoConfirmContext,
+} from '../receipt-read';
 
 // EVERY VALUE BELOW IS MADE UP. The layouts copy the shape the server's OCR
 // gives for real receipts (labels on the line above their values, blank lines
@@ -321,5 +328,20 @@ describe('decideAutoConfirm', () => {
 
   it('only ever answers a flag the database accepts', () => {
     for (const [flag] of holds) expect(RECEIPT_FLAGS).toContain(flag);
+  });
+});
+
+describe('orderNumbersOneOff', () => {
+  it('matches a digit dropped, doubled or changed, with or without the O-', () => {
+    expect(orderNumbersOneOff('O-77755555', '7775555')).toBe(true);
+    expect(orderNumbersOneOff('o-4499273', 'O-44999273')).toBe(true);
+    expect(orderNumbersOneOff('O-306822', '304822')).toBe(true);
+  });
+
+  it('leaves the same number, and two digits off, alone', () => {
+    expect(orderNumbersOneOff('O-600857', '600857')).toBe(false);
+    expect(orderNumbersOneOff('O-600857', 'O-600875')).toBe(false);
+    expect(orderNumbersOneOff('O-600857', 'O-6008577')).toBe(true);
+    expect(orderNumbersOneOff('O-600857', 'O-60085777')).toBe(false);
   });
 });

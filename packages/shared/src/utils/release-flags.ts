@@ -111,6 +111,13 @@ export const RELEASE_FLAGS = [
     off: 'Off: the event page and My courts re-read every 15 seconds, and on every live update, whatever is on screen.',
     since: '1.2.0',
   },
+  {
+    id: 'near_duplicate_order',
+    label: 'Hold near-duplicate SFU Rec orders',
+    description: 'A read SFU Rec receipt whose order number is one digit off one already used is held for an exec instead of confirming itself.',
+    off: 'Off: only the exact same order number is caught; one a digit off confirms itself.',
+    since: '1.1.8',
+  },
   // Asked by the database only: 00316 (the ladder fix) reads it through
   // release_flag_on, on its own branch.
   {
