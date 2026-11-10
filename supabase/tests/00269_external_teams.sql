@@ -329,10 +329,14 @@ BEGIN
     WHERE event_id = 'cccccccc-0269-4000-8000-0000000000e1' AND external1_name = 'Elm Heron');
   -- Swap requires the incoming member on the event's waiting list, which the
   -- participants fence already refuses, so place the row behind the trigger.
+  -- 00292's deferred constraint trigger would queue an event for this insert,
+  -- and ALTER TABLE refuses to run with an event pending. Fire it at once.
+  SET CONSTRAINTS club_event_link_participant_changed IMMEDIATE;
   ALTER TABLE tournament_participants DISABLE TRIGGER tournament_participants_external_fence;
   INSERT INTO tournament_participants (event_id, player_id)
   VALUES ('cccccccc-0269-4000-8000-0000000000e1', 'cccccccc-0269-4000-8000-000000000001');
   ALTER TABLE tournament_participants ENABLE TRIGGER tournament_participants_external_fence;
+  SET CONSTRAINTS club_event_link_participant_changed DEFERRED;
 
   ok := false;
   BEGIN
