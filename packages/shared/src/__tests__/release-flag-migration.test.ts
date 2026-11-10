@@ -131,8 +131,8 @@ describe('00318: a kill switch save drafts no club change', () => {
 });
 
 describe('the down scripts', () => {
-  it('exist for 00315, 00317 and 00318', () => {
-    for (const v of ['00315', '00317', '00318']) expect(existsSync(join(ROLLBACKS_DIR, `${v}_down.sql`)), v).toBe(true);
+  it('exist for 00315, 00317, 00318, 00322 and 00323', () => {
+    for (const v of ['00315', '00317', '00318', '00322', '00323']) expect(existsSync(join(ROLLBACKS_DIR, `${v}_down.sql`)), v).toBe(true);
   });
 
   it('00315_down restates 00272, 00276 and 00309 verbatim', () => {
@@ -151,6 +151,29 @@ describe('the down scripts', () => {
     expect(down).toContain(`REVOKE ALL ON FUNCTION public.${TRIGGER}() FROM PUBLIC, anon, authenticated;`);
     expect(down).toContain("p.prosrc LIKE '%release_flag_on%'");
     expect(down).toContain('DROP FUNCTION IF EXISTS public.release_flag_on(text);');
+  });
+
+  it('00322_down restates 00317\'s club_event_desk_entry_walk_in verbatim, grants included', () => {
+    const down = rollback('00322');
+    const name = 'club_event_desk_entry_walk_in';
+    expect(lastStatement(down, name)).not.toBeNull();
+    expect(lastStatement(down, name)).toBe(lastStatement(migration('00317'), name));
+    expect(down).toContain('REVOKE ALL ON FUNCTION public.club_event_desk_entry_walk_in(uuid, uuid[]) FROM PUBLIC, anon, authenticated;');
+    expect(down).toContain('GRANT EXECUTE ON FUNCTION public.club_event_desk_entry_walk_in(uuid, uuid[]) TO service_role;');
+  });
+
+  it('00323_down restates 00233\'s purgeable_unfinished_signups verbatim, comment and grants included', () => {
+    const view = (sql: string) => {
+      const at = sql.lastIndexOf('CREATE OR REPLACE VIEW purgeable_unfinished_signups AS');
+      return at === -1 ? null : sql.slice(at, sql.indexOf(';', at) + 1);
+    };
+    const comment = (sql: string) => /COMMENT ON VIEW purgeable_unfinished_signups IS\n[^\n]*\n/.exec(sql)?.[0] ?? null;
+    const down = rollback('00323');
+    expect(view(down)).not.toBeNull();
+    expect(view(down)).toBe(view(migration('00233')));
+    expect(comment(down)).toBe(comment(migration('00233')));
+    expect(down).toContain('REVOKE ALL ON purgeable_unfinished_signups FROM PUBLIC, anon, authenticated;');
+    expect(down).toContain('GRANT SELECT ON purgeable_unfinished_signups TO service_role;');
   });
 
   it('00317_down drops the two functions 00317 created', () => {

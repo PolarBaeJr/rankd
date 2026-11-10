@@ -9,9 +9,22 @@ export const PROBE_MS = 5000;
 /** How often a refresh that had to wait asks again. */
 export const DEFER_RETRY_MS = 1000;
 
-/** True when the probe read something other than what the page shows. A failed probe (null) is no change. */
+/**
+ * True when the probe read something other than what the page shows. A failed
+ * probe (null) is unknown, and unknown counts as changed: a page whose probe
+ * keeps failing must not sit on what it showed forever.
+ */
 export function fingerprintChanged(shown: string, probed: string | null): boolean {
-  return probed !== null && probed !== shown;
+  return probed === null || probed !== shown;
+}
+
+/** How long a failed probe waits before it refreshes, so a broken probe is a slow poll rather than a refresh every PROBE_MS. */
+export const FAILED_PROBE_REFRESH_MS = 15000;
+
+/** Whether a probe result calls for a refresh now: a failed one only once FAILED_PROBE_REFRESH_MS have passed since the last. */
+export function probeRefreshDue(shown: string, probed: string | null, msSinceLastRefresh: number): boolean {
+  if (probed === null && msSinceLastRefresh < FAILED_PROBE_REFRESH_MS) return false;
+  return fingerprintChanged(shown, probed);
 }
 
 export interface ScreenState {

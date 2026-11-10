@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
   selectAllPages,
   selectAllInChunks,
+  selectPagesUpTo,
   selectInChunks,
   ROW_PAGE_SIZE,
   MAX_ROW_PAGES,
@@ -119,5 +120,58 @@ describe('selectInChunks vs selectAllInChunks', () => {
       return Promise.resolve({ data: [], error: null });
     });
     expect(batchSizes).toEqual([IN_CHUNK_SIZE, IN_CHUNK_SIZE, 5]);
+  });
+});
+
+describe('selectPagesUpTo', () => {
+  it('reads exactly the cap without calling it truncated', async () => {
+    const res = await selectPagesUpTo(server(1200).page, 1200);
+    expect(res.error).toBeNull();
+    expect(res.truncated).toBe(false);
+    expect(res.data).toHaveLength(1200);
+  });
+
+  it('says truncated when one more row than the cap matched, and returns only the cap', async () => {
+    const res = await selectPagesUpTo(server(1201).page, 1200);
+    expect(res.error).toBeNull();
+    expect(res.truncated).toBe(true);
+    expect(res.data).toHaveLength(1200);
+    expect(res.data!.at(-1)).toEqual({ i: 1199 });
+  });
+
+  it('reads past the 1,000-row server cap toward a larger one', async () => {
+    const res = await selectPagesUpTo(server(5001).page, 5000);
+    expect(res.truncated).toBe(true);
+    expect(res.data).toHaveLength(5000);
+  });
+
+  it('returns the error with the rows read before it', async () => {
+    let call = 0;
+    const res = await selectPagesUpTo<{ i: number }>((from, to) => {
+      call++;
+      if (call === 2) return Promise.resolve({ data: null, error: { message: 'page two failed' } });
+      return server(5000).page(from, to);
+    }, 5000);
+    expect(res.error?.message).toBe('page two failed');
+    expect(res.data).toHaveLength(ROW_PAGE_SIZE);
+    expect(res.truncated).toBe(false);
+  });
+
+  it('stops on a short first page', async () => {
+    const s = server(10);
+    const res = await selectPagesUpTo(s.page, 5000);
+    expect(res.data).toHaveLength(10);
+    expect(res.truncated).toBe(false);
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it('asks for consecutive inclusive ranges of the page size', async () => {
+    const s = server(ROW_PAGE_SIZE * 2 + 3);
+    await selectPagesUpTo(s.page, 5000);
+    expect(s.calls).toEqual([
+      { from: 0, to: ROW_PAGE_SIZE - 1 },
+      { from: ROW_PAGE_SIZE, to: ROW_PAGE_SIZE * 2 - 1 },
+      { from: ROW_PAGE_SIZE * 2, to: ROW_PAGE_SIZE * 3 - 1 },
+    ]);
   });
 });

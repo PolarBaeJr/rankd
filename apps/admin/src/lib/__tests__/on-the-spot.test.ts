@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotFeePath, onTheSpotMessage, singlesNeedingPartner } from '../on-the-spot';
+import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotFeePath, onTheSpotMessage, singlesNeedingPartner, walkInPlayers } from '../on-the-spot';
 
 describe('onTheSpotChecksIn', () => {
   it('checks them in from check-in until the event is completed', () => {
@@ -35,6 +35,20 @@ describe('onTheSpotFeePath', () => {
   it('on an unlinked tournament, charges the entry fee or nothing', () => {
     expect(onTheSpotFeePath(false, true)).toBe('tournament');
     expect(onTheSpotFeePath(false, false)).toBe('none');
+  });
+});
+
+describe('walkInPlayers', () => {
+  it('leaves out a partner who was signed up for the club event before the add', () => {
+    expect(walkInPlayers(['guest', 'partner'], new Set(['partner']))).toEqual(['guest']);
+  });
+
+  it('includes a guest the add just made', () => {
+    expect(walkInPlayers(['guest'], new Set())).toEqual(['guest']);
+  });
+
+  it('is empty when everybody was already signed up', () => {
+    expect(walkInPlayers(['member', 'partner'], new Set(['member', 'partner']))).toEqual([]);
   });
 });
 

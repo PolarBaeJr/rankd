@@ -12,6 +12,7 @@ import { getMembershipPayments } from './club-socials';
 import { serverReceiptOcr } from './receipt-ocr-server';
 import { assertFeatureOn } from './feature-gate';
 import { loadOwnImportEntry, settleImportEntry, settleRefusal } from './registration-import';
+import { removeUnreferencedUpload } from './fee-proof-upload';
 
 // SIGNING UP FOR A CLUB EVENT (00244). The event id is the only parameter: the
 // member is always the one requirePlayer() resolves, never a POST field. Both
@@ -77,8 +78,9 @@ export async function signUpWithReceipt(eventId: string, receipt: SignUpReceipt)
 }
 
 async function signUpWithReceiptImpl(eventId: string, receipt: SignUpReceipt): Promise<void> {
-  // The path first, before anything is removed: a crafted one may name
-  // somebody else's object.
+  // The member first, before storage is touched at all. Then the path, before
+  // anything is removed: a crafted one may name somebody else's object.
+  const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new ExpectedError('Not authenticated');
@@ -87,10 +89,9 @@ async function signUpWithReceiptImpl(eventId: string, receipt: SignUpReceipt): P
     throw new ExpectedError('That screenshot could not be attached');
   }
   const service = createServiceRoleClient();
-  const removeUpload = async () => {
-    const { error } = await service.storage.from('fee-proofs').remove([path]);
-    if (error) console.error('[events] could not remove an orphaned receipt upload:', error.message);
-  };
+  // Never a path a receipt already names: this may be a retry of one filed
+  // before, and removing it would take that receipt's screenshot.
+  const removeUpload = () => removeUnreferencedUpload(service, path, 'events');
 
   try {
     if (!isUuid(eventId)) throw new ExpectedError('That event could not be found.');
@@ -107,7 +108,6 @@ async function signUpWithReceiptImpl(eventId: string, receipt: SignUpReceipt): P
     throw err;
   }
 
-  const player = await requirePlayer();
   let fee: EventFee | null = null;
   let readFailed = false;
   try {

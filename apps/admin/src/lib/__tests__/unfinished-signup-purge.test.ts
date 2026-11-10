@@ -30,7 +30,8 @@ import { join } from 'node:path';
 const REPO = join(__dirname, '../../../../..');
 const FN = join(REPO, 'supabase/functions/purge-unfinished-signups/index.ts');
 const TWIN = join(REPO, 'supabase/functions/purge-inactive-accounts/index.ts');
-const VIEW = join(REPO, 'supabase/migrations/00233_purgeable_unfinished_signups.sql');
+// The latest definition of the view: 00323 restated 00233's with the waiver arms.
+const VIEW = join(REPO, 'supabase/migrations/00323_unfinished_signup_purge_spares_signed_waivers.sql');
 
 /** A file's executable text, with whole-line `//` or `--` comments removed. */
 function codeOnly(path: string): string {
@@ -148,6 +149,15 @@ describe('eligibility is the view and only the view', () => {
     // from "found nobody" (00064:112-119).
     expect(sql).toMatch(/NOTIFY pgrst/);
     expect(sql).toMatch(/GRANT SELECT ON purgeable_unfinished_signups TO service_role/);
+  });
+
+  it('spares anybody who has signed a waiver or an event waiver', () => {
+    // Both tables cascade from players, so deleting a stub that signed would
+    // delete the signed record too (00323). Matched by alias, because
+    // waiver_acceptances is a substring of event_waiver_acceptances.
+    const sql = codeOnly(VIEW);
+    expect(sql).toMatch(/AND NOT EXISTS \(\s*SELECT 1 FROM waiver_acceptances wa WHERE wa\.player_id = p\.id\s*\)/);
+    expect(sql).toMatch(/AND NOT EXISTS \(\s*SELECT 1 FROM event_waiver_acceptances ewa WHERE ewa\.player_id = p\.id\s*\)/);
   });
 });
 

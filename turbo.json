@@ -60,7 +60,9 @@
         // API's registration shape check against the console's builder; both
         // live outside the admin package.
         "$TURBO_ROOT$/integrations/google-forms/**",
-        "$TURBO_ROOT$/apps/data-api/src/registrations.ts"
+        "$TURBO_ROOT$/apps/data-api/src/registrations.ts",
+        // staging-snapshot-script.test.ts reads the snapshot script as text.
+        "$TURBO_ROOT$/scripts/prod-to-dev-snapshot.sh"
       ]
     },
     "lint": {},

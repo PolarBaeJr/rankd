@@ -31,6 +31,15 @@ export function onTheSpotFeePath(linked: boolean, chargeFee: boolean): OnTheSpot
 }
 
 /**
+ * Who the walk-in waiver (00317, 00322) may touch: only the players this add
+ * brought into the club event. Anybody already signed up before it, such as a
+ * partner picked from the list, keeps their own fee and sign-up.
+ */
+export function walkInPlayers(players: readonly string[], preExisting: ReadonlySet<string>): string[] {
+  return players.filter((id) => !preExisting.has(id));
+}
+
+/**
  * Players in a doubles event with no team yet, who still have to be paired
  * before a group can take them. A single in a singles event is a full entry.
  */

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse, type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
-import { ExpectedError, clubToday, selectInChunks, toCsv } from '@badminton/shared';
+import { ExpectedError, clubToday, selectInChunks, selectPagesUpTo, toCsv } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { resolveAuditWindow } from '@/lib/audit-scope';
@@ -11,7 +11,7 @@ import {
   SIGNIN_FUNCTION,
   exportFilename,
   exportHeader,
-  fetchSignIns,
+  fetchSignInsUpTo,
   isMissingFunctionError,
   mapConsoleRow,
   mapNotificationRow,
@@ -127,23 +127,31 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // column names it is there to check. Two lines, three times, is the cheaper
     // answer than a generic that has to be cast to compile.
 
-    const capped = (source: ExportSource, count: number) => {
-      if (count >= EXPORT_ROW_CAP) notices.push(truncationNoticeRow(source, revealEmails));
+    // PAGED, not one .limit(EXPORT_ROW_CAP): db-max-rows truncates a single
+    // request at 1,000 rows without an error, so a single read could never
+    // reach EXPORT_ROW_CAP and a count against it would never fire.
+    // selectPagesUpTo reads one row past the cap, so `truncated` means more
+    // rows really matched.
+    // Each source orders on (created_at, id) so a row cannot move between pages.
+    const capped = (source: ExportSource, truncated: boolean) => {
+      if (truncated) notices.push(truncationNoticeRow(source, revealEmails));
     };
 
     if (sources.includes('console')) {
       // A literal select string, never a template: PostgREST's client parses it
       // IN THE TYPE SYSTEM and can only do that for a literal.
-      let query = supabase
-        .from('audit_logs')
-        .select('id, created_at, action_type, target_type, target_id, reason, actor:players!audit_logs_actor_id_fkey(full_name)')
-        .order('created_at', { ascending: false })
-        .limit(EXPORT_ROW_CAP);
-      if (since) query = query.gte('created_at', since);
-      if (until) query = query.lt('created_at', until);
-      const { data, error } = await query;
+      const { data, error, truncated } = await selectPagesUpTo<ConsoleExportRow>((from, to) => {
+        let query = supabase
+          .from('audit_logs')
+          .select('id, created_at, action_type, target_type, target_id, reason, actor:players!audit_logs_actor_id_fkey(full_name)')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+        if (since) query = query.gte('created_at', since);
+        if (until) query = query.lt('created_at', until);
+        return query.range(from, to) as never;
+      }, EXPORT_ROW_CAP);
       if (error) throw new Error(`audit_logs: ${error.message}`);
-      const entries = (data ?? []) as unknown as ConsoleExportRow[];
+      const entries = data ?? [];
 
       // PUT A NAME ON THE ROWS THAT ARE ABOUT A PERSON, exactly as the page
       // does. `target_id` is a bare uuid against a table named only by
@@ -186,15 +194,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           ),
         );
       }
-      capped('console', entries.length);
+      capped('console', truncated);
     }
 
     if (sources.includes('signins')) {
-      const { data, error } = await fetchSignIns(supabase, {
-        from: since,
-        to: until,
-        limit: EXPORT_ROW_CAP,
-      });
+      const { data, error, truncated } = await fetchSignInsUpTo(supabase, { from: since, to: until }, EXPORT_ROW_CAP);
       if (error) {
         // The one failure that is not a failure: 00257 is applied by hand, so
         // this console runs against databases that have never heard of the
@@ -210,40 +214,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
       const entries = data ?? [];
       for (const row of entries) rows.push(mapSignInRow(row, revealEmails));
-      capped('signins', entries.length);
+      capped('signins', truncated);
     }
 
     if (sources.includes('tournaments')) {
-      let query = supabase
-        .from('tournament_audit_log')
-        .select('id, created_at, action, details, tournament_id, event_id, match_id, actor:players!tournament_audit_log_performed_by_fkey(full_name)')
-        .order('created_at', { ascending: false })
-        .limit(EXPORT_ROW_CAP);
-      if (since) query = query.gte('created_at', since);
-      if (until) query = query.lt('created_at', until);
-      const { data, error } = await query;
+      const { data, error, truncated } = await selectPagesUpTo<TournamentExportRow>((from, to) => {
+        let query = supabase
+          .from('tournament_audit_log')
+          .select('id, created_at, action, details, tournament_id, event_id, match_id, actor:players!tournament_audit_log_performed_by_fkey(full_name)')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+        if (since) query = query.gte('created_at', since);
+        if (until) query = query.lt('created_at', until);
+        return query.range(from, to) as never;
+      }, EXPORT_ROW_CAP);
       if (error) throw new Error(`tournament_audit_log: ${error.message}`);
       // An EMBED, not selectInChunks: `performed_by` has a real foreign key to
       // `players`, so PostgREST resolves the name in the same statement and the
       // query-string length problem never arises.
-      const entries = (data ?? []) as unknown as TournamentExportRow[];
+      const entries = data ?? [];
       for (const row of entries) rows.push(mapTournamentRow(row, revealEmails));
-      capped('tournaments', entries.length);
+      capped('tournaments', truncated);
     }
 
     if (sources.includes('notifications')) {
-      let query = supabase
-        .from('notifications')
-        .select('id, created_at, type, title, player_id, recipient:players!notifications_player_id_fkey(full_name)')
-        .order('created_at', { ascending: false })
-        .limit(EXPORT_ROW_CAP);
-      if (since) query = query.gte('created_at', since);
-      if (until) query = query.lt('created_at', until);
-      const { data, error } = await query;
+      const { data, error, truncated } = await selectPagesUpTo<NotificationExportRow>((from, to) => {
+        let query = supabase
+          .from('notifications')
+          .select('id, created_at, type, title, player_id, recipient:players!notifications_player_id_fkey(full_name)')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+        if (since) query = query.gte('created_at', since);
+        if (until) query = query.lt('created_at', until);
+        return query.range(from, to) as never;
+      }, EXPORT_ROW_CAP);
       if (error) throw new Error(`notifications: ${error.message}`);
-      const entries = (data ?? []) as unknown as NotificationExportRow[];
+      const entries = data ?? [];
       for (const row of entries) rows.push(mapNotificationRow(row, revealEmails));
-      capped('notifications', entries.length);
+      capped('notifications', truncated);
     }
 
     // Newest first across every source, which is the order the screen shows and

@@ -10,15 +10,24 @@
 // only the hash leaves the server.
 //
 // Each caller asks its page's own gate first; these functions ask none.
+//
+// A NULL RESULT MEANS UNKNOWN: a read failed, so nothing can be said about
+// whether the page is current. The client treats it as changed (quiet-refresh.ts,
+// probeRefreshDue), so a failing probe still refreshes, only less often.
+//
+// Every read keyed on a list of ids is chunked (the 8,192-byte request line),
+// and every one that can return many rows is paged (db-max-rows, 1,000), so a
+// big tournament cannot hash a silently short list and read as unchanged.
 
 import { createHash } from 'node:crypto';
+import { selectAllInChunks, selectInChunks } from '@badminton/shared/src/utils/query-chunks';
 import { readMyCourts } from './court-helpers';
 import type { createAdminClient } from './supabase-server';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 type Read = PromiseLike<{ data: unknown; error: { message: string } | null }>;
 
-/** Null when any read failed, so a failed probe reads as no change. */
+/** Null when any read failed: unknown, which the client reads as changed. */
 async function hashReads(reads: Read[]): Promise<string | null> {
   const results = await Promise.all(reads);
   if (results.some((r) => r.error)) return null;
@@ -46,7 +55,9 @@ export async function readEventFingerprint(client: AdminClient, tournamentId: st
     readAfter(
       client.from('tournament_matches').select('*').eq('event_id', eventId).order('id'),
       async (matches) => {
-        const notes = await client.from('tournament_match_notes').select('*').in('match_id', ids(matches)).order('match_id');
+        const notes = await selectInChunks(ids(matches), (batch) =>
+          client.from('tournament_match_notes').select('*').in('match_id', batch).order('match_id'),
+        );
         return notes.error ? notes : { data: [matches, notes.data], error: null };
       },
     ),
@@ -54,7 +65,10 @@ export async function readEventFingerprint(client: AdminClient, tournamentId: st
     client.from('registration_import_entries').select('*').eq('tournament_event_id', eventId).order('id'),
     readAfter(
       client.from('club_events').select('id').eq('tournament_event_id', eventId).order('id'),
-      (clubEvents) => client.from('club_event_signups').select('player_id, created_at').in('event_id', ids(clubEvents)).order('player_id'),
+      (clubEvents) =>
+        selectAllInChunks(ids(clubEvents), (batch, from, to) =>
+          client.from('club_event_signups').select('player_id, created_at').in('event_id', batch).order('player_id').order('created_at').range(from, to),
+        ),
     ),
     client.from('tournament_participants').select('*').eq('event_id', eventId).order('id'),
     client.from('tournament_pairs').select('*').eq('event_id', eventId).order('id'),
@@ -62,6 +76,7 @@ export async function readEventFingerprint(client: AdminClient, tournamentId: st
     client.from('tournament_category_requests').select('*').eq('event_id', eventId).order('id'),
     client.from('tournament_courts').select('*').eq('tournament_id', tournamentId).order('id'),
     client.from('tournament_court_helpers').select('*').eq('tournament_id', tournamentId).order('id'),
+    // Not paged: the live matches of one tournament are a handful at most.
     client
       .from('tournament_matches')
       .select('id, event_id, court_id, status, tournament_events!inner(tournament_id)')
@@ -82,26 +97,39 @@ export async function readMyCourtsFingerprint(client: AdminClient, playerId: str
   const tournamentIds = [...new Set(mine.map((row) => row.tournament_id))].sort();
   const helperRows = { data: mine.map((row) => `${row.tournament_id}:${row.court_id}`).sort(), error: null };
   if (tournamentIds.length === 0) return hashReads([Promise.resolve(helperRows)]);
-  const { data: events, error } = await client
-    .from('tournament_events')
-    .select('*')
-    .in('tournament_id', tournamentIds)
-    .eq('format', 'staged')
-    .order('id');
+  const { data: events, error } = await selectAllInChunks<{ id: string }>(tournamentIds, (batch, from, to) =>
+    client
+      .from('tournament_events')
+      .select('*')
+      .in('tournament_id', batch)
+      .eq('format', 'staged')
+      .order('id')
+      .range(from, to),
+  );
   if (error) return null;
-  const eventIds = (events ?? []).map((e) => e.id as string);
+  const eventIds = (events ?? []).map((e) => e.id);
   return hashReads([
     Promise.resolve(helperRows),
     Promise.resolve({ data: events, error: null }),
-    client.from('tournament_courts').select('*').in('tournament_id', tournamentIds).order('id'),
+    selectAllInChunks(tournamentIds, (batch, from, to) =>
+      client.from('tournament_courts').select('*').in('tournament_id', batch).order('id').range(from, to),
+    ),
+    // Not chunked or paged: an inner-join filter on the live matches, a
+    // handful at most, across the few tournaments this person helps at.
     client
       .from('tournament_matches')
       .select('id, event_id, court_id, status, tournament_events!inner(tournament_id)')
       .in('tournament_events.tournament_id', tournamentIds)
       .eq('status', 'live')
       .order('id'),
-    client.from('tournament_matches').select('*').in('event_id', eventIds).order('id'),
-    client.from('tournament_participants').select('*').in('event_id', eventIds).order('id'),
-    client.from('tournament_pairs').select('*').in('event_id', eventIds).order('id'),
+    selectAllInChunks(eventIds, (batch, from, to) =>
+      client.from('tournament_matches').select('*').in('event_id', batch).order('id').range(from, to),
+    ),
+    selectAllInChunks(eventIds, (batch, from, to) =>
+      client.from('tournament_participants').select('*').in('event_id', batch).order('id').range(from, to),
+    ),
+    selectAllInChunks(eventIds, (batch, from, to) =>
+      client.from('tournament_pairs').select('*').in('event_id', batch).order('id').range(from, to),
+    ),
   ]);
 }
