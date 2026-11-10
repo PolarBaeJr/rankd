@@ -10,24 +10,31 @@ name: Export public main
 #
 # Three ways in:
 #   push to deploy/docker-prod   export, check, verify, then publish to main
-#   push to release/**           a dry run, so a leak fails on the train and
-#                                not after the prod push
+#   push to any other branch     a dry run, so a leak, or a test that only
+#                                passes with private files, fails on the
+#                                commit that brought it and not at the release
 #   workflow_dispatch            a dry run, unless dispatched on the prod branch
+#
+# EVERY DRY RUN CHECKS. Until 1.2.0 a release-branch push skipped the whole run
+# when its version was already exported, so everything pushed to a train after
+# its export went unchecked: a false name match and a test reading the private
+# rollbacks sat on 1.1.8 for a week and surfaced only when 1.2.0 was new. The
+# version job now only decides between publishing a new commit and replacing
+# one; nothing is skipped.
 #
 # ONE PUBLIC COMMIT PER VERSION. Fixes added to a release after it went out
 # keep its version number (the owner's rule), so a prod push whose version is
 # already on the public branch REPLACES that version's export commit instead of
 # stacking a second one: the public history reads one commit per version, and
-# each carries that version's latest code. A release-branch dry run is skipped
-# for a version already exported. A manual run always runs.
+# each carries that version's latest code.
 #
 # Actions logs on a public repo are public. Nothing here prints file contents
 # or the personal patterns; the export reports `path:line: [category] rule id`.
 on:
   push:
-    branches:
-      - deploy/docker-prod
-      - 'release/**'
+    # Every branch but the public one this workflow writes.
+    branches-ignore:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -40,8 +47,9 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/deploy/docker-prod' }}
 
 jobs:
-  # Is this version already exported? Two small files and one ref read, so a
-  # skipped push costs seconds rather than a full export.
+  # Is this version already exported? Only reported: the publish step reads
+  # the same thing and replaces that version's commit. Every run exports and
+  # checks.
   version:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -60,8 +68,6 @@ jobs:
       # The repo is public, so reading the branch needs no credentials.
       - name: Check the public branch for this version
         id: check
-        env:
-          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           version=$(node -p "require('./package.json').version")
           branch=$(node -p "require('./.github/export/targets.json').find((t) => t.name === 'self').branch")
@@ -74,14 +80,10 @@ jobs:
             "Export of $version "*)
               if [ "$GITHUB_REF" = refs/heads/deploy/docker-prod ]; then
                 echo "$version is already exported to $branch; exporting again to replace it"
-                echo needed=true >> "$GITHUB_OUTPUT"
-              elif [ "$MANUAL" = true ]; then
-                echo "$version is already exported; running anyway because this run was started by hand"
-                echo needed=true >> "$GITHUB_OUTPUT"
               else
-                echo "$version is already exported to $branch; skipping"
-                echo needed=false >> "$GITHUB_OUTPUT"
+                echo "$version is already exported to $branch; checking this push anyway (dry run)"
               fi
+              echo needed=true >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "$branch does not hold $version yet; exporting"

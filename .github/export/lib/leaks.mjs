@@ -55,6 +55,37 @@ function excepted(compiled, path, ruleId, line) {
   );
 }
 
+const LETTER = /\p{L}/u;
+const LOWER = /\p{Ll}/u;
+const UPPER = /\p{Lu}/u;
+
+/**
+ * A personal literal fires only where it stands as a word: its edges must meet
+ * a non-letter (a digit counts, so `steven2@` still fires), the line's ends, or a camelCase seam. So `steven` is found in
+ * "Steven", "steven.example@", "stevenSmith" and "MetSteven", but not inside
+ * `closesWithLastEvent`, where it is the middle of two words and no name at
+ * all. An edge of the literal that is itself punctuation needs no boundary.
+ *
+ * Fails closed: if lowercasing changed the line's length, so positions in
+ * `lower` no longer map onto `line`, any occurrence fires.
+ */
+export function literalHit(line, lower, literal) {
+  if (lower.length !== line.length) return lower.includes(literal);
+  const startsWord = LETTER.test(literal[0]);
+  const endsWord = LETTER.test(literal[literal.length - 1]);
+  for (let at = lower.indexOf(literal); at !== -1; at = lower.indexOf(literal, at + 1)) {
+    const end = at + literal.length;
+    const before = line[at - 1];
+    const after = line[end];
+    const leftOk = !startsWord || before === undefined || !LETTER.test(before)
+      || (LOWER.test(before) && UPPER.test(line[at]));
+    const rightOk = !endsWord || after === undefined || !LETTER.test(after)
+      || (LOWER.test(line[end - 1]) && UPPER.test(after));
+    if (leftOk && rightOk) return true;
+  }
+  return false;
+}
+
 /** Rules that fire on one line of one file, after exceptions. */
 export function lineHits(compiled, path, line) {
   const hits = [];
@@ -62,7 +93,7 @@ export function lineHits(compiled, path, line) {
   for (const rule of compiled.rules) {
     if (rule.only && !rule.only.some((re) => re.test(path))) continue;
     if (rule.skip?.some((re) => re.test(path))) continue;
-    const fired = rule.literal !== undefined ? lower.includes(rule.literal) : rule.re.test(line);
+    const fired = rule.literal !== undefined ? literalHit(line, lower, rule.literal) : rule.re.test(line);
     if (fired && !excepted(compiled, path, rule.id, line)) hits.push(rule);
   }
   for (const m of line.matchAll(EMAIL)) {
@@ -107,7 +138,8 @@ export function formatFinding(f) {
 }
 
 /**
- * Reads the personal patterns: newline-separated, case-insensitive literals.
+ * Reads the personal patterns: newline-separated, case-insensitive literals,
+ * matched as whole words (literalHit).
  * Blank lines are ignored, so a value made only of whitespace counts as unset.
  */
 export function parsePatterns(text) {

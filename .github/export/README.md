@@ -42,7 +42,9 @@ anything but an earlier export commit.
    - `brand`: anything the brand map missed;
    - `email`: any address outside the reserved example domains;
    - `personal`: the literals in the `EXPORT_LEAK_PATTERNS` secret,
-     case-insensitive;
+     case-insensitive and matched as whole words: a literal must meet a
+     non-letter, a line end or a camelCase seam at each edge, so a name spelled
+     across two words of an identifier (`LastEvent`) is not a hit;
    - `warn` rules report without failing.
 
    Exceptions in `leak-rules.json` name a path glob, a rule id and, ideally, a
@@ -54,7 +56,12 @@ names its position in the pattern list (`personal-3`), not the value.
 
 ## Dry run
 
-From the repo root, with Node 24, into any empty directory outside the repo:
+CI dry-runs every push to every branch but `main` (export-main.yml), with the
+personal patterns and `--verify`'s checks, so a leak or a test that needs a
+private file fails on the commit that brought it. A failure there never holds
+up a deploy; it only means the next publish would fail.
+
+By hand, from the repo root, with Node 24, into any empty directory outside the repo:
 
 ```sh
 node --test '.github/export/test/*.test.mjs'

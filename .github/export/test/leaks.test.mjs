@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { compileRules, emailDomainAllowed, formatFinding, lineHits, parsePatterns, scan } from '../lib/leaks.mjs';
+import { compileRules, emailDomainAllowed, formatFinding, lineHits, literalHit, parsePatterns, scan } from '../lib/leaks.mjs';
 
 const config = JSON.parse(readFileSync(new URL('../leak-rules.json', import.meta.url), 'utf8'));
 const FORMAT = /^[^:]+:\d+: \[[a-z-]+\] rule [\w-]+$/;
@@ -112,4 +112,25 @@ test('blank and whitespace-only pattern text parses to nothing', () => {
   assert.deepEqual(parsePatterns(undefined), []);
   assert.deepEqual(parsePatterns(''), []);
   assert.deepEqual(parsePatterns(' \n\t\n'), []);
+});
+
+test('a personal literal fires only where it stands as a word', () => {
+  const hit = (line, literal) => literalHit(line, line.toLowerCase(), literal);
+  // The 1.2.0 false positive: a name spelled across two words of an identifier.
+  assert.equal(hit('closesWithLastEvent(status)', 'steven'), false);
+  assert.equal(hit('closeTournamentAfterLastEvent', 'steven'), false);
+  assert.equal(hit('the forest event', 'steven'), false);
+  // Real uses still fire: on its own, in an address, at a camelCase seam, at the ends.
+  assert.equal(hit('met Steven at the desk', 'steven'), true);
+  assert.equal(hit('STEVEN', 'steven'), true);
+  assert.equal(hit('steven.example@example.org', 'steven'), true);
+  assert.equal(hit('const stevenSmith = 1', 'steven'), true);
+  assert.equal(hit('askedSteven()', 'steven'), true);
+  assert.equal(hit('steven_2', 'steven'), true);
+  assert.equal(hit('steven2@example.org', 'steven'), true);
+  // A literal that is an address or has punctuation at its edges.
+  assert.equal(hit('mail jo.example@example.org now', 'jo.example@example.org'), true);
+  assert.equal(hit('see @handle1', '@handle1'), true);
+  // A second occurrence that is a word still fires after one that is not.
+  assert.equal(hit('LastEvent then Steven', 'steven'), true);
 });
