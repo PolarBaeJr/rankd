@@ -128,7 +128,10 @@ describe('00318: a kill switch save drafts no club change', () => {
   });
 });
 
-describe('the down scripts', () => {
+// supabase/rollbacks is private: the public export leaves it out (the last test
+// here pins that), and its verify step runs this suite on the exported tree.
+// Skipped there, run everywhere else.
+describe.skipIf(!existsSync(ROLLBACKS_DIR))('the down scripts', () => {
   it('exist for 00315, 00317, 00318, 00322 and 00323', () => {
     for (const v of ['00315', '00317', '00318', '00322', '00323']) expect(existsSync(join(ROLLBACKS_DIR, `${v}_down.sql`)), v).toBe(true);
   });
