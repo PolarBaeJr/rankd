@@ -27,7 +27,7 @@ import {
 } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings, type TournamentBonusSettings } from '../platform-settings';
-import { closesWithLastEvent } from '../tournament-close';
+import { closesWithFinalEvent } from '../tournament-close';
 import { releaseFlagOn } from '../release-flags';
 import {
   requireCapability,
@@ -1279,7 +1279,7 @@ export async function finalizeEventAction(eventId: string): Promise<ActionResult
     } finally {
       // In finally: a finalise that completed the event and then reported a
       // held follow-up failure has still finished it.
-      await closeTournamentAfterLastEvent(eventId);
+      await closeTournamentAfterFinalEvent(eventId);
     }
   });
 }
@@ -1292,7 +1292,7 @@ export async function finalizeEventAction(eventId: string): Promise<ActionResult
  * finalise has already happened, and an actor without the tournament status
  * key is refused by that write and the tournament simply stays open.
  */
-async function closeTournamentAfterLastEvent(eventId: string): Promise<void> {
+async function closeTournamentAfterFinalEvent(eventId: string): Promise<void> {
   try {
     // Kill switch auto_close_tournament: off, the tournament stays open until
     // somebody presses Mark Completed, as before.
@@ -1308,7 +1308,7 @@ async function closeTournamentAfterLastEvent(eventId: string): Promise<void> {
     ]);
     if (tournamentRes.error) throw new Error(tournamentRes.error.message);
     if (eventsRes.error) throw new Error(eventsRes.error.message);
-    if (!closesWithLastEvent(tournamentRes.data?.status, (eventsRes.data ?? []).map((e) => e.status as string))) return;
+    if (!closesWithFinalEvent(tournamentRes.data?.status, (eventsRes.data ?? []).map((e) => e.status as string))) return;
     const { updateTournamentStatus } = await import('../actions/tournaments');
     await updateTournamentStatus(event.tournament_id, 'completed');
   } catch (err) {
