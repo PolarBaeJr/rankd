@@ -92,3 +92,48 @@ jobs:
       # it on an arm64 runner with its pinned toolchain, so it is left out here.
       - name: type-check, lint, test
         run: npx turbo run type-check lint test --continue --filter=!data-api-rs
+
+  # Applies every migration to an empty database and runs supabase/tests
+  # against it. This is the only check that executes SQL: elsewhere the
+  # migrations, their DO $verify$ blocks and the test harnesses are only read
+  # as text. A separate job, so it runs beside `checks` instead of adding to its
+  # wall clock, and so `checks` keeps the status-check name branch protection
+  # matches. It needs no secrets: the password below is for a throwaway
+  # container that lives as long as the job.
+  migrations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    services:
+      db:
+        # The image the stacks run. Plain postgres lacks the roles, the auth
+        # schema and the extensions the migrations assume.
+        image: public.ecr.aws/supabase/postgres:17.6.1.167
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -h localhost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The image's init scripts keep running for a moment after pg_isready
+      # first answers, so wait until the postgres role can actually log in.
+      - name: Wait for the database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for attempt in $(seq 1 60); do
+            psql -X -h 127.0.0.1 -U postgres -d postgres -tAc 'SELECT 1' >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "database never accepted a login" >&2
+          exit 1
+
+      - name: Apply migrations from zero, run supabase/tests
+        run: .github/ci/migrations-from-zero.sh
