@@ -8,6 +8,7 @@ import { assertFeatureOn } from '../feature-gate';
 import { fileFeeSubmission } from '../fee-submission-core';
 import { checkSubmission } from '@badminton/shared/src/utils/receipt-check';
 import { serverReceiptOcr } from '../receipt-ocr-server';
+import { removeUnreferencedUpload } from '../fee-proof-upload';
 import { requirePlayer, runAction, type ActionResult } from './_shared';
 
 // A MEMBER SENDS A PAYMENT RECEIPT (00248, 00253).
@@ -33,8 +34,7 @@ export async function submitFeeSubmission(input: FeeSubmissionInput): Promise<Ac
 
 async function removeUpload(path: string | null) {
   if (!path) return;
-  const { error } = await createServiceRoleClient().storage.from('fee-proofs').remove([path]);
-  if (error) console.error('[membership] could not remove an orphaned receipt upload:', error.message);
+  await removeUnreferencedUpload(createServiceRoleClient(), path, 'membership');
 }
 
 async function submitFeeSubmissionImpl(input: FeeSubmissionInput): Promise<void> {

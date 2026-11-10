@@ -47,6 +47,7 @@
 // path.
 import { CLUB_TIMEZONE } from '@badminton/shared/src/utils/constants';
 import { CLUB_PERMANENT_OFFSET_FROM } from '@badminton/shared/src/utils/session-window';
+import { selectPagesUpTo, type ChunkResult } from '@badminton/shared/src/utils/query-chunks';
 import { actionLabel, entryKind, isDegradedEntry } from './audit-log-view';
 // TYPE-ONLY, and it has to stay that way. supabase-server.ts reaches for
 // next/headers and the passkey cookie machinery at import time; a value import
@@ -519,13 +520,13 @@ export const SIGNIN_FUNCTION = 'export_auth_signins';
 /**
  * Call 00257's function.
  *
- * THE ONLY PLACE THE CAST LIVES. Two callers need these rows (the download
- * builds the file from them, and the page probes with a limit of one to find
- * out whether the migration is applied) and `supabase.rpc('export_auth_signins',
+ * WHY A CAST AT ALL. The audit page probes with a limit of one to find out
+ * whether the migration is applied, and `supabase.rpc('export_auth_signins',
  * …)` fails type-check on the FUNCTION NAME argument, not merely on the return
- * value, so an `as SignInRow[]` at each site would not compile either one. One
- * wrapper, one cast, two callers, and one place to delete when
- * database.gen.ts is regenerated after the owner applies 00257.
+ * value, so an `as SignInRow[]` at the call site would not compile. The
+ * download reads through fetchSignInsUpTo below, which carries the only other
+ * cast. Both go when database.gen.ts is regenerated after the owner applies
+ * 00257.
  */
 export async function fetchSignIns(
   client: ReturnType<typeof createAdminClient>,
@@ -542,4 +543,36 @@ export async function fetchSignIns(
     p_to: window.to,
     p_limit: window.limit,
   });
+}
+
+/**
+ * The download's read of 00257's function: up to `maxRows` rows, paged, and
+ * whether more matched. A single call is cut at db-max-rows (1,000) without an
+ * error, whatever p_limit says, so the file would stop there and never say so.
+ * p_limit is one past the cap so a truncated window is visible; PostgREST
+ * orders and ranges the function's result, on (occurred_at, entry_id) so a row
+ * cannot move between pages. The second cast in this file, for the same reason
+ * as fetchSignIns' and with the builder methods the paging needs.
+ */
+export async function fetchSignInsUpTo(
+  client: ReturnType<typeof createAdminClient>,
+  window: { from: string | null; to: string | null },
+  maxRows: number,
+): Promise<{ data: SignInRow[] | null; error: QueryError | null; truncated: boolean }> {
+  interface SignInQuery {
+    order(column: string, options: { ascending: boolean }): SignInQuery;
+    range(from: number, to: number): PromiseLike<ChunkResult<SignInRow>>;
+  }
+  const untyped = client as unknown as {
+    rpc(fn: string, args: Record<string, unknown>): SignInQuery;
+  };
+  return selectPagesUpTo<SignInRow>(
+    (from, to) =>
+      untyped
+        .rpc(SIGNIN_FUNCTION, { p_from: window.from, p_to: window.to, p_limit: maxRows + 1 })
+        .order('occurred_at', { ascending: false })
+        .order('entry_id', { ascending: false })
+        .range(from, to),
+    maxRows,
+  );
 }

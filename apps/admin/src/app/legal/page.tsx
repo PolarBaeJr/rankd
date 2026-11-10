@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { sortLegalDocuments, getMissingLegalDocuments } from '@badminton/shared';
+import { sortLegalDocuments, getMissingLegalDocuments, selectAllPages, unwrap } from '@badminton/shared';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { LegalConsole, type DocumentSignatures, type LegalDocumentRow } from './legal-documents-form';
 import { EventWaiverTemplateForm } from './event-waiver-template-form';
@@ -70,26 +70,28 @@ export default async function LegalPage() {
   let signatures: Record<string, DocumentSignatures> | null = null;
   let activeMemberCount: number | null = null;
   if (canReadRoster) {
-    const { data: roster } = await adminClient
-      .from('players')
-      .select('id, full_name, avatar_url, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
-      .eq('active_flag', true)
-      // 00132. A stub created at first sign-in is active_flag = TRUE and has no
-      // acceptances, so without this it would land in activeMemberCount AND in
-      // the non-compliant list — inflating the denominator of "all N active
-      // members are gated" with people who have not been asked to sign anything
-      // yet. Onboarding is where the waiver is collected; somebody who has not
-      // reached the end of it is not out of compliance.
-      .or('onboarding_completed.is.true,user_id.is.null')
-      .order('full_name')
-      // An EXPLICIT ceiling rather than PostgREST's implicit one. activeMemberCount
-      // is counted from these rows and is the number in "all N active members are
-      // gated" — the loudest sentence on the screen — so it must not be silently
-      // truncated by a default nobody set here. The club is two orders of
-      // magnitude under this.
-      .limit(2000);
-
-    const members = roster ?? [];
+    // PAGED, and a failed read throws. activeMemberCount is counted from these
+    // rows and is the number in "all N active members are gated", the loudest
+    // sentence on the screen, so it must not be silently cut at db-max-rows
+    // (1,000) or turned into 0 by a read that failed.
+    const members = unwrap(
+      await selectAllPages((from, to) =>
+        adminClient
+          .from('players')
+          .select('id, full_name, avatar_url, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
+          .eq('active_flag', true)
+          // 00132. A stub created at first sign-in is active_flag = TRUE and has no
+          // acceptances, so without this it would land in activeMemberCount AND in
+          // the non-compliant list, inflating the denominator of "all N active
+          // members are gated" with people who have not been asked to sign anything
+          // yet. Onboarding is where the waiver is collected; somebody who has not
+          // reached the end of it is not out of compliance.
+          .or('onboarding_completed.is.true,user_id.is.null')
+          .order('full_name')
+          .order('id')
+          .range(from, to),
+      ),
+    );
     activeMemberCount = members.length;
     const now = new Date();
     signatures = {};

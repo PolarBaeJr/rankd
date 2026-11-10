@@ -7,6 +7,7 @@ import {
   getMissingLegalDocuments,
   getWinRate,
   unwrap,
+  selectAllPages,
   parsePrivilegeClaimReview,
   hasPrivilegeClaimReview,
   parseEloReview,
@@ -180,13 +181,19 @@ export default async function PlayersPage({
   // NO FILTER in the query. The roster is the union of the ticked views (see
   // RosterViewMenu), and a union of nine predicates, two of them nested ors, is
   // clearer as the same JS predicates the counts below already use than as one
-  // PostgREST .or(). The cap matches the count query's, so the list cannot hold
-  // fewer people than its own counts claim.
-  const query = supabase
-    .from('players')
-    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_guest, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
-    .order('created_at', { ascending: false })
-    .limit(5000);
+  // PostgREST .or(). PAGED, as the count query is: a single request is cut at
+  // db-max-rows (1,000) without an error, whatever its .limit(), and the counts
+  // below would agree with the short list. Ordered on a unique key as well, so a
+  // row cannot move between pages.
+  const readRoster = () =>
+    selectAllPages((from, to) =>
+      supabase
+        .from('players')
+        .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_guest, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(from, to),
+    );
 
   // ?search= only seeds the box now — the filtering itself is client-side over
   // the rows below, so it costs no round trip per keystroke and cannot show a
@@ -196,7 +203,7 @@ export default async function PlayersPage({
   // component reaches the RSC payload whether or not it is drawn, so the whole
   // point of withholding the roster would be lost by rendering it conditionally
   // after awaiting it. Same rule the five fetches on /fees follow.
-  const players = canRead ? unwrap(await query) : [];
+  const players = canRead ? unwrap(await readRoster()) : [];
 
   // Current legal-document versions — a player's waiver status is "accepted"
   // only when they've accepted the current version of every document AND the
@@ -219,16 +226,22 @@ export default async function PlayersPage({
   // Behind players.read like the list itself: it is every member's name, email
   // and avatar, which is the roster by another route. The counts it feeds all
   // collapse to 0 on an empty list, and nothing renders them without the read.
-  const { data: countRows } = canRead
-    ? await supabase
-        .from('players')
-        .select(
-          'id, full_name, handle, email, avatar_url, user_id, status, is_guest, is_banned, active_flag, onboarding_completed, privilege_claim_review',
-        )
-        .order('full_name')
-        .limit(5000)
-    : { data: null };
-  const forCount = countRows ?? [];
+  // Paged like the roster, and a failed read throws: a short list here is a
+  // wrong headcount on every tab.
+  const forCount = canRead
+    ? unwrap(
+        await selectAllPages((from, to) =>
+          supabase
+            .from('players')
+            .select(
+              'id, full_name, handle, email, avatar_url, user_id, status, is_guest, is_banned, active_flag, onboarding_completed, privilege_claim_review',
+            )
+            .order('full_name')
+            .order('id')
+            .range(from, to),
+        ),
+      )
+    : [];
   // 00132. Somebody who signed in and never finished setup: a real person with a
   // proved address, no name and no waiver. They are NOT a member of the club yet,
   // and the point of this predicate is that every headcount below can say so.
@@ -638,10 +651,10 @@ export default async function PlayersPage({
             {/* Merge candidates come from the count query, which already loads
                 every player — no extra round-trip just to populate the picker.
                 It needs the roster read as well as the merge capability: with
-                no countRows there is nobody to pick between. */}
+                no forCount rows there is nobody to pick between. */}
             {canMerge && canRead && (
               <MergePlayersButton
-                players={(countRows ?? []).map((p) => ({
+                players={forCount.map((p) => ({
                   id: p.id,
                   // Unfinished signups stay IN the picker, named rather than
                   // hidden — an unlabelled blank row in a merge dialog is the

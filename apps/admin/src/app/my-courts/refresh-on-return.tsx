@@ -7,8 +7,8 @@ import {
   DEFER_RETRY_MS,
   PROBE_MS,
   QUIET_REFRESH_EVENT,
-  fingerprintChanged,
   mayRefreshNow,
+  probeRefreshDue,
   readScreenState,
 } from '@/lib/quiet-refresh';
 
@@ -104,7 +104,7 @@ export function RefreshOnReturn({ quiet }: { quiet?: { probe: string; fingerprin
       }
       probing = false;
       if (stopped) return;
-      if (fingerprintChanged(shownRef.current, probed)) {
+      if (probeRefreshDue(shownRef.current, probed, Date.now() - lastRef.current)) {
         due = true;
         flush();
       } else if (again) {

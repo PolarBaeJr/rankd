@@ -7,7 +7,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
-import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotFeePath } from '../on-the-spot';
+import { onTheSpotCheckInLocked, onTheSpotChecksIn, onTheSpotFeePath, walkInPlayers } from '../on-the-spot';
 import { assertEventWaiverSigned, requireCapability, revalidateEventPaths } from './_internal';
 import {
   addPairCore,
@@ -76,6 +76,21 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
   const feePath = onTheSpotFeePath(linkedClub != null, input.chargeFee);
   const flags: EntryCoreFlags = { lateSolo: true, chargeFee: feePath === 'tournament' };
 
+  // Who is in the club event before this add, read before anything is written.
+  // The walk-in waiver must not reach them: it would delete a fee they owe or
+  // sent a receipt for, and the receipt with it. Not atomic with the add, which
+  // is fine at desk concurrency; 00322's guard on receipts is the backstop.
+  const preExisting = new Set<string>();
+  const knownIds = [input.playerId, input.partnerId].filter((id): id is string => !!id);
+  if (feePath === 'club_waived' && linkedClub && knownIds.length > 0) {
+    const { data: signedUp, error: signedUpError } = await adminClient.from('club_event_signups')
+      .select('player_id')
+      .eq('event_id', linkedClub.id)
+      .in('player_id', knownIds);
+    if (signedUpError) throw new Error(`Could not read who is already signed up for the club event: ${signedUpError.message}`);
+    for (const row of signedUp ?? []) preExisting.add(row.player_id);
+  }
+
   let playerId = input.playerId ?? null;
   if (!playerId) {
     const { data: made, error: guestError } = await adminClient.rpc('create_desk_guest' as never, {
@@ -88,6 +103,7 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
   }
 
   const players = input.partnerId ? [playerId, input.partnerId] : [playerId];
+  const newlyAdded = walkInPlayers(players, preExisting);
   if (input.partnerId) await addPairCore(event.id, playerId, input.partnerId, undefined, flags);
   else await addParticipantCore(event.id, playerId, undefined, flags);
 
@@ -124,10 +140,10 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
     : [{ id: playerId, name: entry.player?.full_name ?? input.guestName ?? 'This player' }];
   const name = members.map((m) => m.name).join(' / ');
 
-  if (feePath === 'club_waived') {
+  if (feePath === 'club_waived' && newlyAdded.length > 0) {
     const { error: waiveError } = await adminClient.rpc('club_event_desk_entry_walk_in' as never, {
       p_tournament_event_id: event.id,
-      p_player_ids: players,
+      p_player_ids: newlyAdded,
     } as never);
     // Reported, not swallowed: they are in, but owe a fee the desk said to leave off.
     if (waiveError) throw new Error(`They were added, but the club-event fee could not be left off: ${waiveError.message}. Waive it from the fees page.`);
@@ -164,6 +180,7 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
     details: {
       entry_id: entry.id,
       player_ids: players,
+      waived_player_ids: feePath === 'club_waived' ? newlyAdded : [],
       guest_made: !input.playerId,
       fee_charged: feePath === 'club' || feePath === 'tournament',
       fee_path: feePath,
