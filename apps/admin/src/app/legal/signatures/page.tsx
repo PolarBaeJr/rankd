@@ -4,7 +4,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { buildMemberSignatureRows, matchesSignatureSearch, type SignatureMemberInput } from '@/lib/legal-signatures';
 import { Badge, Input, PageHeader } from '@badminton/ui';
-import { clubDate, LEGAL_DOCUMENT_SHORT_LABELS, sortLegalDocuments, type WaiverDocument } from '@badminton/shared';
+import { clubDate, LEGAL_DOCUMENT_SHORT_LABELS, selectAllPages, sortLegalDocuments, unwrap, type WaiverDocument } from '@badminton/shared';
 
 // WHICH VERSION OF EACH DOCUMENT EVERY ACTIVE MEMBER LAST SIGNED. Read-only.
 //
@@ -34,29 +34,36 @@ export default async function MemberSignaturesPage({
   const [documentsRead, membersRead] = await Promise.all([
     admin.from('legal_documents').select('document, version, reacceptance_required_since'),
     canReadRoster
-      ? admin
-          .from('players')
-          .select('id, full_name, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
-          .eq('active_flag', true)
-          // Same population as the signature panel on /legal: a stub that has
-          // not finished onboarding has not been asked to sign anything yet.
-          .or('onboarding_completed.is.true,user_id.is.null')
-          .order('full_name')
-          .limit(2000)
+      ? // PAGED: a single request is cut at db-max-rows (1,000) without an
+        // error, so a long roster would quietly lose its tail.
+        selectAllPages((from, to) =>
+          admin
+            .from('players')
+            .select('id, full_name, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
+            .eq('active_flag', true)
+            // Same population as the signature panel on /legal: a stub that has
+            // not finished onboarding has not been asked to sign anything yet.
+            .or('onboarding_completed.is.true,user_id.is.null')
+            .order('full_name')
+            .order('id')
+            .range(from, to),
+        )
       : Promise.resolve({ data: [], error: null }),
   ]);
   // A failed PostgREST read arrives as an empty list unless it is looked at,
   // and "nobody has signed" is exactly the wrong thing to show instead.
   if (documentsRead.error)
     console.error('[legal/signatures] could not read the documents:', documentsRead.error.message);
-  if (membersRead.error) console.error('[legal/signatures] could not read the members:', membersRead.error.message);
-  const errors = [documentsRead.error, membersRead.error].filter((e) => e !== null);
+  // A failed members read throws: paged, it would still hand back the rows
+  // read before the failure, and the header would count a partial roster.
+  const members = unwrap(membersRead);
+  const errors = [documentsRead.error].filter((e) => e !== null);
 
   const docs = sortLegalDocuments(documentsRead.data ?? []);
   // Filtered in memory rather than in the query: a version filter on the
   // embedded waiver_acceptances would drop the embedded rows it did not match
-  // and corrupt "last signed", and the roster is far under the 2000 ceiling.
-  const rows = buildMemberSignatureRows(docs, (membersRead.data ?? []) as SignatureMemberInput[], new Date()).filter(
+  // and corrupt "last signed". The whole roster is read, a page at a time.
+  const rows = buildMemberSignatureRows(docs, members as SignatureMemberInput[], new Date()).filter(
     (r) => matchesSignatureSearch(r, q)
   );
 

@@ -17,6 +17,11 @@ const state = {
   removed: [] as string[][],
   fileError: null as Error | null,
   filed: [] as Record<string, unknown>[],
+  // The guarded removal (fee-proof-upload.ts) reads both receipt tables first.
+  referenced: { fee_submissions: false, registration_import_receipts: false } as Record<string, boolean>,
+  readError: { fee_submissions: false, registration_import_receipts: false } as Record<string, boolean>,
+  storageCalls: 0,
+  playerRefused: false,
 };
 
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
@@ -42,7 +47,10 @@ vi.mock('../actions/_shared', async () => {
   const shared = await vi.importActual<typeof import('../actions/_shared')>('../actions/_shared');
   return {
     runAction: shared.runAction,
-    requirePlayer: vi.fn(async () => state.player),
+    requirePlayer: vi.fn(async () => {
+      if (state.playerRefused) throw new Error('Not authenticated');
+      return state.player;
+    }),
     assertCurrentWaiver: vi.fn(async () => {}),
   };
 });
@@ -55,6 +63,10 @@ vi.mock('../supabase-server', () => ({
       const chain = {
         select: () => chain,
         eq: () => chain,
+        limit: async () => {
+          if (state.readError[table]) return { data: null, error: { message: `${table} read failed` } };
+          return { data: state.referenced[table] ? [{ id: `${table}-row` }] : [], error: null };
+        },
         maybeSingle: async () =>
           table === 'club_events'
             ? { data: { cost_cents: state.costCents }, error: null }
@@ -73,6 +85,7 @@ vi.mock('../supabase-server', () => ({
     storage: {
       from: () => ({
         remove: async (paths: string[]) => {
+          state.storageCalls++;
           state.removed.push(paths);
           return { error: null };
         },
@@ -94,6 +107,10 @@ beforeEach(() => {
   state.removed = [];
   state.fileError = null;
   state.filed = [];
+  state.referenced = { fee_submissions: false, registration_import_receipts: false };
+  state.readError = { fee_submissions: false, registration_import_receipts: false };
+  state.storageCalls = 0;
+  state.playerRefused = false;
 });
 
 describe('signUpForClubEvent on a paid event', () => {
@@ -132,6 +149,13 @@ describe('signUpWithReceipt', () => {
     expect(state.removed).toEqual([]);
   });
 
+  it('removes the upload when there is no fee to file it against', async () => {
+    state.player = { ...state.player, is_exec: true };
+    expect(await signUpWithReceipt(EVENT, RECEIPT)).toMatchObject({ ok: true });
+    expect(state.filed).toEqual([]);
+    expect(state.removed).toEqual([[RECEIPT.screenshotPath]]);
+  });
+
   it('takes the sign-up back and removes the upload when the receipt is refused', async () => {
     const { ExpectedError } = await import('@badminton/shared');
     state.fileError = new ExpectedError('You already have a submission waiting for this fee.');
@@ -153,5 +177,56 @@ describe('signUpWithReceipt', () => {
     expect(result.ok).toBe(false);
     expect(called('club_event_sign_up')).toBe(0);
     expect(state.removed).toEqual([[RECEIPT.screenshotPath]]);
+  });
+
+  it('never removes a path a receipt already names, in any branch', async () => {
+    const { ExpectedError } = await import('@badminton/shared');
+    for (const table of ['fee_submissions', 'registration_import_receipts']) {
+      // The reference refused, before the sign-up.
+      state.referenced = { fee_submissions: false, registration_import_receipts: false, [table]: true };
+      state.removed = [];
+      expect((await signUpWithReceipt(EVENT, { ...RECEIPT, reference: 'x' })).ok, table).toBe(false);
+      expect(state.removed, `${table}: refused reference`).toEqual([]);
+
+      // No fee to file against (an exec, whom the trigger does not charge).
+      state.player = { ...state.player, is_exec: true };
+      expect((await signUpWithReceipt(EVENT, RECEIPT)).ok, table).toBe(true);
+      expect(called('club_event_sign_up'), table).toBeGreaterThan(0);
+      expect(state.removed, `${table}: no fee`).toEqual([]);
+      state.player = { ...state.player, is_exec: false };
+
+      // The receipt refused, the sign-up taken back.
+      state.fee = null;
+      state.fileError = new ExpectedError('You already have a submission waiting for this fee.');
+      expect((await signUpWithReceipt(EVENT, RECEIPT)).ok, table).toBe(false);
+      expect(state.removed, `${table}: failed filing`).toEqual([]);
+      state.fileError = null;
+    }
+  });
+
+  it('keeps the file when it cannot read whether a receipt names it', async () => {
+    for (const table of ['fee_submissions', 'registration_import_receipts']) {
+      state.readError = { fee_submissions: false, registration_import_receipts: false, [table]: true };
+      state.removed = [];
+      expect((await signUpWithReceipt(EVENT, { ...RECEIPT, reference: 'x' })).ok).toBe(false);
+      expect(state.removed, table).toEqual([]);
+    }
+  });
+
+  it('keeps an already-filed path when the event id is not one', async () => {
+    state.referenced = { fee_submissions: true, registration_import_receipts: false };
+    const result = await signUpWithReceipt('not-a-uuid', RECEIPT);
+    expect(result.ok).toBe(false);
+    expect(called('club_event_sign_up')).toBe(0);
+    expect(state.removed).toEqual([]);
+  });
+
+  it('touches no storage when there is no signed-in member', async () => {
+    state.playerRefused = true;
+    const result = await signUpWithReceipt(EVENT, RECEIPT);
+    expect(result.ok).toBe(false);
+    expect(state.storageCalls).toBe(0);
+    expect(state.removed).toEqual([]);
+    expect(called('club_event_sign_up')).toBe(0);
   });
 });

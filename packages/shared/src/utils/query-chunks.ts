@@ -214,6 +214,47 @@ export async function selectAllPages<T>(
 }
 
 /**
+ * At most `maxRows` rows of a query, fetched a page at a time, and whether more
+ * matched. For a read that is capped on purpose, such as an export: a single
+ * `.limit(maxRows)` cannot ask for more than db-max-rows, so a cap above it is
+ * quietly the server's cap instead, and a "truncated" check against maxRows can
+ * never fire.
+ *
+ * Reads until a short page or until MORE than maxRows have arrived, so
+ * `truncated` means a row past the cap really exists. Errors come back with the
+ * rows read so far, for the reason selectAllPages gives. Order the query on a
+ * unique key, or a row can move between pages.
+ */
+export async function selectPagesUpTo<T>(
+  run: (from: number, to: number) => PromiseLike<ChunkResult<T>>,
+  maxRows: number,
+  pageSize: number = ROW_PAGE_SIZE,
+): Promise<ChunkResult<T> & { truncated: boolean }> {
+  const rows: T[] = [];
+  for (let page = 0; page < MAX_ROW_PAGES; page++) {
+    const from = page * pageSize;
+    const res = await run(from, from + pageSize - 1);
+    if (res.error) return { data: rows, error: res.error, truncated: false };
+    const batch = res.data ?? [];
+    for (const row of batch) rows.push(row);
+    if (batch.length < pageSize || rows.length > maxRows) {
+      return { data: rows.slice(0, maxRows), error: null, truncated: rows.length > maxRows };
+    }
+  }
+  return {
+    data: rows.slice(0, maxRows),
+    error: {
+      message:
+        `Stopped after ${MAX_ROW_PAGES} pages of ${pageSize} rows. The query matched more rows ` +
+        'than any read in this app should, so the result is being reported as an error rather ' +
+        'than returned as a silently short list.',
+      code: 'PAGE_LIMIT',
+    },
+    truncated: rows.length > maxRows,
+  };
+}
+
+/**
  * The two limits composed: chunk the ids so the request line stays legal, and
  * page WITHIN each chunk so db-max-rows cannot truncate it. This is the helper
  * a one-to-many `.in()` read wants; selectInChunks alone is only correct when

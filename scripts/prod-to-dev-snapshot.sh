@@ -9,8 +9,8 @@
 # postgresql-client installed.
 #
 # Scope:
-#   - public schema (full drop and recreate)  — all app data
-#   - auth.users + auth.identities            — keeps player.user_id FKs valid
+#   - public schema (full drop and recreate): all app data
+#   - auth.users + auth.identities: keeps player.user_id FKs valid
 # Skipped: prod auth sessions / refresh_tokens / etc. The keep-list admins'
 # own staging sessions and passkeys are carried across (KEEP THE STAGING
 # ADMINS SIGNED IN, below); everyone else's go with the truncate.
@@ -18,7 +18,7 @@
 # Two things are deliberately NOT faithful copies of prod afterwards, because a
 # faithful copy is the wrong answer for both:
 #   - Discord config is staging's own, never prod's (see the capture/scrub pair
-#     below) — inheriting prod's would aim the staging bot at the real guild.
+#     below): inheriting prod's would aim the staging bot at the real guild.
 #   - $STAGING_ADMIN_EMAILS are re-granted admin on staging, because prod roles
 #     leave the owner unable to use the staging admin console at all.
 #   - THE MEMBERS ARE SCRUBBED. Names, emails, phones, bios, officer notes,
@@ -28,7 +28,7 @@
 #     kept, so it stays a realistic rehearsal. See "SCRUB THE MEMBERS" below.
 #
 # Idempotent. Safe to re-run. Existing dev DB rows in those scopes are wiped,
-# and so is anything in dev's public schema that prod does not have — see
+# and so is anything in dev's public schema that prod does not have: see
 # "the drop is explicit" below.
 #
 # Usage:
@@ -81,7 +81,7 @@
 # 1. THE DROP IS EXPLICIT NOW, because pg_dump's was not safe.
 #    `pg_dump --schema=public --clean` emits a bare `DROP SCHEMA IF EXISTS
 #    "public";` with no CASCADE. That succeeds only while dev's public schema
-#    holds NOTHING that prod does not also have — and dev is the database where
+#    holds NOTHING that prod does not also have, and dev is the database where
 #    migrations are rehearsed, so it is routinely ahead of prod. Staging carries
 #    00123's `recompute_player_stats` today; prod does not. With one such object
 #    present the DROP fails, and under `-v ON_ERROR_STOP=1` the ENTIRE restore
@@ -92,7 +92,7 @@
 #    Its cascade NOTICEs are logged: they are the list of things dev had and
 #    prod does not, which is worth seeing in the morning.
 #
-#    READ THIS BEFORE RE-ENABLING THE CRON. That list is not debris — on this
+#    READ THIS BEFORE RE-ENABLING THE CRON. That list is not debris: on this
 #    project it is usually THE MIGRATION YOU ARE CURRENTLY TESTING. A snapshot
 #    resets staging to prod, so a migration applied to staging at 22:00 is gone
 #    by 04:01. That was always the intent of the tool and it is what `--clean`
@@ -124,7 +124,7 @@
 # 3. THE REALTIME PUBLICATION IS PUT BACK.
 #    Publication MEMBERSHIP is not in a `--schema=public` dump (grep it: zero
 #    hits) and it dies with the tables. `supabase_realtime` therefore came back
-#    still existing and completely empty, which is not an error anywhere — it is
+#    still existing and completely empty, which is not an error anywhere: it is
 #    every live badge and the whole door page quietly never updating again on
 #    staging. scripts/sql/mirror-public-publications.sql re-adds prod's
 #    membership. REPLICA IDENTITY needs no help; pg_dump does carry that.
@@ -134,11 +134,11 @@
 #    schema. A trigger on auth.users calling a public.handle_new_user(), an
 #    extension installed into public, a foreign key from another schema into
 #    public.players, a view elsewhere selecting from public, a column typed as a
-#    public enum — CASCADE takes every one of them, and `--schema=public`
+#    public enum: CASCADE takes every one of them, and `--schema=public`
 #    restores none of them. Signup would then write no player row, for ever,
 #    with nothing in any log: the exact failure class the rest of this header is
 #    about. Grepping the migrations says this repo has no such dependent, but the
-#    migrations are not the whole database — Supabase's init ran first, the owner
+#    migrations are not the whole database: Supabase's init ran first, the owner
 #    has run SQL by hand, and `CREATE EXTENSION IF NOT EXISTS` is a silent no-op
 #    that reveals nothing about where the extension actually landed. So the
 #    question is put to the live database every night instead:
@@ -150,7 +150,7 @@
 # 5. AN EMPTY PRIVILEGE MIRROR IS REFUSED.
 #    The generator in (2) returning zero rows still exits 0, which would wipe
 #    dev, restore it, apply a file of pure comments, and leave staging with no
-#    grants — empty pages rather than an error, since a failed PostgREST read
+#    grants: empty pages rather than an error, since a failed PostgREST read
 #    arrives as an empty list. A floor of 20 statements is checked before the
 #    drop. Ablated: a generator stubbed to return nothing refuses the run and
 #    leaves dev's 64 grants in place. The publication generator gets the same
@@ -159,6 +159,10 @@
 #    publication, so a fixed minimum would block such a database every night.
 # ---------------------------------------------------------------------------
 set -euo pipefail
+# Every file this run writes holds prod's members until it is deleted: the
+# dumps, the ACL and publication SQL, the captured Discord config. Owner-only
+# from the first one, so a dump is never readable by another user on the host.
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # THE NAMES WERE WRONG, AND THAT IS WHY NOTHING HAS RUN SINCE 7 JULY 2026.
@@ -166,7 +170,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # weeks: the stacks are compose projects `supabase` and `supabase-staging`
 # (/mnt/ssd/Deploy/supabase-prod and /mnt/ssd/Deploy/supabase-staging), whose db
 # services are plain `supabase-db` and `supabase-staging-db`. Verified from
-# `com.docker.compose.project.working_dir`, not from the names alone — the names
+# `com.docker.compose.project.working_dir`, not from the names alone: the names
 # are suggestive, the label is proof. cron.log is 4,493 lines of
 # "FATAL: container supabase_db_badminton is not running", one per night, and the
 # newest real dump is public-20260707T110001Z.sql.gz.
@@ -247,6 +251,15 @@ alert() {
         --config - >/dev/null 2>&1 || true
 }
 
+# One table per psql call, each guarded, so one that fails or does not exist
+# cannot stop the rest from being wiped. Every failure is counted.
+wipe_failed=0
+wipe_table() {
+  docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 -c \
+    "DO \$wipe\$ BEGIN IF to_regclass('$1') IS NOT NULL THEN TRUNCATE $1 CASCADE; END IF; END \$wipe\$;" \
+    || wipe_failed=1
+}
+
 on_exit() {
   local rc=$?
   rm -f "$DISCORD_SQL" "$DISCORD_RAW"
@@ -255,8 +268,22 @@ on_exit() {
     echo "FATAL: the run failed with real member data already restored to" >&2
     echo "       staging and NOT yet scrubbed. Wiping the member tables now." >&2
     echo "       Staging will be empty until the next successful snapshot." >&2
-    if docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -c \
-      "TRUNCATE public.players CASCADE; TRUNCATE auth.identities CASCADE; TRUNCATE auth.users CASCADE;"
+    # The members and their logins first, then every table that holds a
+    # person's name or address with no foreign key to players, which the
+    # CASCADE from players cannot reach.
+    wipe_table public.players
+    wipe_table auth.identities
+    wipe_table auth.users
+    wipe_table public.guest_waiver_signings
+    wipe_table public.email_suppressions
+    wipe_table public.discord_signup_drafts
+    wipe_table public.club_event_external_signups
+    wipe_table public.guest_waiver_invites
+    wipe_table public.registration_import_receipts
+    wipe_table public.registration_import_entries
+    wipe_table public.registration_imports
+    wipe_table public.registration_import_forms
+    if [ "$wipe_failed" = "0" ]
     then
       echo "       wiped." >&2
       alert "Staging snapshot FAILED (exit $rc) with members restored and unscrubbed. The member tables were wiped, so staging is empty but holds no real data. Check cron.log."
@@ -282,6 +309,15 @@ fi
 
 PUB_SQL="$OUT_DIR/publications-$TS.sql"
 
+# THE TWO NAMES MUST BE TWO DATABASES. Everything below drops and rewrites
+# DEV_CONTAINER, so an override that points both at the same container, or at
+# two names for one database, would scrub production. Refused by name here,
+# and by the cluster's own identity once both are known to be running.
+if [ "$PROD_CONTAINER" = "$DEV_CONTAINER" ]; then
+  echo "FATAL: PROD_CONTAINER and DEV_CONTAINER are both $PROD_CONTAINER. Refusing to run." >&2
+  exit 1
+fi
+
 # Verify both containers are up
 for c in "$PROD_CONTAINER" "$DEV_CONTAINER"; do
   if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
@@ -289,6 +325,22 @@ for c in "$PROD_CONTAINER" "$DEV_CONTAINER"; do
     exit 1
   fi
 done
+
+# The same database under two container names has one system identifier.
+# Asked after the loop because it needs both running, and before the first
+# dump or write. An empty answer is a refusal too: unknown is not "different".
+prod_sysid=$(docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -qAt \
+  -c "SELECT system_identifier FROM pg_control_system();" || true)
+dev_sysid=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -qAt \
+  -c "SELECT system_identifier FROM pg_control_system();" || true)
+if [ -z "$prod_sysid" ] || [ -z "$dev_sysid" ]; then
+  echo "FATAL: could not read the system identifier of both databases. Refusing to run." >&2
+  exit 1
+fi
+if [ "$prod_sysid" = "$dev_sysid" ]; then
+  echo "FATAL: PROD_CONTAINER and DEV_CONTAINER are the same database (system identifier $prod_sysid). Refusing to run." >&2
+  exit 1
+fi
 
 # Both generators are on disk next to this script. Check before touching a
 # database, not after: a missing file discovered at step 7 means dev has been
@@ -325,7 +377,7 @@ docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -At -v ON_ERROR_ST
   < "$SCRIPT_DIR/sql/mirror-public-publications.sql" > "$PUB_SQL"
 
 # A generator that returns nothing still exits 0. That would drop dev, restore
-# it, apply a file of pure comments, and leave staging with no grants at all —
+# it, apply a file of pure comments, and leave staging with no grants at all:
 # which surfaces as empty pages, not as an error, because a failed PostgREST read
 # arrives as an empty list. So put a floor under it BEFORE anything is dropped.
 # The two-table fixture this was developed against generated 39 statements; prod
@@ -333,13 +385,13 @@ docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -At -v ON_ERROR_ST
 acl_stmts=$(grep -c ';' "$ACL_SQL" 2>/dev/null || true)
 if [ "${acl_stmts:-0}" -lt 20 ]; then
   echo "FATAL: the privilege mirror produced only ${acl_stmts:-0} statements." >&2
-  echo "       Refusing to wipe dev — it would come back with no grants and look" >&2
+  echo "       Refusing to wipe dev: it would come back with no grants and look" >&2
   echo "       empty rather than broken. $ACL_SQL is kept for inspection." >&2
   exit 1
 fi
 
 # The same floor for the publication generator, and it cannot be a threshold.
-# An empty PUB_SQL is DEFECT 3 itself — supabase_realtime comes back existing and
+# An empty PUB_SQL is DEFECT 3 itself: supabase_realtime comes back existing and
 # holding nothing, every live badge and the whole door page quietly stop
 # updating, and nothing errors anywhere. But zero blocks is also the CORRECT
 # answer when prod's publication is FOR ALL TABLES, which the generator rightly
@@ -355,7 +407,7 @@ pub_expected=$(docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -qA
 pub_got=$(grep -c 'END \$do\$;' "$PUB_SQL" 2>/dev/null || true)
 if [ "${pub_expected:-0}" -gt 0 ] && [ "${pub_got:-0}" -lt "${pub_expected}" ]; then
   echo "FATAL: prod publishes ${pub_expected} public table(s), but the generator emitted" >&2
-  echo "       only ${pub_got:-0} statement(s). Refusing to wipe dev — realtime would come" >&2
+  echo "       only ${pub_got:-0} statement(s). Refusing to wipe dev: realtime would come" >&2
   echo "       back subscribed to nothing, which is silent everywhere. $PUB_SQL kept." >&2
   exit 1
 fi
@@ -365,7 +417,7 @@ fi
 # our migrations, `CREATE EXTENSION IF NOT EXISTS` is a silent no-op that reveals
 # nothing about where the extension landed, and the owner has run SQL by hand.
 # Anything this prints lives outside public, dies with the CASCADE, and is NOT in
-# a `--schema=public` dump — so it would be gone for good. Empty output is the
+# a `--schema=public` dump, so it would be gone for good. Empty output is the
 # expected answer and the only one we proceed on.
 echo "[$(date -u +%FT%TZ)] checking for cross-schema dependents on public..."
 dependents=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -qAt \
@@ -382,7 +434,7 @@ fi
 # ---------------------------------------------------------------------------
 # CAPTURE STAGING'S OWN DISCORD CONFIG.
 #
-# These four tables live in public, so the drop below takes them — and then
+# These four tables live in public, so the drop below takes them, and then
 # prod's dump puts PROD'S rows back in their place. That is the part that makes
 # this worth code rather than a warning: staging would come up holding prod's
 # guild id, prod's role ids, prod's discord_bot_url and prod's service secret,
@@ -395,7 +447,7 @@ fi
 # token.
 #
 # So: capture staging's own rows here, and after the restore delete whatever
-# prod's dump left and put these back. Note the asymmetry that matters —
+# prod's dump left and put these back. Note the asymmetry that matters:
 # "staging had no config" must end as "staging has no config", NEVER as
 # "staging inherits prod's". The delete below is therefore unconditional; this
 # capture only decides what goes back afterwards.
@@ -614,7 +666,7 @@ COMMIT;
 SQL
 
 # CASCADE, and ours rather than pg_dump's. The NOTICEs list what dev had that
-# prod does not — normally the migrations being rehearsed on staging.
+# prod does not: normally the migrations being rehearsed on staging.
 echo "[$(date -u +%FT%TZ)] dropping dev public schema (cascade notices follow)..."
 docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 DROP SCHEMA IF EXISTS public CASCADE;
@@ -727,7 +779,7 @@ echo "[$(date -u +%FT%TZ)] replayed $replayed migration(s)."
 # end with none, rather than silently adopting prod's guild, prod's bot URL and
 # prod's secret. Inheriting is the failure; having nothing is fine.
 #
-# Child table first — discord_guild_roles has a foreign key onto discord_guilds.
+# Child table first: discord_guild_roles has a foreign key onto discord_guilds.
 echo "[$(date -u +%FT%TZ)] scrubbing prod Discord config out of staging..."
 docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $do$
@@ -1409,11 +1461,75 @@ BEGIN
   IF to_regclass('public.waiver_acceptances')       IS NOT NULL THEN UPDATE public.waiver_acceptances       SET user_agent = 'scrubbed' WHERE user_agent IS NOT NULL; END IF;
   IF to_regclass('public.event_waiver_acceptances') IS NOT NULL THEN UPDATE public.event_waiver_acceptances SET user_agent = 'scrubbed' WHERE user_agent IS NOT NULL; END IF;
 
+  -- A Discord sign-up a member started and did not finish (00281): their email,
+  -- name and phone, typed into the bot. Nothing to keep.
+  IF to_regclass('public.discord_signup_drafts') IS NOT NULL THEN DELETE FROM public.discord_signup_drafts; END IF;
+
+  -- The text the bot last posted for a match result or a feedback relay. It
+  -- names players and quotes feedback. NOT NULL columns, so a placeholder.
+  IF to_regclass('public.discord_feedback_posts') IS NOT NULL THEN
+    UPDATE public.discord_feedback_posts SET synced_summary = 'scrubbed' WHERE synced_summary <> 'scrubbed';
+  END IF;
+  IF to_regclass('public.discord_match_posts') IS NOT NULL THEN
+    UPDATE public.discord_match_posts SET synced_summary = 'scrubbed' WHERE synced_summary <> 'scrubbed';
+  END IF;
+
+  -- Free text members and officers wrote about a person or an event.
+  IF to_regclass('public.event_feedback') IS NOT NULL THEN
+    UPDATE public.event_feedback SET comment = NULL WHERE comment IS NOT NULL;
+  END IF;
+  -- reason is NOT NULL and 1 to 500 characters (00279), so a placeholder.
+  IF to_regclass('public.tournament_category_requests') IS NOT NULL THEN
+    UPDATE public.tournament_category_requests SET reason = 'scrubbed' WHERE reason <> 'scrubbed';
+  END IF;
+  IF to_regclass('public.tournament_event_waitlist') IS NOT NULL THEN
+    UPDATE public.tournament_event_waitlist SET reason = NULL WHERE reason IS NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'tournaments' AND column_name = 'suspension_reason') THEN
+    EXECUTE $q$UPDATE public.tournaments SET suspension_reason = NULL WHERE suspension_reason IS NOT NULL$q$;
+  END IF;
+
+  -- An exec's own photo (00042), a real face on a real name.
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'players' AND column_name = 'exec_photo_url') THEN
+    EXECUTE $q$UPDATE public.players SET exec_photo_url = NULL WHERE exec_photo_url IS NOT NULL$q$;
+  END IF;
+
+  -- THE DATA API'S KEYS (00241). key_hash is what a presented key is looked up
+  -- by, so a copied hash is a live prod key that also works against staging.
+  -- Every hash becomes one no key can produce, and every key is revoked. Not
+  -- deleted: other tables reference the keys ON DELETE RESTRICT. The consumer's
+  -- player_ref_salt is what makes its player references unlinkable, so each
+  -- consumer gets a fresh one.
+  IF to_regclass('public.data_api_keys') IS NOT NULL THEN
+    UPDATE public.data_api_keys
+       SET key_hash = 'staging-scrubbed-' || id::text,
+           revoked_at = coalesce(revoked_at, now()),
+           revoke_reason = coalesce(revoke_reason, 'staging snapshot');
+  END IF;
+  IF to_regclass('public.data_api_consumers') IS NOT NULL THEN
+    UPDATE public.data_api_consumers SET player_ref_salt = DEFAULT;
+  END IF;
+
+  -- cron_config holds prod's secrets for every job. Only the four keys staging's
+  -- own jobs read are kept; the Discord pair was already replaced with
+  -- staging's own above.
+  IF to_regclass('public.cron_config') IS NOT NULL THEN
+    DELETE FROM public.cron_config
+     WHERE key NOT IN ('admin_url', 'reminder_secret', 'discord_bot_url', 'discord_service_secret');
+  END IF;
+
   -- KNOWN RESIDUAL, left on purpose: public.announcements.body. Announcements
   -- are exec-authored broadcasts already shown to the whole membership, and
   -- blanking them removes a real rendering surface. They CAN name a member, so
   -- this is an accepted trade rather than an oversight. Revisit if announcement
   -- text ever starts carrying anything private.
+  --
+  -- KNOWN RESIDUAL, an owner decision: cron_config's admin_url and
+  -- reminder_secret are copied from prod and kept. Staging's scheduled jobs
+  -- therefore call prod's admin with prod's secret. Changing that means giving
+  -- staging its own pair, which is the owner's call, not this script's.
 END
 $scrub$;
 
@@ -1522,7 +1638,73 @@ SELECT 'Form partner notes     ' || (
                     ELSE (xpath('/row/n/text()', query_to_xml(format(
                       'SELECT count(*) AS n FROM public.%I WHERE %I IS NOT NULL AND %I <> %L',
                       c.tbl, c.col, c.col, 'Form Partner'), false, true, '')))[1]::text::int
-                  END AS n) AS counted);
+                  END AS n) AS counted)
+UNION ALL
+-- One row per scrubbed table, the same way: a table or column the source
+-- does not have counts zero.
+SELECT 'Discord signup drafts  ' || CASE
+         WHEN to_regclass('public.discord_signup_drafts') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                'SELECT count(*) AS n FROM public.discord_signup_drafts', false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'Discord post summaries ' || (
+         SELECT coalesce(sum(n), 0)::int FROM (VALUES
+           ('discord_feedback_posts'), ('discord_match_posts')) AS c(tbl),
+         LATERAL (SELECT CASE WHEN to_regclass('public.' || c.tbl) IS NULL THEN 0
+                    ELSE (xpath('/row/n/text()', query_to_xml(format(
+                      'SELECT count(*) AS n FROM public.%I WHERE synced_summary <> %L',
+                      c.tbl, 'scrubbed'), false, true, '')))[1]::text::int
+                  END AS n) AS counted)
+UNION ALL
+SELECT 'event feedback comments ' || CASE
+         WHEN to_regclass('public.event_feedback') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                'SELECT count(*) AS n FROM public.event_feedback WHERE comment IS NOT NULL', false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'category request reasons ' || CASE
+         WHEN to_regclass('public.tournament_category_requests') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                $q$SELECT count(*) AS n FROM public.tournament_category_requests WHERE reason <> 'scrubbed'$q$, false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'waitlist reasons       ' || CASE
+         WHEN to_regclass('public.tournament_event_waitlist') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                'SELECT count(*) AS n FROM public.tournament_event_waitlist WHERE reason IS NOT NULL', false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'tournament suspensions ' || CASE
+         WHEN NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = 'tournaments'
+                             AND column_name = 'suspension_reason') THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                'SELECT count(*) AS n FROM public.tournaments WHERE suspension_reason IS NOT NULL', false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'exec photos            ' || CASE
+         WHEN NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = 'players'
+                             AND column_name = 'exec_photo_url') THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                'SELECT count(*) AS n FROM public.players WHERE exec_photo_url IS NOT NULL', false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'live Data API keys     ' || CASE
+         WHEN to_regclass('public.data_api_keys') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                $q$SELECT count(*) AS n FROM public.data_api_keys
+                    WHERE key_hash NOT LIKE 'staging-scrubbed-%' OR revoked_at IS NULL$q$, false, true, '')))[1]::text::int
+       END
+UNION ALL
+SELECT 'prod cron_config keys  ' || CASE
+         WHEN to_regclass('public.cron_config') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                $q$SELECT count(*) AS n FROM public.cron_config
+                    WHERE key NOT IN ('admin_url', 'reminder_secret', 'discord_bot_url', 'discord_service_secret')$q$,
+                false, true, '')))[1]::text::int
+       END;
 SQL
   )
   echo "$leak" | sed 's/^/  remaining /'
