@@ -11,6 +11,6 @@ export function openEventCount(eventStatuses: readonly string[]): number {
  * every one of them is now completed, so the event just finalised was its last
  * open one. A draft or already closed tournament is left alone.
  */
-export function closesWithLastEvent(tournamentStatus: string | null | undefined, eventStatuses: readonly string[]): boolean {
+export function closesWithFinalEvent(tournamentStatus: string | null | undefined, eventStatuses: readonly string[]): boolean {
   return tournamentStatus === 'active' && eventStatuses.length > 0 && openEventCount(eventStatuses) === 0;
 }
