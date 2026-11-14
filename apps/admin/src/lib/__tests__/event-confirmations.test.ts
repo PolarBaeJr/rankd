@@ -118,9 +118,9 @@ describe('runEventConfirmations', () => {
 
   it('pushes to the promoted and settles their fee', async () => {
     claimed = [];
-    released = { events: [{ event_id: 'e1', tournament_id: 't1', released: [{}], promoted: [{ player_id: 'p9' }] }] };
+    released = { events: [{ event_id: 'e1', tournament_id: 't1', released: 2, promoted: [{ player_id: 'p9' }] }] }; // the shape 00325 returns: a count
     const run = await runEventConfirmations(fakeAdmin());
-    expect(run).toMatchObject({ released: 1, promoted: 1 });
+    expect(run).toMatchObject({ released: 2, promoted: 1 });
     expect(ensureEntryFees).toHaveBeenCalledWith(expect.anything(), 't1', ['p9']);
     expect(pushPlayers).toHaveBeenCalledWith(expect.anything(), ['p9'], expect.objectContaining({ title: 'You are in' }), 'tournaments');
   });
