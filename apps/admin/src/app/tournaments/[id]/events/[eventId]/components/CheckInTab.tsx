@@ -42,6 +42,7 @@ import { WaiverState, blocksCheckIn } from './WaiverState';
 import { PlayerLeftDialog } from './PlayerLeftDialog';
 import type { Departure } from '@/lib/departure-reasons';
 import { FillEmptyPlaces } from './FillEmptyPlaces';
+import { LateArrivals } from './LateArrivals';
 import { SubstituteForEntry, type SubstituteSources } from './SubstituteDialog';
 import { CONFIRMATION_BADGE_LABELS, confirmationCounts, entryConfirmationState } from '@/lib/confirmation-badges';
 
@@ -84,6 +85,11 @@ interface Props {
    * the Sub action.
    */
   sub?: SubstituteSources | null;
+  /**
+   * A late arrival whose place check-in close released (00330): the desk with
+   * the no-show key, with late_arrival_reinstate on. Null hides it.
+   */
+  lateArrival?: { releasedIds: string[] } | null;
 }
 
 /** Whose signature this entry needs — one person, or both halves of a pair. */
@@ -95,7 +101,7 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
     : [(entry as ParticipantWithPlayer).player_id];
 }
 
-export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot, didNotComeOn = true, checkInAfterDraw = true, markLeftOn = true, confirmations = null, canConfirmFor = false, fill = null, sub = null }: Props) {
+export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot, didNotComeOn = true, checkInAfterDraw = true, markLeftOn = true, confirmations = null, canConfirmFor = false, fill = null, sub = null, lateArrival = null }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   // LEFT, THEN SUB (00328): the Left dialog hands its reason to the sub
   // dialog and writes nothing; Back from the sub reopens Left with it.
@@ -431,6 +437,14 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
           canRelease={fill.canRelease}
           canAdd={fill.canAdd}
           warns={fill.warns}
+        />
+      )}
+
+      {lateArrival && event.status === 'checkin' && !event.draw_locked && matches.length === 0 && (
+        <LateArrivals
+          eventId={event.id}
+          isDoubles={isDoubles}
+          entries={entries.filter((e) => e.status === 'withdrawn' && lateArrival.releasedIds.includes(e.id))}
         />
       )}
 

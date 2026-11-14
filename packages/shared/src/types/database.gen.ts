@@ -3252,6 +3252,53 @@ export type Database = {
           },
         ]
       }
+      stage_group_time_caps: {
+        Row: {
+          applied_at: string | null
+          applied_how: string | null
+          cap_at: string
+          created_at: string
+          event_id: string
+          group_number: number | null
+          id: string
+          pool_number: number | null
+          stage: number
+          voided: number | null
+        }
+        Insert: {
+          applied_at?: string | null
+          applied_how?: string | null
+          cap_at: string
+          created_at?: string
+          event_id: string
+          group_number?: number | null
+          id?: string
+          pool_number?: number | null
+          stage: number
+          voided?: number | null
+        }
+        Update: {
+          applied_at?: string | null
+          applied_how?: string | null
+          cap_at?: string
+          created_at?: string
+          event_id?: string
+          group_number?: number | null
+          id?: string
+          pool_number?: number | null
+          stage?: number
+          voided?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stage_group_time_caps_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_audit_log: {
         Row: {
           action: string
@@ -3926,6 +3973,8 @@ export type Database = {
           ready_player_ids: string[]
           result_entered_at: string | null
           result_entered_by: string | null
+          result_kind: string | null
+          retired_side: string | null
           round_name: string | null
           round_number: number
           scheduled_time: string | null
@@ -3976,6 +4025,8 @@ export type Database = {
           ready_player_ids?: string[]
           result_entered_at?: string | null
           result_entered_by?: string | null
+          result_kind?: string | null
+          retired_side?: string | null
           round_name?: string | null
           round_number: number
           scheduled_time?: string | null
@@ -4026,6 +4077,8 @@ export type Database = {
           ready_player_ids?: string[]
           result_entered_at?: string | null
           result_entered_by?: string | null
+          result_kind?: string | null
+          retired_side?: string | null
           round_name?: string | null
           round_number?: number
           scheduled_time?: string | null
@@ -4904,6 +4957,11 @@ export type Database = {
         Args: { p_excluding_credential?: string; p_excluding_player?: string }
         Returns: number
       }
+      apply_due_group_time_caps: { Args: Record<PropertyKey, never>; Returns: number }
+      apply_group_time_cap: {
+        Args: { p_actor: string; p_cap_id: string }
+        Returns: Json
+      }
       apply_match_result: {
         Args: { p_confirmed_by: string; p_match_id: string }
         Returns: undefined
@@ -5369,6 +5427,19 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: { col: string; tbl: string }[]
       }
+      merge_stage_groups: {
+        Args: {
+          p_actor: string
+          p_event_id: string
+          p_from_group: number
+          p_generation: string
+          p_into_group: number
+          p_pool: number
+          p_rows: Json
+          p_stage: number
+        }
+        Returns: Json
+      }
       open_event_confirmations: {
         Args: Record<PropertyKey, never>
         Returns: number
@@ -5491,6 +5562,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      reinstate_released_entry: {
+        Args: { p_actor: string; p_entry_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
       reject_walkover_atomic: {
         Args: { p_admin_id: string; p_walkover_id: string }
         Returns: Json
@@ -5503,12 +5578,25 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
+      released_entry_under_lock: {
+        Args: { p_entry_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
       remove_field_entry: {
         Args: { p_entry_id: string; p_is_pair: boolean }
         Returns: Json
       }
       remove_from_event_waitlist: {
         Args: { p_actor: string; p_waitlist_id: string }
+        Returns: Json
+      }
+      requeue_released_entry: {
+        Args: {
+          p_actor: string
+          p_entry_id: string
+          p_head?: boolean
+          p_is_pair: boolean
+        }
         Returns: Json
       }
       report_walkover_atomic: {

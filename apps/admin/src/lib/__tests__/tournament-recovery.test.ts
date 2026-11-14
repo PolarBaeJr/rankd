@@ -612,6 +612,19 @@ describe('void / restore / replay', () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/only a voided match/i);
   });
+
+  it('does not restore a group match once its time cap has passed (00331)', async () => {
+    Object.assign(match(QF), { status: 'voided', stage: 1, pool_number: 1, group_number: 1 });
+    store.db.stage_group_time_caps = [
+      { id: 'cap-1', event_id: 'e1', stage: 1, pool_number: 1, group_number: null, cap_at: '2026-11-14T20:00:00Z', applied_at: '2026-11-14T20:00:30Z' },
+    ];
+    const res = await unvoidMatch(QF, 'Replay it');
+    expect(res.ok === false && res.error).toBe('This group\'s time cap has passed, so its table stands.');
+    expect(match(QF).status).toBe('voided');
+
+    store.db.platform_settings = [{ key: 'release_flags', value: { group_time_cap: false } }];
+    expect((await unvoidMatch(QF, 'Replay it')).ok).toBe(true);
+  });
 });
 
 describe('manual slot repair', () => {

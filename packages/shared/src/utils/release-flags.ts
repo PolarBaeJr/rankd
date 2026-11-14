@@ -21,7 +21,8 @@
 // THE DATABASE READS THE SAME ROW. release_flag_on(p_id) (00318) has the same
 // rule, and the functions 00315 restated ask it, so check_in_after_draw also
 // puts the draw's field and the undo of a check-in back as they were (00272,
-// 00276, 00309), and the ladder fix (00316) asks ladder_doubles_points. 00317
+// 00276, 00309), the ladder fix (00316) asks ladder_doubles_points, and the
+// minute job that applies a group's time cap (00331) asks group_time_cap. 00317
 // is not switched in the database: two service-role helpers that only
 // add_on_the_spot calls, so that switch covers them. A switch here that no
 // function asks is console-only. Each of these migrations has a down script in
@@ -194,6 +195,42 @@ export const RELEASE_FLAGS = [
     label: 'Substitutions',
     description: 'The desk or the day lead can put somebody in for one member of a team, or for a whole entry, before or during an event. Played matches keep who played them.',
     off: 'Off: no Sub action, substitutions refused.',
+    since: '1.2.0',
+  },
+  // Event day, wave 2 (00329 onward).
+  {
+    id: 'decided_off_court',
+    label: 'Decided off court',
+    description: 'The desk or a court helper records a match the two sides settled without playing: the winner advances, no scores are kept and nobody\'s rating moves.',
+    off: 'Off: no Decided off court option; a result needs a score.',
+    since: '1.2.0',
+  },
+  {
+    id: 'injury_retirement',
+    label: 'Retired',
+    description: 'A match a side stopped part way through is recorded with the games so far and who retired, rated as a walkover, and the side that retired can leave the event injured in the same step.',
+    off: 'Off: no Retired option; a retirement is a walkover or a void, as before.',
+    since: '1.2.0',
+  },
+  {
+    id: 'late_arrival_reinstate',
+    label: 'Late arrival after release',
+    description: 'A member whose place was released at check-in close and who then arrives is reinstated while the place is free, or put back on the reserves when it is not. Their no-show warning is rescinded only when reinstated.',
+    off: 'Off: no Reinstate or Back to the reserves; a latecomer comes back only through Add on the spot.',
+    since: '1.2.0',
+  },
+  {
+    id: 'group_time_cap',
+    label: 'Group time cap',
+    description: 'The desk sets a time on a groups stage, a pool or one group; from then no new match of it starts, the ones on court finish, and its table stands. Read by the minute job in the database as well.',
+    off: 'Off: no cap control; the automatic sweep does nothing and no group is locked.',
+    since: '1.2.0',
+  },
+  {
+    id: 'merge_thin_groups',
+    label: 'Merge thin groups',
+    description: 'A group left with one or two teams before it plays is offered a merge into another group of its pool, as one round robin of everyone still in both.',
+    off: 'Off: no merge suggestion; the merge action refuses.',
     since: '1.2.0',
   },
 ] as const satisfies readonly ReleaseFlagDefinition[];

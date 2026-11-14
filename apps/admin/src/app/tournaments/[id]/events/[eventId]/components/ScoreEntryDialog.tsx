@@ -4,18 +4,30 @@ import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
 import {
   getEventRules, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape, eventRatingLine,
-  parseFormatConfig, stagedMatchRules, stagedMatchRated, isLegalGame, isLegalCutShortGame, validateMatch,
+  parseFormatConfig, stagedMatchRules, stagedMatchRated, isLegalGame, isLegalCutShortGame, validateMatch, matchResultLabel,
 } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
-  editMatchResult, getMatchOutcomeSummary, getCurrentHeadStarts,
+  editMatchResult, getMatchOutcomeSummary, getCurrentHeadStarts, recordOffCourtResult, recordRetirement,
 } from '@/lib/tournament-actions';
 import type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from '@/lib/tournament-actions';
 import { autoCallFailureText } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
+import { DecidedResultForm } from './DecidedResultDialog';
+
+/**
+ * Decided off court and Retired (00329), each while its kill switch is on.
+ * onSubInjured opens the sub for the entry that retired, with the injury as
+ * the reason, when substitutions are on in a doubles event.
+ */
+export interface DecidedOptions {
+  offCourt: boolean;
+  retirement: boolean;
+  onSubInjured?: (entryId: string) => void;
+}
 
 interface Props {
   match: TournamentMatchRow;
@@ -26,6 +38,7 @@ interface Props {
   // Every entry still eligible to be placed in the draw, for the slot editor.
   entries: Array<{ id: string; name: string }>;
   onClose: () => void;
+  decided?: DecidedOptions;
 }
 
 // Which panel the dialog opens on. A voided match can only be restored, and a
@@ -42,9 +55,9 @@ interface Props {
 // 'summary' is where a SCORED match lands. Everything else in this dialog is a
 // form; that one is a read of what the write did, and nothing on it can write
 // anything back — see the note on `showSummary`.
-type View = 'score' | 'walkover' | 'slots' | 'restore' | 'correct' | 'summary';
+type View = 'score' | 'walkover' | 'slots' | 'restore' | 'correct' | 'summary' | 'off_court' | 'retired';
 
-export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, entries, onClose }: Props) {
+export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, entries, onClose, decided }: Props) {
   // THE MATCH'S OWN SHAPE, FALLING BACK TO THE EVENT'S (00108).
   //
   // Every rule in this dialog — how many score rows to draw, whether a game is
@@ -474,6 +487,10 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     ? 'Fix Match Slots'
     : view === 'correct'
     ? 'Change Recorded Result'
+    : view === 'off_court'
+    ? 'Decided Off Court'
+    : view === 'retired'
+    ? 'Retired'
     : 'Enter Match Score';
 
   // What the row says today, so the exec can see what they are replacing rather
@@ -482,7 +499,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // Whether the exec has typed anything at all, which is what distinguishes
   // "rescore this match" from "re-award this walkover".
   const anyScoreTyped = games.some((g) => g.a !== '' || g.b !== '');
-  const recordedSummary = recorded.length > 0
+  const recordedSummary = match.result_kind
+    ? matchResultLabel(match)
+    : recorded.length > 0
     ? recorded.map((g) => `${g.a}-${g.b}`).join(', ')
     : match.status === 'walkover'
     // `notes` FIRST, walkover_reason SECOND, and the order is the whole point.
@@ -834,10 +853,45 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 Submit Score
               </Button>
             </div>
+            {(decided?.offCourt || decided?.retirement) && (
+              <div className="flex gap-2">
+                {decided.offCourt && (
+                  <Button variant="ghost" size="sm" onClick={() => setView('off_court')} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                    Decided off court
+                  </Button>
+                )}
+                {decided.retirement && (
+                  <Button variant="ghost" size="sm" onClick={() => setView('retired')} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                    Retired
+                  </Button>
+                )}
+              </div>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setView('slots')} className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
               Fix match slots
             </Button>
           </>
+        )}
+
+        {(view === 'off_court' || view === 'retired') && hasBothSides && (
+          <DecidedResultForm
+            kind={view}
+            matchId={match.id}
+            nameA={nameA}
+            nameB={nameB}
+            isDoubles={isDoubles}
+            saveOffCourt={recordOffCourtResult}
+            saveRetirement={recordRetirement}
+            onSubInjured={decided?.onSubInjured
+              ? (side) => {
+                const entryId = side === 'a' ? aId : bId;
+                onClose();
+                if (entryId) decided.onSubInjured?.(entryId);
+              }
+              : undefined}
+            onDone={onClose}
+            onCancel={() => setView('score')}
+          />
         )}
 
         {/* Walkover/Void section */}

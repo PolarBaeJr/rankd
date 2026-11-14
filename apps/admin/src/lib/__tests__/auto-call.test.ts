@@ -193,6 +193,20 @@ describe('fillFreeCourts', () => {
     expect(row('not-in').status).toBe('ready');
   });
 
+  it('starts nothing in a group whose time cap is due, before the minute job voids it (00331)', async () => {
+    seedCourts(1);
+    seedMatch('capped', { slot: 1, match_number: 1 });
+    seedMatch('other-group', { slot: 2, match_number: 2, group_number: 2 });
+    store.db.stage_group_time_caps = [
+      { id: 'cap-1', event_id: EVENT, stage: 1, pool_number: 1, group_number: 1, cap_at: new Date(Date.now() - 60_000).toISOString(), applied_at: null },
+    ];
+
+    const report = await fill({}, 'court-1');
+
+    expect(report).toEqual({ called: [{ matchId: 'other-group', court: 'Court 1' }], failed: [] });
+    expect(row('capped').status).toBe('ready');
+  });
+
   it('gives a court-less knockout match a court and starts it in one write, with both audits', async () => {
     seedCourts(1);
     seedMatch('qf', { stage: 2, pool_number: null, group_number: null, slot: null, court: null, court_id: null });

@@ -16,6 +16,11 @@ import {
   stageGroupLabel,
   stagedMatchHeading,
   stagesView,
+  matchResultLabel,
+  scopeLocked,
+  suggestMerges,
+  type GroupTimeCap,
+  type MergeSuggestion,
   type FormatConfig,
   type GroupsStage,
   type LateEntrantPlan,
@@ -27,10 +32,13 @@ import {
 import { Layers, Plus, RefreshCw, UserX } from 'lucide-react';
 import {
   addStageRound,
+  mergeThinGroup,
   drawStage,
   placeLateEntrant,
   redrawStage,
   voidCourtHelperMatch,
+  enterCourtHelperOffCourt,
+  enterCourtHelperRetirement,
   voidOpenMatchesForEntry,
   voidUnplayedMatches,
   type BulkVoidResult,
@@ -58,6 +66,7 @@ import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { CourtCard, type CourtDeskRow, type SubFromLeft } from './CourtCard';
 import { getName } from './entry-name';
+import { TimeCapControl } from './TimeCapControl';
 import type {
   TournamentEventRow,
   TournamentMatchRow,
@@ -92,6 +101,8 @@ interface Props {
   onPendingLateHandled?: () => void;
   /** The kill switches (release-flags.ts); each control here is hidden while its switch is off. */
   releaseFlags?: ReleaseFlags;
+  /** The event's group time caps (00331); shown to a desk with the void key. */
+  timeCaps?: GroupTimeCap[];
 }
 
 /** What the void dialog is about to do: one entry's open matches, or a stage's or a group's. */
@@ -116,6 +127,7 @@ export function StagesTab({
   event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
   canVoid = false, canMarkNoShow = false, helperCourtIds = [], onSub,
   onAddOnTheSpot, pendingLateEntryId = null, onPendingLateHandled, releaseFlags = ALL_RELEASE_FLAGS_ON,
+  timeCaps = [],
 }: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -375,6 +387,37 @@ export function StagesTab({
     router.refresh();
   }
 
+  // A THIN GROUP (00332): one or two teams left before it plays, offered a
+  // merge into the smallest other group of its pool. The server asks the same
+  // refusal again.
+  const canMerge = canGenerate && releaseFlags.merge_thin_groups;
+  const mergesFor = (view: StageView): MergeSuggestion[] => {
+    if (!canMerge || !cfg || !results || view.stage.kind !== 'groups' || !view.drawn || view.complete) return [];
+    const active = new Set(entries.filter((e) => e.status === 'registered' || e.status === 'checked_in').map((e) => e.id));
+    const now = new Date();
+    return suggestMerges(cfg, view.stage.key, results, active, {
+      laterStageDrawn: matches.some((m) => (m.stage ?? 0) > view.number),
+      capped: (pool, group) => scopeLocked(timeCaps, { stage: view.number, pool_number: pool, group_number: group }, now),
+    });
+  };
+  async function merge(view: StageView, suggestion: MergeSuggestion) {
+    const stage = view.stage as GroupsStage;
+    const from = stageGroupLabel(stage, suggestion.pool, suggestion.from);
+    const into = stageGroupLabel(stage, suggestion.pool, suggestion.into);
+    const ok = await confirm({
+      title: `Merge ${from} into ${into}?`,
+      message: `Both groups' matches are replaced by one round robin of everyone still in them. Neither has played yet.`,
+      confirmLabel: 'Merge',
+    });
+    if (!ok) return;
+    setBusy(`${view.stage.key}:merge`);
+    const res = await mergeThinGroup(event.id, view.stage.key, suggestion.pool, suggestion.from, suggestion.into);
+    setBusy(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast(`${from} merged into ${into}: ${res.data.matches} match${res.data.matches === 1 ? '' : 'es'}`, 'success');
+    router.refresh();
+  }
+
   const courtCard = (court: TournamentCourt, groupName: string | null = null) => (
     <CourtCard
       key={court.id}
@@ -391,6 +434,11 @@ export function StagesTab({
       voidMatch={releaseFlags.desk_helper_void && (canVoid || helperCourtIds.includes(court.id)) ? voidCourtHelperMatch : undefined}
       canMarkLeft={releaseFlags.attendance_warnings && ((canVoid && canMarkNoShow) || helperCourtIds.includes(court.id))}
       onSub={canVoid && canMarkNoShow ? onSub : undefined}
+      decide={{
+        offCourt: releaseFlags.decided_off_court ? enterCourtHelperOffCourt : undefined,
+        retire: releaseFlags.injury_retirement ? enterCourtHelperRetirement : undefined,
+        isDoubles,
+      }}
     />
   );
 
@@ -592,6 +640,46 @@ export function StagesTab({
                 </p>
               )}
 
+              {mergesFor(view).map((suggestion) => {
+                const stage = view.stage as GroupsStage;
+                const from = stageGroupLabel(stage, suggestion.pool, suggestion.from);
+                return (
+                  <div
+                    key={`${suggestion.pool}-${suggestion.from}`}
+                    role="status"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-warning)] bg-[var(--bg-elevated)] p-3 text-sm"
+                  >
+                    <span className="text-[var(--text-primary)]">
+                      {`${from} has ${suggestion.size} ${suggestion.size === 1 ? 'team' : 'teams'} left and has not played.`}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={busy === `${view.stage.key}:merge`}
+                      disabled={busy !== null}
+                      onClick={() => merge(view, suggestion)}
+                    >
+                      {`Merge into ${stageGroupLabel(stage, suggestion.pool, suggestion.into)}`}
+                    </Button>
+                  </div>
+                );
+              })}
+
+              {canVoid && releaseFlags.group_time_cap && view.stage.kind === 'groups' && view.drawn && !view.complete && (
+                <TimeCapControl
+                  eventId={event.id}
+                  stage={view.number}
+                  caps={timeCaps.filter((cap) => cap.stage === view.number)}
+                  scopes={[
+                    { pool: null, group: null, label: `All of ${view.stage.name}` },
+                    ...view.pools.flatMap((pool) => [
+                      ...(view.pools.length > 1 && pool.groups.length > 1 ? [{ pool: pool.pool, group: null, label: pool.label || `Pool ${pool.pool}` }] : []),
+                      ...pool.groups.map((g) => ({ pool: g.pool, group: g.group, label: g.label })),
+                    ]),
+                  ]}
+                />
+              )}
+
               {view.stage.kind === 'groups' && view.drawn ? (
                 <GroupColumns
                   view={view}
@@ -791,6 +879,13 @@ export function StagesTab({
           isDoubles={isDoubles}
           entries={placeableEntries}
           onClose={() => setScoreMatchId(null)}
+          decided={{
+            offCourt: releaseFlags.decided_off_court,
+            retirement: releaseFlags.injury_retirement,
+            onSubInjured: isDoubles && canVoid && canMarkNoShow && onSub
+              ? (entryId) => onSub(entryId, { reason: 'injury', note: null }, () => {})
+              : undefined,
+          }}
         />
       )}
     </>
@@ -1021,9 +1116,9 @@ function StageMatchRow({
           {side(bId, fixture?.b.slot, m.handicap_b)}
         </div>
       </div>
-      {isCompleted && Array.isArray(m.scores) && (
+      {isCompleted && (Array.isArray(m.scores) || m.result_kind) && (
         <span className="text-sm font-mono text-[var(--text-muted)] ml-2">
-          {(m.scores as GameScore[]).map((g) => `${g.a}-${g.b}`).join(', ')}
+          {matchResultLabel(m)}
         </span>
       )}
       {canScore && (

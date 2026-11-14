@@ -19,6 +19,7 @@ import type {
   TournamentEventStatus,
   TournamentBonusSettings,
   EventWaiverStatus,
+  GroupTimeCap,
   TournamentCourt,
 } from '@badminton/shared';
 import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause, MapPin, Layers } from 'lucide-react';
@@ -43,6 +44,7 @@ import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { AddOnTheSpotDialog } from './AddOnTheSpotDialog';
 import { SubstituteForEntry, type SubstituteSources } from './SubstituteDialog';
+import type { DecidedOptions } from './ScoreEntryDialog';
 import type { Departure } from '@/lib/departure-reasons';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
@@ -136,9 +138,13 @@ interface Props {
   confirmations?: ConfirmationRow[] | null;
   /** The execs, who fill an empty place last (00326). */
   execs?: PlayerSummary[];
+  /** The entries check-in close released (00326), for Reinstate (00330). */
+  releasedEntryIds?: string[];
+  /** The event's group time caps (00331). */
+  timeCaps?: GroupTimeCap[];
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, viewerIsExec = false, helperCourtIds = [], releaseFlags = ALL_RELEASE_FLAGS_ON, confirmations = null, execs = [] }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, viewerIsExec = false, helperCourtIds = [], releaseFlags = ALL_RELEASE_FLAGS_ON, confirmations = null, execs = [], releasedEntryIds = [], timeCaps = [] }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -238,6 +244,15 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
     && (tournament as { day_lead_player_id?: string | null }).day_lead_player_id === viewerId;
   const canSub = releaseFlags.substitutions && status !== 'completed'
     && ((drawCapabilities.manageCourts && drawCapabilities.add) || isDayLead);
+  // Decided off court and Retired in the score dialog (00329). "Substitute the
+  // injured partner" opens the sub as Left with a sub does, with the injury.
+  const decided: DecidedOptions = {
+    offCourt: releaseFlags.decided_off_court,
+    retirement: releaseFlags.injury_retirement,
+    onSubInjured: canSub && isDoubles
+      ? (entryId) => setCourtSub({ entryId, departure: { reason: 'injury', note: null }, onBack: () => {} })
+      : undefined,
+  };
   const subSources: SubstituteSources | null = canSub
     ? {
       waitlist: waitlist ?? [],
@@ -356,6 +371,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
           staged event's Stages tab carries its own court cards, so not there. */}
       {!(staged && activeTab === 'stages') && (
         <LiveStrip
+          decided={decided}
           matches={matches}
           event={event}
           participants={participants}
@@ -481,10 +497,12 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
               }
               : null}
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
+            lateArrival={releaseFlags.late_arrival_reinstate && drawCapabilities.markNoShow ? { releasedIds: releasedEntryIds } : null}
           />
         )}
         {activeTab === 'courts' && (
           <CourtManagementTab
+            decided={decided}
             matches={matches}
             // The shared ScoreEntryDialog resolves the per-round match shape from
             // the event row, so this tab needs it now that it mounts the dialog.
@@ -503,6 +521,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         )}
         {activeTab === 'pool' && (
           <RoundRobinTab
+            decided={decided}
             event={event}
             matches={poolMatches}
             participants={participants}
@@ -531,10 +550,12 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
             pendingLateEntryId={pendingLate}
             onPendingLateHandled={clearPendingLate}
+            timeCaps={timeCaps}
           />
         )}
         {activeTab === 'bracket' && (
           <BracketTab
+            decided={decided}
             event={event}
             matches={bracketMatches}
             participants={participants}

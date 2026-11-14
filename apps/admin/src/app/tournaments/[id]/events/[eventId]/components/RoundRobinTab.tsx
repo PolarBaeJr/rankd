@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { Badge } from '@badminton/ui';
-import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { ScoreEntryDialog, type DecidedOptions } from './ScoreEntryDialog';
 import { RoundShapeControl } from './RoundShapeControl';
 import {
   eventIsPlaying,
@@ -11,6 +11,7 @@ import {
   tallyRoundRobin,
   rankRoundRobin,
   poolQualifierCount,
+  matchResultLabel,
   type SeedBy,
 } from '@badminton/shared';
 import { Trophy } from 'lucide-react';
@@ -24,6 +25,8 @@ import type {
 } from '@/lib/tournament-types';
 
 interface Props {
+  /** Decided off court and Retired in the score dialog (00329). */
+  decided?: DecidedOptions;
   event: TournamentEventRow;
   matches: TournamentMatchRow[];
   participants: ParticipantWithPlayer[];
@@ -37,7 +40,7 @@ interface Props {
   phase?: 'pool' | null;
 }
 
-export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, phase = null }: Props) {
+export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, phase = null, decided }: Props) {
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
   const allMatches = matches;
   // eventIsPlaying covers `pool_live` as well as `live` (00107), which is when
@@ -294,9 +297,9 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, 
                         {nameMap[bId ?? ''] ?? 'TBD'}{isCompleted && winnerId === bId && <span className="sr-only"> (Winner)</span>}
                       </span>
                     </div>
-                    {isCompleted && m.scores && (
+                    {isCompleted && (m.scores || m.result_kind) && (
                       <span className="text-xs font-mono text-[var(--text-muted)] ml-2">
-                        {(m.scores as GameScore[]).map((g) => `${g.a}-${g.b}`).join(', ')}
+                        {matchResultLabel(m)}
                       </span>
                     )}
                     {canScore && (
@@ -343,6 +346,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, 
           isDoubles={isDoubles}
           entries={placeableEntries}
           onClose={() => setScoreMatch(null)}
+          decided={decided}
         />
       )}
     </>

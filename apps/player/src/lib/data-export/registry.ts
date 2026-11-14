@@ -991,6 +991,7 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   seasons: 'The club\'s seasons. A club-wide object.',
   tournament_fee_tiers: 'Tournament price tiers. A club-wide object.',
   tournament_courts: 'The courts of a tournament (00273). A venue object, with no player reference.',
+  stage_group_time_caps: 'A time after which a stage, pool or group of a tournament event plays no new match (00331). No player column; who set or applied one is in the audit log.',
   registration_import_receipts:
     'The download state of a file a Google Form response uploaded (00288): a Drive file id, a storage path, a status and a retry count. It holds no player column; it is keyed to the response, which is one join from a member\'s own registration_imports row. A receipt it files reaches that member\'s export as their fee_submissions row, with screenshot_held; one that never filed (too large, the wrong type, no fee to match) is not in the export.',
   managed_registration_forms:

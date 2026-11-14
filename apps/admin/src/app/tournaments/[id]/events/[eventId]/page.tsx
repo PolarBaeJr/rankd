@@ -10,6 +10,7 @@ import {
   applyTournamentBonusOverride,
   type AcceptedEventWaiver,
   type EventWaiverStatus,
+  type GroupTimeCap,
 } from '@badminton/shared';
 // By SUBPATH — node:crypto, server only.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
@@ -189,6 +190,8 @@ export default async function EventPage({
     releaseFlags,
     confirmations,
     execs,
+    releasedEntryIds,
+    timeCaps,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -382,6 +385,30 @@ export default async function EventPage({
           .order('full_name')
           .then(({ data, error }) => (error ? [] : ((data ?? []) as PlayerSummary[])))
       : Promise.resolve([] as PlayerSummary[]),
+    // The entries check-in close released (00326), from its audit rows, so a
+    // late arrival can be told apart from a member who withdrew themselves
+    // (00330). Only at check-in, and only for a viewer with the no-show key.
+    drawCapabilities.markNoShow && event.status === 'checkin'
+      ? supabase
+          .from('tournament_audit_log')
+          .select('details')
+          .eq('event_id', eventId)
+          .eq('action', 'checkin_no_shows_released')
+          .then(({ data, error }) => (error ? [] : (data ?? []).flatMap((row) => {
+            const ids = (row.details as { entry_ids?: unknown } | null)?.entry_ids;
+            return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+          })))
+      : Promise.resolve([] as string[]),
+    // The group time caps (00331), for a staged event's desk with the void key.
+    // Empty before the migration.
+    drawCapabilities.voidResult && event.format === 'staged'
+      ? supabase
+          .from('stage_group_time_caps')
+          .select('id, stage, pool_number, group_number, cap_at, applied_at')
+          .eq('event_id', eventId)
+          .order('cap_at')
+          .then(({ data, error }) => (error ? [] : ((data ?? []) as GroupTimeCap[])))
+      : Promise.resolve([] as GroupTimeCap[]),
   ]);
   const helperCourtIds = myCourts.filter((c) => c.tournament_id === tournamentId).map((c) => c.court_id);
   const imported: Record<string, 'entered' | 'awaiting_partner'> = {};
@@ -593,6 +620,8 @@ export default async function EventPage({
         releaseFlags={releaseFlags}
         confirmations={confirmations}
         execs={execs}
+        releasedEntryIds={releasedEntryIds}
+        timeCaps={timeCaps}
       />
     </div>
   );

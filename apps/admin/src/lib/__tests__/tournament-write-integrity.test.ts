@@ -1520,6 +1520,7 @@ vi.mock('../tournament-actions/auto-call', () => ({
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
+  recordOffCourtResult, recordRetirement,
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses, recomputeEventStandings } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
@@ -2534,6 +2535,86 @@ describe('sweep margin multiplier', () => {
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     expect(ratingOf('pl-alice')).toBe(1045);
+  });
+});
+
+// 00329: DECIDED OFF COURT is never rated; RETIRED is rated as a walkover is,
+// margin 1.0 and no per-game figures, whoever was ahead when they stopped.
+describe('results decided off court and by retirement', () => {
+  const ratingCalls = () => store.rpcCalls.filter((c) => c.name === 'apply_tournament_match_rating');
+  const switchOff = (...ids: string[]) => {
+    store.db.platform_settings!.push({ key: 'release_flags', value: Object.fromEntries(ids.map((id) => [id, false])) });
+  };
+
+  it('records off court with no scores, advances the winner and rates nobody', async () => {
+    const res = await recordOffCourtResult(QF, 'b');
+
+    expect(res.ok).toBe(true);
+    expect(match(QF)).toMatchObject({
+      status: 'completed', scores: [], result_kind: 'off_court', retired_side: null,
+      winner_participant_id: 'p-bob', loser_participant_id: 'p-alice',
+    });
+    expect(ratingCalls()).toEqual([]);
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(match(SF).participant_a_id).toBe('p-bob');
+    expect(store.db.tournament_audit_log!.at(-1)).toMatchObject({
+      action: 'result_entered', details: expect.objectContaining({ result_kind: 'off_court' }),
+    });
+  });
+
+  it('rates a retirement at margin 1.0 with zero game figures, keeping the partial score', async () => {
+    // A 2-0 played would be a sweep (1026); a retirement is never one.
+    const res = await recordRetirement(QF, { retiredSide: 'b', scores: [{ a: 21, b: 15 }, { a: 21, b: 17 }], leaves: false });
+
+    expect(res.ok).toBe(true);
+    expect(match(QF)).toMatchObject({
+      status: 'completed', result_kind: 'retired', retired_side: 'b',
+      scores: [{ a: 21, b: 15 }, { a: 21, b: 17 }], winner_participant_id: 'p-alice',
+    });
+    expect(ratingOf('pl-alice')).toBe(1023);
+    const entries = ratingCalls()[0]!.args.p_entries as Array<Record<string, unknown>>;
+    for (const entry of entries) {
+      expect(entry).toMatchObject({ points_scored: 0, points_allowed: 0, games_won: 0, games_lost: 0 });
+    }
+  });
+
+  it('accepts a retiree who was ahead, and an unfinished last game', async () => {
+    const res = await recordRetirement(QF, { retiredSide: 'a', scores: [{ a: 21, b: 10 }, { a: 9, b: 4 }], leaves: false });
+
+    expect(res.ok).toBe(true);
+    expect(match(QF).winner_participant_id).toBe('p-bob');
+  });
+
+  it('refuses a score that is not one, before anything is written', async () => {
+    const res = await recordRetirement(QF, { retiredSide: 'a', scores: [{ a: 21.5, b: 10 }], leaves: false });
+
+    expect(res.ok === false && res.error).toBe('Each game score is a whole number from 0 to 99.');
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('refuses while its switch is off', async () => {
+    switchOff('decided_off_court', 'injury_retirement');
+    const offCourt = await recordOffCourtResult(QF, 'a');
+    expect(offCourt.ok).toBe(false);
+    const retired = await recordRetirement(QF, { retiredSide: 'a', scores: [], leaves: false });
+    expect(retired.ok).toBe(false);
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('asks the results capability', async () => {
+    capabilityGate.refuse = 'Not authorised';
+    const res = await recordOffCourtResult(QF, 'a');
+    expect(res.ok).toBe(false);
+    expect(capabilityGate.asked).toContain('tournaments.results.enter.write');
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('refuses to edit a decided result: undo it and enter it again', async () => {
+    await recordOffCourtResult(QF, 'a');
+    const res = await editMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a', 'Typo');
+
+    expect(res.ok === false && res.error).toBe('Undo this result and enter it again.');
+    expect(match(QF).result_kind).toBe('off_court');
   });
 });
 

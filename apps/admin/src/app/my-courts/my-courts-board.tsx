@@ -2,7 +2,12 @@
 
 import { useMemo } from 'react';
 import { courtLabel, parseFormatConfig, type FormatConfig, type TournamentCourt } from '@badminton/shared';
-import { enterCourtHelperResult, voidCourtHelperMatch } from '@/lib/tournament-actions';
+import {
+  enterCourtHelperOffCourt,
+  enterCourtHelperResult,
+  enterCourtHelperRetirement,
+  voidCourtHelperMatch,
+} from '@/lib/tournament-actions';
 import { absentEntryIds, deskRows, liveEntrants, nextMatchForCourt } from '@/lib/live-desk';
 import { CourtCard, type CourtDeskRow, type CourtScoreSave, type CourtVoid } from '../tournaments/[id]/events/[eventId]/components/CourtCard';
 import { getName } from '../tournaments/[id]/events/[eventId]/components/entry-name';
@@ -29,6 +34,10 @@ interface Props {
   skipAbsent?: boolean;
   /** Kill switch attendance_warnings; off, the card has no "Left". */
   markLeft?: boolean;
+  /** Kill switch decided_off_court; off, the card has no "Decided off court". */
+  offCourt?: boolean;
+  /** Kill switch injury_retirement; off, the card has no "Retired". */
+  retire?: boolean;
 }
 
 const save: CourtScoreSave = (matchId, scores) => enterCourtHelperResult(matchId, scores);
@@ -38,7 +47,9 @@ const voidMatch: CourtVoid = (matchId, reason) => voidCourtHelperMatch(matchId, 
  * One tournament's courts for a helper. Each court shows the event whose match
  * is on it, else the event with a match waiting for it, else a free court.
  */
-export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoid = true, skipAbsent = true, markLeft = true }: Props) {
+export function MyCourtsBoard({
+  courts, courtIds, busyCourtIds, events, courtVoid = true, skipAbsent = true, markLeft = true, offCourt = true, retire = true,
+}: Props) {
   const boards = useMemo(
     () =>
       events.flatMap((e) => {
@@ -74,6 +85,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoi
           return !!nextMatchForCourt(b.rows, court, courts, b.cfg, { busyEntries: liveEntrants(b.rows, live?.match.id) });
         };
         const board = boards.find(onCourt) ?? boards.find(waiting) ?? boards[0];
+        const isDoubles = !!board && !!events.find((e) => e.event.id === board.eventId)?.isDoubles;
         if (!board) {
           return (
             <div
@@ -104,6 +116,11 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoi
             save={save}
             voidMatch={courtVoid ? voidMatch : undefined}
             canMarkLeft={markLeft}
+            decide={{
+              offCourt: offCourt ? enterCourtHelperOffCourt : undefined,
+              retire: retire ? enterCourtHelperRetirement : undefined,
+              isDoubles,
+            }}
           />
         );
       })}

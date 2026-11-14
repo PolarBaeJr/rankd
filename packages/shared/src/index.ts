@@ -68,6 +68,7 @@ export * from './utils/entry-fee';
 export * from './utils/form-signed-waivers';
 export * from './utils/entry-membership';
 export * from './utils/match-result';
+export * from './utils/match-result-label';
 export * from './utils/game-rules';
 export * from './utils/staged-format';
 export * from './utils/season';

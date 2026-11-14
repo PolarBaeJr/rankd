@@ -1247,6 +1247,9 @@ export async function applyTournamentMatchElo(matchId: string) {
   // which clears it.
   if (match.elo_snapshot) return;
 
+  // Decided off court (00329) moves nobody: no game was played.
+  if (match.result_kind === 'off_court') return;
+
   const event = match.event as Record<string, unknown>;
   // An external event (00269) is unrated: its teams have no ratings rows. The
   // tournament_matches_external_unrated trigger refuses the snapshot as a backstop.
@@ -1316,7 +1319,13 @@ export async function applyTournamentMatchElo(matchId: string) {
   // same number; doing it once here removes any way to get the orientation
   // wrong. A walkover carries no scores at all, so total games is 0 and the
   // multiplier is 1.0 — which is what the SQL walkover branch does too.
-  const matchScores = (match.scores as Array<{ a: number; b: number }> | null) ?? [];
+  //
+  // A RETIREMENT (00329) is rated as a walkover is: its partial games stay on
+  // the row for the table and the display, but a game cut short says nothing
+  // about the margin, and the side that retired may have been ahead.
+  const matchScores = match.result_kind === 'retired'
+    ? []
+    : (match.scores as Array<{ a: number; b: number }> | null) ?? [];
   const gamesA = matchScores.filter(g => g.a > g.b).length;
   const gamesB = matchScores.filter(g => g.b > g.a).length;
   const marginMultiplier = getMarginMultiplier(

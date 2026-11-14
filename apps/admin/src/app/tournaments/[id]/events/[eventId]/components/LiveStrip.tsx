@@ -13,7 +13,7 @@ import {
   absentEntryIds, deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab, deskCourtSuggestion,
 } from '@/lib/live-desk';
 import { getName } from './entry-name';
-import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { ScoreEntryDialog, type DecidedOptions } from './ScoreEntryDialog';
 
 // ---------------------------------------------------------------------------
 // THE LIVE STRIP: what is on court and what is next, above every tab.
@@ -33,6 +33,8 @@ import { ScoreEntryDialog } from './ScoreEntryDialog';
 // ---------------------------------------------------------------------------
 
 interface Props {
+  /** Decided off court and Retired in the score dialog (00329). */
+  decided?: DecidedOptions;
   /** The WHOLE event, both halves, as the courts tab is given it. */
   matches: TournamentMatchRow[];
   event: TournamentEventRow;
@@ -50,6 +52,7 @@ interface Props {
 }
 
 export function LiveStrip({
+  decided,
   matches,
   event,
   participants,
@@ -192,6 +195,7 @@ export function LiveStrip({
           isDoubles={isDoubles}
           entries={placeableEntries}
           onClose={() => setScoreMatchId(null)}
+          decided={decided}
         />
       )}
     </>

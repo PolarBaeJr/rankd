@@ -57,6 +57,11 @@ describe('the registry', () => {
       'event_standard_defaults',
       'day_lead',
       'substitutions',
+      'decided_off_court',
+      'injury_retirement',
+      'late_arrival_reinstate',
+      'group_time_cap',
+      'merge_thin_groups',
     ]);
   });
 

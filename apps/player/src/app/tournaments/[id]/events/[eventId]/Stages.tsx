@@ -36,6 +36,7 @@ export function Stages({
   matches,
   nameOf,
   seedOf,
+  decidedLabels = {},
   title,
   subtitle,
 }: {
@@ -44,6 +45,8 @@ export function Stages({
   matches: StagedPlayerMatch[];
   nameOf: Record<string, string>;
   seedOf: Record<string, number | null>;
+  /** A match decided off court or by retirement (00329), as it reads. */
+  decidedLabels?: Record<string, string>;
   title: string;
   subtitle: string;
 }) {
@@ -162,7 +165,7 @@ export function Stages({
                             {side(m.aId, fixture?.a.slot, m.handicap_a)}
                           </div>
                           <div className="nums px-3 text-xs text-[var(--text-dim)] py-2.5 border-x border-[var(--border)] shrink-0">
-                            {done ? formatScores(m.scores) || 'W/O' : 'vs'}
+                            {done ? decidedLabels[m.id] ?? (formatScores(m.scores) || 'W/O') : 'vs'}
                           </div>
                           <div className={`flex-1 p-2.5 text-sm text-right truncate ${done && m.bId && m.bId === m.winnerId ? 'match-winner' : 'text-[var(--text-secondary)]'}`}>
                             {side(m.bId, fixture?.b.slot, m.handicap_b)}

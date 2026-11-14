@@ -24,6 +24,7 @@ import {
 import { useToast } from '@/components/toast-provider';
 import type { ActionResult } from '@/lib/action-result';
 import { PlayerLeftDialog } from './PlayerLeftDialog';
+import { DecidedResultDialog, type DecidedKind, type OffCourtSave, type RetirementSave } from './DecidedResultDialog';
 import type { Departure } from '@/lib/departure-reasons';
 
 /**
@@ -34,6 +35,16 @@ export type SubFromLeft = (entryId: string, departure: Departure, onBack: () => 
 import type { TournamentMatchRow } from '@/lib/tournament-types';
 
 export type CourtSide = { entryId: string | null; label: string; absent?: boolean };
+
+/**
+ * Decided off court and Retired on the card (00329), each given only while its
+ * switch is on. The desk's actions, or the helper twins on My courts.
+ */
+export interface CourtDecide {
+  offCourt?: OffCourtSave;
+  retire?: RetirementSave;
+  isDoubles: boolean;
+}
 export type CourtDeskRow = DeskRow<TournamentMatchRow, CourtSide>;
 
 /** Saves a score from the card. The desk's is enterMatchResult; a court helper's is passed in. */
@@ -77,6 +88,7 @@ interface Props {
    * sub in one call. Never a helper's.
    */
   onSub?: SubFromLeft;
+  decide?: CourtDecide;
 }
 
 /**
@@ -86,14 +98,15 @@ interface Props {
  */
 export function CourtCard({
   court, groupName, rows, courts, cfg, isLive, canEnterResult, canManageCourts, busyElsewhere, onMore, save, voidMatch,
-  canMarkLeft = false, onSub,
+  canMarkLeft = false, onSub, decide,
 }: Props) {
   const onCourt = rows.find((r) => r.state === 'live' && r.match.court_id === court.id) ?? null;
   const next = nextMatchForCourt(rows, court, courts, cfg, { busyEntries: liveEntrants(rows, onCourt?.match.id) });
   const name = courtLabel(court.label) ?? court.label;
   const optionIds = courtCardOptions({ more: !!onMore && canEnterResult, skip: canEnterResult, void: !!voidMatch });
   // Keyed by match, so a void reason typed for one match never carries to the next on this court.
-  const options = onCourt && (optionIds.length > 0 || canMarkLeft) ? (
+  const canDecide = canEnterResult && !!(decide?.offCourt || decide?.retire);
+  const options = onCourt && (optionIds.length > 0 || canMarkLeft || canDecide) ? (
     <CourtOptions
       key={onCourt.match.id}
       row={onCourt}
@@ -103,6 +116,7 @@ export function CourtCard({
       voidMatch={voidMatch}
       canMarkLeft={canMarkLeft}
       onSub={onSub}
+      decide={canEnterResult ? decide : undefined}
     />
   ) : null;
 
@@ -281,7 +295,7 @@ function PutOnCourt({ row, court }: { row: CourtDeskRow; court: TournamentCourt 
  * match. Inside the score form, so the trigger is type="button".
  */
 function CourtOptions({
-  row, courtName, optionIds, onMore, voidMatch, canMarkLeft = false, onSub,
+  row, courtName, optionIds, onMore, voidMatch, canMarkLeft = false, onSub, decide,
 }: {
   row: CourtDeskRow;
   courtName: string;
@@ -290,11 +304,13 @@ function CourtOptions({
   voidMatch?: CourtVoid;
   canMarkLeft?: boolean;
   onSub?: SubFromLeft;
+  decide?: CourtDecide;
 }) {
   const skip = useSkipForNow(row, courtName);
   const voiding = useVoidOnCourt(row, courtName, voidMatch);
   const [leaving, setLeaving] = useState<CourtSide | null>(null);
   const [leftReason, setLeftReason] = useState<Departure | null>(null);
+  const [deciding, setDeciding] = useState<DecidedKind | null>(null);
   const busy = skip.pending || voiding.pending;
   const items: Array<{ label: string; onClick: () => void; danger?: boolean; disabled: boolean }> = optionIds.flatMap((id) => {
     if (id === 'more' && onMore) return [{ label: 'Cut short, walkover…', onClick: onMore, disabled: busy }];
@@ -302,6 +318,9 @@ function CourtOptions({
     if (id === 'void' && voidMatch) return [{ label: 'Void match', onClick: voiding.ask, danger: true, disabled: busy }];
     return [];
   });
+  const bothSides = !!row.a.entryId && !!row.b.entryId;
+  if (decide?.offCourt && bothSides) items.push({ label: 'Decided off court', onClick: () => setDeciding('off_court'), disabled: busy });
+  if (decide?.retire && bothSides) items.push({ label: 'Retired', onClick: () => setDeciding('retired'), disabled: busy });
   if (canMarkLeft) {
     for (const side of [row.a, row.b]) {
       if (side.entryId) items.push({ label: `${side.label} left`, onClick: () => { setLeftReason(null); setLeaving(side); }, danger: true, disabled: busy });
@@ -320,6 +339,26 @@ function CourtOptions({
         items={items}
       />
       {voiding.dialog}
+      {deciding && decide && (
+        <DecidedResultDialog
+          kind={deciding}
+          matchId={row.match.id}
+          nameA={row.a.label}
+          nameB={row.b.label}
+          isDoubles={decide.isDoubles}
+          saveOffCourt={decide.offCourt ?? (async () => ({ ok: false, error: 'Decided off court is switched off.' }))}
+          saveRetirement={decide.retire ?? (async () => ({ ok: false, error: 'Retired is switched off.' }))}
+          onSubInjured={onSub && decide.isDoubles
+            ? (side) => {
+              const entryId = (side === 'a' ? row.a : row.b).entryId;
+              setDeciding(null);
+              if (entryId) onSub(entryId, { reason: 'injury', note: null }, () => {});
+            }
+            : undefined}
+          onDone={() => setDeciding(null)}
+          onCancel={() => setDeciding(null)}
+        />
+      )}
       {leaving?.entryId && (
         <PlayerLeftDialog
           eventId={row.match.event_id}

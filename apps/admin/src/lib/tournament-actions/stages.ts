@@ -15,6 +15,8 @@ import {
   eventIsPlaying,
   buildAddedRoundRows,
   buildLateEntrantRows,
+  buildMergedGroupRows,
+  mergeRefusal,
   buildStageRows,
   planLateEntrant,
   hasRedrawBlockers,
@@ -56,7 +58,8 @@ import { fillFreeCourts, type AutoCallReport } from './auto-call';
 import { readTournamentCourts } from '../tournament-courts';
 import { resolveStageCourts, rowForInsert, unknownStageCourtsMessage } from './stage-rows';
 import { drawField } from '../stage-controls';
-import { releaseFlagOn } from '../release-flags';
+import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
+import { TIME_CAP_LOCKED, lockedByTimeCap, readReachedTimeCaps } from '../group-time-caps';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -563,6 +566,10 @@ async function addStageRoundImpl(eventId: string, stageKey: string): Promise<{ m
     firstMatchNumber: loaded.firstMatchNumber,
   });
   if (rows.length === 0) throw new ExpectedError(`No group in "${stage.name}" has two teams still in it, so there is no round to add.`);
+  const caps = await readReachedTimeCaps(adminClient, eventId);
+  if (rows.some((r) => lockedByTimeCap(caps, { stage: k, pool_number: r.pool_number ?? null, group_number: r.group_number ?? null }))) {
+    throw new ExpectedError(TIME_CAP_LOCKED);
+  }
 
   const { courtsAssigned } = await insertStageExtension(adminClient, eventId, event.tournament_id, stage.name, rows, doubles);
   const repeats = groups.reduce((n, g) => n + g.repeats, 0);
@@ -591,6 +598,86 @@ async function addStageRoundImpl(eventId: string, stageKey: string): Promise<{ m
 /** One more round for every group of a drawn groups stage. */
 export async function addStageRound(eventId: string, stageKey: string): Promise<ActionResult<{ matches: number; repeats: number }>> {
   return runAction(() => addStageRoundImpl(eventId, stageKey));
+}
+
+// A THIN GROUP (00332), merged into another group of its pool before either
+// plays: one round robin of everyone still in both, in one transaction that
+// deletes the two groups' rows and inserts the new ones. The refusal is the
+// shared one, so the banner and this action agree on when a merge may happen.
+async function mergeThinGroupImpl(eventId: string, stageKey: string, pool: unknown, fromGroup: unknown, intoGroup: unknown): Promise<{ matches: number; autoCall?: AutoCallReport }> {
+  const loaded = await loadExtendableStage(eventId, stageKey);
+  await assertReleaseFlag('merge_thin_groups');
+  const groupNumber = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 64 ? n : null);
+  const [p, from, into] = [groupNumber(pool), groupNumber(fromGroup), groupNumber(intoGroup)];
+  if (p == null || from == null || into == null) throw new ExpectedError('Pick two groups of one pool.');
+  const { admin, adminClient, event, cfg, stage, k, doubles, entries, results, active } = loaded;
+
+  const caps = await readReachedTimeCaps(adminClient, eventId);
+  const refusal = mergeRefusal(cfg, stageKey, results, active, p, from, into, {
+    laterStageDrawn: false,
+    capped: (capPool, capGroup) => lockedByTimeCap(caps, { stage: k, pool_number: capPool, group_number: capGroup }),
+  });
+  if (refusal) throw new ExpectedError(refusal);
+
+  const categories = new Map(entries.map((e) => [e.id, e.category]));
+  const rows = buildMergedGroupRows(cfg, stageKey, results, active, p, from, into, categories, loaded.generation, {
+    firstSlot: loaded.firstSlot,
+    firstMatchNumber: loaded.firstMatchNumber,
+  });
+  if (rows.length === 0) throw new ExpectedError('The two groups have fewer than two teams between them, so there is nothing to play.');
+  const courts = await readTournamentCourts(adminClient, event.tournament_id);
+  const { courtIds, unknown: unknownCourts } = resolveStageCourts(courts, rows);
+  if (unknownCourts.length > 0) throw new ExpectedError(unknownStageCourtsMessage(unknownCourts));
+
+  const { data, error } = await adminClient.rpc('merge_stage_groups', {
+    p_event_id: eventId,
+    p_stage: k,
+    p_pool: p,
+    p_from_group: from,
+    p_into_group: into,
+    p_generation: loaded.generation,
+    p_rows: rows.map((r) => rowForInsert(eventId, r, doubles, courtIds)) as never,
+    p_actor: admin.id,
+  });
+  if (error) {
+    if (['PGRST202', '42883'].includes(error.code ?? '')) throw new ExpectedError('Run migration 00332 first');
+    if (error.code === '23505' || error.code === '23514') throw new ExpectedError(STAGE_CHANGED);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as { ok: boolean; reason?: string; inserted?: number } | null;
+  if (!result?.ok) {
+    throw new ExpectedError(
+      result?.reason === 'played' || result?.reason === 'rated' || result?.reason === 'live'
+        ? 'One of the two groups has a result or a match on court now, so it is played as it is.'
+        : result?.reason === 'later_stage'
+          ? 'A later stage has been drawn from this stage, so its groups stay as they are.'
+          : STAGE_CHANGED,
+    );
+  }
+
+  let autoCall: AutoCallReport | undefined;
+  if (eventIsPlaying(event.status)) {
+    try {
+      autoCall = (await fillFreeCourts(adminClient, { event, actorId: admin.id, trigger: 'draw' })) ?? undefined;
+    } catch (err) {
+      Sentry.captureException(err);
+      autoCall = { called: [], failed: [{ court: null, reason: err instanceof Error ? err.message : 'Unknown error' }] };
+    }
+  }
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { matches: result.inserted ?? rows.length, ...(autoCall ? { autoCall } : {}) };
+}
+
+/** Merge a thin group of a drawn groups stage into another group of its pool. */
+export async function mergeThinGroup(
+  eventId: string,
+  stageKey: string,
+  pool: number,
+  fromGroup: number,
+  intoGroup: number,
+): Promise<ActionResult<{ matches: number; autoCall?: AutoCallReport }>> {
+  return runAction(() => mergeThinGroupImpl(eventId, stageKey, pool, fromGroup, intoGroup));
 }
 
 // A LATE ENTRANT (00308) joins one group of the first stage and plays only the
@@ -646,6 +733,9 @@ async function placeLateEntrantImpl(
     firstMatchNumber: loaded.firstMatchNumber,
   });
   if (rows.length === 0) throw new ExpectedError('That group has nobody left in it to play.');
+  if (lockedByTimeCap(await readReachedTimeCaps(adminClient, event.id), { stage: k, pool_number: plan.pool, group_number: plan.group })) {
+    throw new ExpectedError(TIME_CAP_LOCKED);
+  }
 
   // A court the desk picked, by the auto-call's own rule: it must be one the
   // group's pool may use, or nothing would ever call the matches there.

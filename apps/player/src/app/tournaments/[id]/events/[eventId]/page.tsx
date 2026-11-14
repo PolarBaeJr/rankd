@@ -30,6 +30,7 @@ import {
   registrationWindowNotice,
   checkinWindowNotice,
   formatClubEventTime,
+  matchResultLabel,
 } from '@badminton/shared';
 import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
 import { getMyWaitlistState, type MyWaitlistState } from '@/lib/event-waitlist';
@@ -222,6 +223,17 @@ export default async function EventDetailPage({
   );
 
   const allMatches = matches as Array<Record<string, unknown>>;
+
+  // Decided off court or by retirement (00329), read on its own so a database
+  // without the columns still renders every match as played rather than 500ing.
+  const decidedRes = await supabase
+    .from('tournament_matches')
+    .select('id, scores, result_kind, retired_side')
+    .eq('event_id', eventId)
+    .not('result_kind', 'is', null);
+  const decidedLabels: Record<string, string> = Object.fromEntries(
+    (decidedRes.error ? [] : decidedRes.data ?? []).map((m) => [m.id, matchResultLabel(m)]),
+  );
 
   const { player: currentPlayer } = await getViewer();
   // `paired` is the discriminator; `partnerName` is display only and may be
@@ -769,7 +781,7 @@ export default async function EventDetailPage({
                 .map((m) => {
                   const matchStatus  = m.status as TournamentMatchStatus;
                   const scores       = m.scores as Array<{ a: number; b: number }> | null;
-                  const scoreStr     = formatScores(scores);
+                  const scoreStr     = decidedLabels[m.id as string] ?? formatScores(scores);
                   const playerSide   = mySideOf(m)!;
                   const won          = isWinner(m, playerSide);
                   const opponentName = opponentNameOf(m, playerSide);
@@ -948,6 +960,7 @@ export default async function EventDetailPage({
               matches={stagedMatches}
               nameOf={participantNameMap}
               seedOf={participantSeedMap}
+              decidedLabels={decidedLabels}
               title={TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
               subtitle={tournament.name}
             />
@@ -973,7 +986,7 @@ export default async function EventDetailPage({
                   <div className="space-y-2">
                     {roundMatches.map((m) => {
                       const scores      = m.scores as Array<{ a: number; b: number }> | null;
-                      const scoreStr    = formatScores(scores);
+                      const scoreStr    = decidedLabels[m.id as string] ?? formatScores(scores);
                       const matchStatus = m.status as TournamentMatchStatus;
                       const winA        = isWinner(m, 'a');
                       const winB        = isWinner(m, 'b');

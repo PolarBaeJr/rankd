@@ -20,8 +20,10 @@
 //                       switch off, and import the courts already typed
 //   - court-helpers.ts: naming console members to keep score on a court (00310)
 //   - attendance.ts   : the event standard at the desk (00324 to 00326): a place
-//                       confirmed for a member, releasing no-shows, the reserves
+//                       confirmed for a member, releasing no-shows, the reserves,
+//                       a late arrival whose place was released (00330)
 //   - substitutions.ts: somebody in for one member of a team or the whole entry (00327)
+//   - time-caps.ts    : a time after which a group starts no new match (00331)
 //   - _internal.ts    — private helpers (NOT 'use server' — revalidation,
 //                       notifications, Elo apply/reverse, standings)
 export {
@@ -81,7 +83,7 @@ export {
   unlockDraw,
 } from './tournament-actions/brackets';
 
-export { drawStage, redrawStage, addStageRound, placeLateEntrant } from './tournament-actions/stages';
+export { drawStage, redrawStage, addStageRound, placeLateEntrant, mergeThinGroup } from './tournament-actions/stages';
 export type { LateEntrantChoice } from './tournament-actions/stages';
 
 export {
@@ -108,8 +110,20 @@ export {
   voidOpenMatchesForEntry,
   voidUnplayedMatches,
   recordPlayerLeft,
+  recordOffCourtResult,
+  enterCourtHelperOffCourt,
+  recordRetirement,
+  enterCourtHelperRetirement,
 } from './tournament-actions/results';
-export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts, BulkVoidResult, PlayerLeftResult } from './tournament-actions/results';
+export type {
+  MatchOutcomeSummary,
+  EntryEventSummary,
+  CurrentHeadStarts,
+  BulkVoidResult,
+  PlayerLeftResult,
+  RetirementInput,
+  DecidedKindResult,
+} from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,
@@ -137,8 +151,13 @@ export {
   confirmEntryForMember,
   releaseCheckinNoShows,
   enterReserveAndCheckIn,
+  reinstateLateArrival,
+  returnLateArrivalToReserves,
 } from './tournament-actions/attendance';
-export type { ReleaseNoShowsResult, ReserveEntryResult } from './tournament-actions/attendance';
+export type { LateArrivalResult, ReleaseNoShowsResult, ReserveEntryResult } from './tournament-actions/attendance';
+
+export { applyGroupTimeCapNow, clearGroupTimeCap, setGroupTimeCap } from './tournament-actions/time-caps';
+export type { CapNowResult, GroupTimeCapInput } from './tournament-actions/time-caps';
 
 export { leaveAndSubstitute, substituteEntry } from './tournament-actions/substitutions';
 export type {
