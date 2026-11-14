@@ -38,6 +38,7 @@ import type {
 // By SUBPATH — node:crypto, server only.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requireCapability } from './_shared';
+import { followStartWithCheckinCutoff, type TournamentStart } from '../checkin-cutoff-follow';
 import { releaseFlagOn } from '../release-flags';
 import { runAction, type ActionResult } from '../action-result';
 import { finalizeEvent } from '../tournament-actions/finalize';
@@ -537,6 +538,15 @@ async function dayLeadColumn(
 
 // Public entry point: the refusals below come back as a value, for the reason
 // updateTournamentStatus gives above.
+/** The start fields an update actually wrote; an absent key was left as it was. */
+function pickStart(written: Record<string, unknown>): TournamentStart {
+  const picked: TournamentStart = {};
+  for (const key of ['start_date', 'starts_time', 'checkin_closes_at'] as const) {
+    if (key in written && written[key] !== undefined) picked[key] = written[key] as string | null;
+  }
+  return picked;
+}
+
 export async function updateTournament(tournamentId: string, data: TournamentUpdate): Promise<ActionResult<void>> {
   return runAction(async () => { await updateTournamentImpl(tournamentId, data); });
 }
@@ -667,6 +677,13 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
     throw new Error(error.message);
   }
 
+  // The events' default check-in close moves with the new start.
+  const written = { start_date: data.start_date, ...windows, ...details } as Record<string, unknown>;
+  await followStartWithCheckinCutoff(adminClient, tournamentId, old as TournamentStart, {
+    ...(old as TournamentStart),
+    ...pickStart(written),
+  });
+
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'tournament_updated',
@@ -712,6 +729,12 @@ export async function updateTournamentDetails(
       if (isColumnMissing(error)) throw new ExpectedError(DETAILS_MIGRATION_MISSING);
       throw new Error(error.message);
     }
+
+    // The events' default check-in close moves with the new start.
+    await followStartWithCheckinCutoff(adminClient, tournamentId, old as TournamentStart, {
+      ...(old as TournamentStart),
+      ...pickStart(details as Record<string, unknown>),
+    });
 
     const before = Object.fromEntries(DETAIL_KEYS.map((key) => [key, (old as Record<string, unknown>)[key] ?? null]));
     await logAdminAudit(adminClient, {
