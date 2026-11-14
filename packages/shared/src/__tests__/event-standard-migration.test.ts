@@ -82,7 +82,9 @@ describe('00324: the tables are the service role\'s alone', () => {
 
   it('records a departure with a reason from a fixed list, a note for "other", one per member per event', () => {
     expect(sql).toContain("CHECK (reason IN ('injury', 'told_organizers', 'emergency', 'other', 'without_notice'))");
-    expect(sql).toContain("CHECK (reason <> 'other' OR char_length(btrim(note)) > 0)");
+    // COALESCE: a missing note fails the check instead of making it NULL, which a CHECK passes.
+    expect(sql).toContain("CHECK (reason <> 'other' OR COALESCE(char_length(btrim(note)), 0) > 0)");
+    expect(sql).toContain('DROP CONSTRAINT IF EXISTS event_departures_other_has_note');
     expect(sql).toContain('warning_id     uuid REFERENCES public.attendance_warnings(id) ON DELETE SET NULL');
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS public\.event_departures \([\s\S]*UNIQUE \(event_id, player_id\)/);
     expect(sql).toContain("source IN ('checkin_close', 'did_not_come', 'desk', 'court_helper')");

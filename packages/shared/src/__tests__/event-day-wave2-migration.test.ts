@@ -88,8 +88,9 @@ describe('00329: results decided off court and by retirement', () => {
   });
 
   it('shapes the row: off court has no scores and no side, retired has a side', () => {
-    expect(sql).toMatch(/result_kind = 'off_court' AND retired_side IS NULL\s+AND \(scores IS NULL OR jsonb_array_length\(scores\) = 0\)/);
-    expect(sql).toMatch(/result_kind = 'retired' AND retired_side IS NOT NULL/);
+    // COALESCE: a NULL result_kind makes each arm false, not NULL, which a CHECK would pass.
+    expect(sql).toMatch(/COALESCE\(result_kind = 'off_court', false\) AND retired_side IS NULL\s+AND \(scores IS NULL OR jsonb_array_length\(scores\) = 0\)/);
+    expect(sql).toMatch(/COALESCE\(result_kind = 'retired', false\) AND retired_side IS NOT NULL/);
   });
 
   it('refuses a rating on off court, and clears the kind when a match goes back to playable', () => {

@@ -24,9 +24,10 @@ INSERT INTO players (id, email, first_name, status) VALUES
  ('dddddddd-0332-4000-8000-000000000003','merge332-3@example.invalid','MemberC','recreational');
 INSERT INTO tournaments (id, name, start_date, status) VALUES
  ('dddddddd-0332-4000-8000-0000000000a1', 'Team Curlew Open', CURRENT_DATE, 'active');
-INSERT INTO tournament_events (id, tournament_id, event_type, format, status, draw_generation_id) VALUES
+-- A staged event needs a version 1 format_config (tournament_events_staged_config).
+INSERT INTO tournament_events (id, tournament_id, event_type, format, status, draw_generation_id, format_config) VALUES
  ('dddddddd-0332-4000-8000-0000000000e1', 'dddddddd-0332-4000-8000-0000000000a1', 'open_singles', 'staged', 'live',
-  'dddddddd-0332-4000-8000-0000000000aa');
+  'dddddddd-0332-4000-8000-0000000000aa', '{"version":1,"stages":[{"key":"groups"}]}');
 INSERT INTO tournament_participants (id, event_id, player_id, status) VALUES
  ('dddddddd-0332-4000-8000-0000000000f1', 'dddddddd-0332-4000-8000-0000000000e1', 'dddddddd-0332-4000-8000-000000000001', 'checked_in'),
  ('dddddddd-0332-4000-8000-0000000000f2', 'dddddddd-0332-4000-8000-0000000000e1', 'dddddddd-0332-4000-8000-000000000002', 'checked_in'),

@@ -66,11 +66,13 @@ ALTER TABLE public.tournament_matches ADD CONSTRAINT tournament_matches_retired_
 
 ALTER TABLE public.tournament_matches DROP CONSTRAINT IF EXISTS tournament_matches_result_kind_shape;
 ALTER TABLE public.tournament_matches ADD CONSTRAINT tournament_matches_result_kind_shape
+  -- Every arm is false, never NULL, when result_kind is NULL: a CHECK that
+  -- comes out NULL passes, which let a played match take a retired side.
   CHECK (
     (result_kind IS NULL AND retired_side IS NULL)
-    OR (result_kind = 'off_court' AND retired_side IS NULL
+    OR (COALESCE(result_kind = 'off_court', false) AND retired_side IS NULL
         AND (scores IS NULL OR jsonb_array_length(scores) = 0))
-    OR (result_kind = 'retired' AND retired_side IS NOT NULL)
+    OR (COALESCE(result_kind = 'retired', false) AND retired_side IS NOT NULL)
   );
 
 -- Back to playable is a result taken off, whichever path did it.
@@ -132,6 +134,12 @@ BEGIN
          AND conname IN ('tournament_matches_result_kind_check', 'tournament_matches_retired_side_check',
                          'tournament_matches_result_kind_shape')) <> 3 THEN
     v_bad := array_append(v_bad, 'a result kind constraint is missing');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'public.tournament_matches'::regclass
+                    AND conname = 'tournament_matches_result_kind_shape'
+                    AND pg_get_constraintdef(oid) LIKE '%COALESCE%') THEN
+    v_bad := array_append(v_bad, 'tournament_matches_result_kind_shape lets a NULL result_kind take a retired side');
   END IF;
   IF (SELECT count(*) FROM pg_trigger
        WHERE tgrelid = 'public.tournament_matches'::regclass AND NOT tgisinternal

@@ -21,8 +21,10 @@ SET LOCAL client_min_messages = notice;
 
 INSERT INTO tournaments (id, name, start_date, status) VALUES
  ('dddddddd-0331-4000-8000-0000000000a1', 'Team Sandpiper Open', CURRENT_DATE, 'active');
-INSERT INTO tournament_events (id, tournament_id, event_type, format, status) VALUES
- ('dddddddd-0331-4000-8000-0000000000e1', 'dddddddd-0331-4000-8000-0000000000a1', 'open_singles', 'staged', 'pool_live');
+-- A staged event needs a version 1 format_config (tournament_events_staged_config).
+INSERT INTO tournament_events (id, tournament_id, event_type, format, status, format_config) VALUES
+ ('dddddddd-0331-4000-8000-0000000000e1', 'dddddddd-0331-4000-8000-0000000000a1', 'open_singles', 'staged', 'pool_live',
+  '{"version":1,"stages":[{"key":"groups"}]}');
 
 INSERT INTO tournament_matches (id, event_id, round_number, bracket_position, stage, pool_number, group_number, status) VALUES
  ('dddddddd-0331-4000-8000-0000000000c1', 'dddddddd-0331-4000-8000-0000000000e1', 1, 1, 1, 1, 1, 'pending'),

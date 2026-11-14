@@ -95,6 +95,17 @@ describe('00328: the substitution', () => {
     expect(code).not.toMatch(/fill_event_from_waitlist|add_participants_under_field_lock|enter_tournament_event/);
   });
 
+  // 00309's BEFORE UPDATE trigger clears a slot's stamp when its person
+  // changes, so the person and the stamp go in two UPDATEs, and a pair sent
+  // back to registered has the staying partner's stamp put back.
+  it('keeps the incoming and the staying check-ins past 00309\'s trigger', () => {
+    const fn = body();
+    expect(fn).not.toMatch(/SET\s+player[12]_id\s*=\s*v_in\s*,\s*player[12]_checked_in_at/);
+    expect(fn).toMatch(/UPDATE tournament_pairs SET player1_id = v_in WHERE id = p_entry_id;\s+UPDATE tournament_pairs SET player1_checked_in_at = v_stamp1 WHERE id = p_entry_id;/);
+    expect(fn).toMatch(/UPDATE tournament_pairs SET player2_id = v_in WHERE id = p_entry_id;\s+UPDATE tournament_pairs SET player2_checked_in_at = v_stamp1 WHERE id = p_entry_id;/);
+    expect(fn).toMatch(/SET player1_checked_in_at = v_stamp1, player2_checked_in_at = v_stamp2/);
+  });
+
   it('restates no entry path', () => {
     for (const name of [
       'set_field_entry_status',
