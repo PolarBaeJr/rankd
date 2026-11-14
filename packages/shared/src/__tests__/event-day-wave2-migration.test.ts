@@ -21,7 +21,9 @@ const migrationOf = (prefix: string) =>
   readFileSync(join(MIGRATIONS_DIR, migrationFiles().find((f) => f.startsWith(prefix))!), 'utf8');
 const stripComments = (sql: string) => sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
 
-const VERSIONS = ['00329_', '00330_', '00331_', '00332_'];
+const VERSIONS = ['00329_', '00330_', '00331_', '00332_', '00333_', '00334_'];
+// 00333 adds tables and a capability and no function.
+const NO_FUNCTION = new Set(['00333_']);
 
 const NOT_RESTATED = [
   'set_field_entry_status',
@@ -63,7 +65,8 @@ describe('wave 2: shape', () => {
     it(`${version} keeps every new function off anon and authenticated`, () => {
       const sql = stripComments(migrationOf(version));
       const names = [...sql.matchAll(/CREATE OR REPLACE FUNCTION public\.([a-z_]+)\(/g)].map((m) => m[1]!);
-      expect(names.length).toBeGreaterThan(0);
+      if (NO_FUNCTION.has(version)) expect(names).toEqual([]);
+      else expect(names.length).toBeGreaterThan(0);
       for (const name of names) {
         expect(sql, name).toMatch(new RegExp(`REVOKE ALL ON FUNCTION public\\.${name}\\([^)]*\\) FROM PUBLIC, anon, authenticated;`));
       }
@@ -204,5 +207,57 @@ describe.skipIf(!existsSync(ROLLBACKS_DIR))('wave 2: the down scripts', () => {
     const down = readFileSync(join(ROLLBACKS_DIR, '00329_down.sql'), 'utf8');
     expect(down.indexOf('DROP TRIGGER IF EXISTS tournament_matches_off_court_unrated'))
       .toBeLessThan(down.indexOf('DROP COLUMN IF EXISTS result_kind'));
+  });
+});
+
+describe('00333: results are posted, and social posts are ready', () => {
+  const sql = stripComments(migrationOf('00333_'));
+
+  it('keeps both tables to the service role, with RLS on and no player FK', () => {
+    for (const table of ['event_results_posts', 'event_social_post_sets']) {
+      expect(sql).toContain(`ALTER TABLE public.${table} ENABLE ROW LEVEL SECURITY;`);
+      expect(sql).toContain(`REVOKE ALL ON TABLE public.${table} FROM PUBLIC, anon, authenticated;`);
+      expect(sql).toMatch(new RegExp(`GRANT [A-Z, ]+ ON TABLE public\\.${table} TO service_role;`));
+    }
+    expect(sql).not.toMatch(/REFERENCES public\.players/);
+  });
+
+  it('admits the capability in both CHECKs and grants it to the two marketing portfolios by id', () => {
+    expect(sql.match(/'announcements\.discord\.write', 'announcements\.socialposts\.read'/g)).toHaveLength(2);
+    expect(sql).toMatch(/UPDATE public\.permission_baselines[\s\S]*?5eed0060-0000-4000-8000-000000000204[\s\S]*?5eed0060-0000-4000-8000-000000000206[\s\S]*?AND NOT \(capabilities @>/);
+    expect(sql).toMatch(/UPDATE public\.players p[\s\S]*?permission_baseline_id IN[\s\S]*?AND NOT \(p\.permission_grants @>/);
+    expect(sql).not.toMatch(/SET permission_revokes/);
+  });
+
+  it('names the three set kinds', () => {
+    expect(sql).toContain("kind IN ('teams_full', 'teams_new', 'draw')");
+  });
+
+  it.skipIf(!existsSync(ROLLBACKS_DIR))('the down script strips the string from every stored array before restoring the old CHECK', () => {
+    const down = readFileSync(join(ROLLBACKS_DIR, '00333_down.sql'), 'utf8');
+    const strip = down.indexOf("array_remove(permission_grants, 'announcements.socialposts.read')");
+    const restore = down.indexOf('ADD CONSTRAINT players_permission_vocabulary_check');
+    expect(strip).toBeGreaterThan(-1);
+    expect(strip).toBeLessThan(restore);
+    expect(down).toContain("array_remove(capabilities, 'announcements.socialposts.read')");
+    expect(down.slice(restore)).not.toContain('announcements.socialposts.read');
+  });
+});
+
+describe('00334: confirmations follow a team', () => {
+  const sql = stripComments(migrationOf('00334_'));
+  const body = sql.slice(sql.indexOf('FUNCTION public.relink_event_confirmations'), sql.indexOf('REVOKE ALL ON FUNCTION'));
+
+  it('adds only relink_event_confirmations, to the service role', () => {
+    expect([...sql.matchAll(/CREATE OR REPLACE FUNCTION public\.([a-z_]+)\(/g)].map((m) => m[1])).toEqual(['relink_event_confirmations']);
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.relink_event_confirmations(uuid, uuid[]) TO service_role;');
+    expect(body).toContain('SECURITY DEFINER');
+    expect(body).toContain("SET search_path TO 'public', 'pg_temp'");
+  });
+
+  it('never writes status, and sets both entry columns in one statement', () => {
+    expect(body).not.toMatch(/SET[^;]*\bstatus\s*=/);
+    expect(body).toContain('SET pair_id = m.pair_id, participant_id = NULL');
+    expect(body).toContain('SET participant_id = s.participant_id, pair_id = NULL');
   });
 });

@@ -277,6 +277,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Delete an announcement', area: 'announcements', group: null, mode: 'write',
     gate: 'actions/announcements.ts deleteAnnouncement',
   },
+  'announcements.socialposts.read': {
+    label: 'Social posts for an event', area: 'announcements', group: null, mode: 'read',
+    gate: 'route /announcements/social/[eventId] and api/social-posts/[setId]/[slide]',
+  },
 
   // ---- tournaments · manage ----------------------------------------------
   // No group: a page belongs to its AREA, not to one of the area's four jobs.

@@ -8,6 +8,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { queueDrawSocialPosts } from '../social-posts/queue';
 import { runAction, type ActionResult } from '../action-result';
 import {
   ExpectedError,
@@ -447,6 +448,13 @@ async function drawStageImpl(
       redrawn_live: event.status === 'live',
     },
   });
+
+  // Draw slides for the Marketing holders (social_posts, 00333). Never fails the draw.
+  try {
+    await queueDrawSocialPosts(adminClient, eventId);
+  } catch (err) {
+    Sentry.captureException(err);
+  }
 
   // A stage drawn while the event is live (the knockout after the groups) has
   // every court free, so its first matches go on now. At check-in this is a no-op.

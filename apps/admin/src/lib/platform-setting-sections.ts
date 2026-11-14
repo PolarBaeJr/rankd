@@ -47,6 +47,8 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
   // Club links. Neither row is seeded by a migration; see SEEDABLE_SETTINGS.
   membership_payments: 'club',
   club_socials: 'club',
+  // The hashtags a social post's caption ends with (00333). Seeded on first save.
+  social_hashtags: 'club',
 };
 
 // A platform_settings row added later without a line above must still be

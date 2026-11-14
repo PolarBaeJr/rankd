@@ -3,6 +3,7 @@ import {
   groupNotificationsByAge,
   notificationAction,
   notificationBucket,
+  notificationCopyText,
   notificationHeadline,
   notificationLabel,
   notificationTone,
@@ -397,5 +398,27 @@ describe('summariseByKind', () => {
 
   it('summarises nothing as nothing', () => {
     expect(summariseByKind([])).toEqual([]);
+  });
+});
+
+describe('00333: posts ready for the Marketing holders', () => {
+  const url = 'https://club.example.invalid/admin/announcements/social/e1';
+
+  it('opens the console page the console wrote', () => {
+    for (const kind of ['event_results_handoff', 'social_posts_ready']) {
+      expect(notificationAction('general', { kind, tournament_id: 't1', event_id: 'e1', console_url: url }))
+        .toEqual({ href: url, label: 'Open' });
+    }
+  });
+
+  it('no button for a missing or non-http link, never the event page instead', () => {
+    expect(notificationAction('general', { kind: 'event_results_handoff', tournament_id: 't1', event_id: 'e1' })).toBeNull();
+    expect(notificationAction('general', { kind: 'social_posts_ready', console_url: 'javascript:alert(1)' })).toBeNull();
+    expect(notificationAction('general', { kind: 'social_posts_ready', console_url: '/admin/x' })).toBeNull();
+  });
+
+  it('carries the text to copy', () => {
+    expect(notificationCopyText({ copy_text: 'Cup results: 1st A' })).toBe('Cup results: 1st A');
+    expect(notificationCopyText({})).toBeNull();
   });
 });

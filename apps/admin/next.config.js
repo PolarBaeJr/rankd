@@ -58,6 +58,9 @@ const nextConfig = {
     '/api/cron/registration-form-poll': [...TESSERACT_FILES, ...HEIC_FILES],
     '/fees/proof/*': HEIC_FILES,
     '/tournaments/*/fees/proof/*': HEIC_FILES,
+    // The social post slides read the .ttf faces off disk; nothing imports
+    // them, so the trace would leave them out.
+    '/api/social-posts/[setId]/[slide]': ['./src/fonts/*.ttf'],
   },
   serverExternalPackages: ['tesseract.js', 'tesseract.js-core', 'heic-decode', 'libheif-js'],
   // Inlined at build time, so the standalone server needs nothing at runtime.

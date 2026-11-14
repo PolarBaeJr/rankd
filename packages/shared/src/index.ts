@@ -58,6 +58,7 @@ export * from './utils/club-events';
 export * from './utils/tournament-windows';
 export * from './utils/tournament-details';
 export * from './utils/doubles-pool';
+export * from './utils/team-builder';
 export * from './utils/competition-category';
 export * from './utils/privilege-claim';
 export * from './utils/elo-review';

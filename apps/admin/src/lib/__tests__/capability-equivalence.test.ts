@@ -193,6 +193,7 @@ const TODAY: Row[] = [
   // subset of that set. What an exec HOLDS by default is EXEC_BASELINE, twelve
   // reads, and this is not among them.
   { capability: 'announcements.discord.write',         admin: T, exec: T, trainer: F, was: 'no console equivalent — /say, gated by Discord MANAGE_GUILD; VP External since 00224' },
+  { capability: 'announcements.socialposts.read',      admin: T, exec: F, trainer: F, was: 'no prior gate: Social posts are new in 00333; an officer reads it through the floor' },
 
   // ---- tournaments · manage --------------------------------------------
   { capability: 'tournaments.page',                    admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('tournaments') — tournaments/[id]/page.tsx:18" },

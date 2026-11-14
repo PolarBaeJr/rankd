@@ -62,6 +62,9 @@ describe('the registry', () => {
       'late_arrival_reinstate',
       'group_time_cap',
       'merge_thin_groups',
+      'results_post',
+      'social_posts',
+      'generate_teams',
     ]);
   });
 

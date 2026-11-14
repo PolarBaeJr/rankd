@@ -39,6 +39,7 @@ import {
   type FormatCategory, type TournamentEventType,
 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
+import { TeamsBuilder } from './TeamsBuilder';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid, Clock } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
@@ -1419,6 +1420,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         table with somebody in it. Those rows moved to the Withdrawn block below;
         this list is the people actually waiting.
       */}
+      {/* Generate teams (00334). Renders nothing while generate_teams is off. */}
+      {isDoubles && capabilities.add && !event.external_event && (
+        <TeamsBuilder eventId={event.id} players={allPlayers} />
+      )}
       {isDoubles && activeUnpaired.length > 0 && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">

@@ -464,6 +464,12 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
                   canMarkPaid={may('fees.clubfees.markpaid.write')}
                 />
               )}
+              {/* Generate teams (00334) lives on the linked doubles event's Participants tab. */}
+              {linked && partnerBoard?.doubles && may('tournaments.draw.pairs.add.write') && (await getReleaseFlags()).generate_teams && (
+                <Link href={`/tournaments/${linked.tournamentId}/events/${event.tournament_event_id}`} className="text-sm underline">
+                  Generate teams
+                </Link>
+              )}
             </div>
             <ClubEventSignupsTable
               eventId={event.id}

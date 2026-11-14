@@ -60,6 +60,8 @@ const SERVICE_ROLE_ONLY = [
   'inactivity_notice_sent_at',
   'is_banned',
   'is_exec',
+  // 00292. A guest added at the door; set by the service role only.
+  'is_guest',
   'is_trainer',
   'joined_at',
   // 00320. Written only by touch_last_seen() as the owner, for the caller.

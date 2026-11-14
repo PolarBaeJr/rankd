@@ -334,6 +334,10 @@ export const CAPABILITIES = [
   'announcements.update.write',
   'announcements.delete.write',
   'announcements.discord.write',
+  // The Social posts page and its slide images (00333). A read, so every
+  // officer holds it through EXEC_READS; the notices that a set is ready go
+  // only to the two marketing portfolios that carry it, and their holders.
+  'announcements.socialposts.read',
 
   // ---- tournaments -------------------------------------------------------
   // The largest area by a distance — more capabilities than the next three

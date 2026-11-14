@@ -87,6 +87,8 @@ export const AUDITABLE_COLUMNS = [
   // 00255. A member's own photo and video choice. Standing, not identity.
   'media_consent',
   'media_consent_changed_at',
+  // 00292. A guest made for one club event. Standing, not identity.
+  'is_guest',
   // The two review flags. Both exist BECAUSE an admin act left something for a
   // human to check — a roster claim that withheld privileges (00132), a merge
   // that discarded rows or found the account playing itself (00163) — so an

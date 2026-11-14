@@ -1517,6 +1517,8 @@ const autoCall = vi.hoisted(() => ({ fillFreeCourts: vi.fn() }));
 vi.mock('../tournament-actions/auto-call', () => ({
   fillFreeCourts: (...args: unknown[]) => autoCall.fillFreeCourts(...args),
 }));
+// The results post (00333) is tested on its own (event-results-post.test.ts).
+vi.mock('../event-results-post', () => ({ postEventResults: async () => ({ posted: 'off', notified: 0 }) }));
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,

@@ -233,6 +233,27 @@ export const RELEASE_FLAGS = [
     off: 'Off: no merge suggestion; the merge action refuses.',
     since: '1.2.0',
   },
+  {
+    id: 'results_post',
+    label: 'Top 4 announced',
+    description: 'Finalizing an event posts one short announcement of its top 4, which also goes to Discord, and sends the Marketing holders the same lines to copy. A re-finalize edits that announcement.',
+    off: 'Off: finalizing posts nothing and sends no Marketing notice.',
+    since: '1.2.0',
+  },
+  {
+    id: 'social_posts',
+    label: 'Social posts',
+    description: 'Meet the teams, New teams and draw slides for Instagram, with a caption to copy, on the event\'s Social posts page. New teams added within 10 minutes share one notice to the Marketing holders.',
+    off: 'Off: no Social posts notices; the page and its images are not found.',
+    since: '1.2.0',
+  },
+  {
+    id: 'generate_teams',
+    label: 'Generate teams',
+    description: 'The Teams screen on a doubles event: generate teams from the unpaired pool days before, preview and confirm them, tell both members who they are paired with, add, edit or split a team by hand, and re-pair orphans. A re-run keeps the published teams.',
+    off: 'Off: the Teams screen is hidden and its actions refuse; pairing is the existing buttons.',
+    since: '1.2.0',
+  },
 ] as const satisfies readonly ReleaseFlagDefinition[];
 
 export type ReleaseFlagId = (typeof RELEASE_FLAGS)[number]['id'];

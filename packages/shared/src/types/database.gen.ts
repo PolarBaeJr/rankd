@@ -1547,6 +1547,92 @@ export type Database = {
           },
         ]
       }
+      event_results_posts: {
+        Row: {
+          announcement_id: string | null
+          event_id: string
+          marketing_notified_at: string | null
+          posted_at: string
+          top: Json
+          updated_at: string
+        }
+        Insert: {
+          announcement_id?: string | null
+          event_id: string
+          marketing_notified_at?: string | null
+          posted_at?: string
+          top: Json
+          updated_at?: string
+        }
+        Update: {
+          announcement_id?: string | null
+          event_id?: string
+          marketing_notified_at?: string | null
+          posted_at?: string
+          top?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_results_posts_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "announcements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_results_posts_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: true
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      event_social_post_sets: {
+        Row: {
+          caption: string
+          created_at: string
+          entry_ids: string[]
+          event_id: string
+          groups: Json | null
+          id: string
+          kind: string
+          notified_at: string | null
+          superseded_at: string | null
+        }
+        Insert: {
+          caption: string
+          created_at?: string
+          entry_ids: string[]
+          event_id: string
+          groups?: Json | null
+          id?: string
+          kind: string
+          notified_at?: string | null
+          superseded_at?: string | null
+        }
+        Update: {
+          caption?: string
+          created_at?: string
+          entry_ids?: string[]
+          event_id?: string
+          groups?: Json | null
+          id?: string
+          kind?: string
+          notified_at?: string | null
+          superseded_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_social_post_sets_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       event_substitutions: {
         Row: {
           event_id: string
@@ -2517,6 +2603,7 @@ export type Database = {
           inactivity_notice_sent_at: string | null
           is_banned: boolean
           is_exec: boolean
+          is_guest: boolean
           is_trainer: boolean
           joined_at: string
           last_active_at: string
@@ -2573,6 +2660,7 @@ export type Database = {
           inactivity_notice_sent_at?: string | null
           is_banned?: boolean
           is_exec?: boolean
+          is_guest?: boolean
           is_trainer?: boolean
           joined_at?: string
           last_active_at?: string
@@ -2629,6 +2717,7 @@ export type Database = {
           inactivity_notice_sent_at?: string | null
           is_banned?: boolean
           is_exec?: boolean
+          is_guest?: boolean
           is_trainer?: boolean
           joined_at?: string
           last_active_at?: string
@@ -5581,6 +5670,10 @@ export type Database = {
       released_entry_under_lock: {
         Args: { p_entry_id: string; p_is_pair: boolean }
         Returns: Json
+      }
+      relink_event_confirmations: {
+        Args: { p_event_id: string; p_player_ids: string[] }
+        Returns: number
       }
       remove_field_entry: {
         Args: { p_entry_id: string; p_is_pair: boolean }

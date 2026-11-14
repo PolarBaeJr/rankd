@@ -60,7 +60,7 @@ function isRpcMissing(error: { code?: string } | null): boolean {
   return !!error && ['PGRST202', '42883'].includes(error.code ?? '');
 }
 
-function eventUrl(tournamentId: string, eventId: string): string {
+export function eventUrl(tournamentId: string, eventId: string): string {
   const base = (process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000').replace(/\/$/, '');
   return `${base}/tournaments/${tournamentId}/events/${eventId}`;
 }
