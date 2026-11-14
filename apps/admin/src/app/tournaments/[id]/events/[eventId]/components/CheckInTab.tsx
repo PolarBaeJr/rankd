@@ -162,6 +162,16 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
   const checkedIn = entries.filter(e => e.checked_in_at != null);
   const notCheckedIn = entries.filter(e => e.status === 'registered');
   const noShows = entries.filter(e => e.status === 'no_show');
+  // What "Release the no-shows" will take, by release_checkin_no_shows's own
+  // rule (00326, 00335): an entry still registered or marked no-show, and for
+  // a team only one where NEITHER member checked in. A team with one partner
+  // here keeps its place, so it is not counted.
+  const releasable = entries.filter((e) => {
+    if (e.status !== 'registered' && e.status !== 'no_show') return false;
+    if (!isDoubles) return true;
+    const pair = e as PairWithPlayers;
+    return !pair.player1_checked_in_at && !pair.player2_checked_in_at;
+  });
   // DOUBLES CHECKS IN PERSON BY PERSON (00309): the team is in when both are.
   const people = isDoubles
     ? pairCheckInPeople(pairs, (pair, slot) => (slot === 1 ? pair.player1 : pair.player2)?.full_name)
@@ -430,7 +440,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
       {fill && event.status === 'checkin' && (
         <FillEmptyPlaces
           eventId={event.id}
-          unreleased={notCheckedIn.length}
+          unreleased={releasable.length}
           openPlaces={openPlaces}
           waitlist={fill.waitlist}
           execs={fill.execs.filter((exec) => !inEvent.has(exec.id))}

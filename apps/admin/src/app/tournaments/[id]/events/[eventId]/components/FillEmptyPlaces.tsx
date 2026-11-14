@@ -47,7 +47,7 @@ export function FillEmptyPlaces({
   async function release() {
     const ok = await confirm({
       title: `Release ${unreleased} ${unreleased === 1 ? 'entry' : 'entries'}?`,
-      message: `Everyone not checked in is withdrawn and their place is free for a reserve.${warns ? ' Each is warned for not coming.' : ''}`,
+      message: `Every entry nobody checked in for is withdrawn and its place is free for a reserve. A team with one partner here keeps its place.${warns ? ' Each member released is warned for not coming.' : ''}`,
       confirmLabel: 'Release',
       danger: true,
     });
