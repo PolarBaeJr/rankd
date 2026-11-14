@@ -167,11 +167,12 @@ export async function runEventConfirmations(admin: Admin): Promise<EventConfirma
   const events = ((releaseData as { events?: unknown[] } | null)?.events ?? []) as Array<{
     event_id: string;
     tournament_id: string;
-    released: unknown[];
+    /** How many entries this event released: a count, not a list (00325). */
+    released: number;
     promoted: Array<{ player_id: string }>;
   }>;
   for (const event of events) {
-    run.released += (event.released ?? []).length;
+    run.released += Number(event.released) || 0;
     const promotedIds = (event.promoted ?? []).map((p) => p.player_id);
     if (promotedIds.length === 0) continue;
     run.promoted += promotedIds.length;
