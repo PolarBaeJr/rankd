@@ -43,6 +43,7 @@ import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { AddOnTheSpotDialog } from './AddOnTheSpotDialog';
 import { SubstituteForEntry, type SubstituteSources } from './SubstituteDialog';
+import type { Departure } from '@/lib/departure-reasons';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { StagesTab } from './StagesTab';
@@ -225,7 +226,9 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
   const router = useRouter();
   const [spotOpen, setSpotOpen] = useState(false);
-  const [courtSub, setCourtSub] = useState<string | null>(null);
+  // A sub opened from Left on a court card (00328): the reason travels with it
+  // and Back hands it to the court card's Left dialog again.
+  const [courtSub, setCourtSub] = useState<{ entryId: string; departure: Departure; onBack: () => void } | null>(null);
   const [pendingLate, setPendingLate] = useState<string | null>(null);
   const clearPendingLate = useCallback(() => setPendingLate(null), []);
   const canAddOnTheSpot = releaseFlags.add_on_the_spot && drawCapabilities.soloAdd && status !== 'completed';
@@ -240,7 +243,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       waitlist: waitlist ?? [],
       execs,
       canEnterSpares: releaseFlags.fill_empty_places && drawCapabilities.soloAdd,
-      reservesOpen: status === 'registration' || status === 'checkin',
+      canAddGuest: canAddOnTheSpot,
       canOverride: viewerIsExec,
     }
     : null;
@@ -404,13 +407,14 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       {courtSub && subSources && (
         <SubstituteForEntry
           eventId={event.id}
-          entryId={courtSub}
+          entryId={courtSub.entryId}
           isDoubles={isDoubles}
           participants={participants}
           pairs={pairs}
           matches={matches}
           sources={subSources}
-          onAddGuest={canAddOnTheSpot ? () => { setCourtSub(null); setSpotOpen(true); } : undefined}
+          departure={courtSub.departure}
+          onBack={() => { const back = courtSub.onBack; setCourtSub(null); back(); }}
           onClose={() => setCourtSub(null)}
         />
       )}
@@ -523,7 +527,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canMarkNoShow={drawCapabilities.markNoShow}
             helperCourtIds={helperCourtIds}
             releaseFlags={releaseFlags}
-            onSub={canSub ? setCourtSub : undefined}
+            onSub={canSub ? (entryId, departure, onBack) => setCourtSub({ entryId, departure, onBack }) : undefined}
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
             pendingLateEntryId={pendingLate}
             onPendingLateHandled={clearPendingLate}

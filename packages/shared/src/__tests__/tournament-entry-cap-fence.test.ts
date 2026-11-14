@@ -59,6 +59,10 @@ const CAP_READERS = new Set([
   // could never be entered, so both count the cap under the same two locks.
   'fill_event_from_waitlist',
   'join_event_waitlist',
+  // 00328: a substitution brings a reserve, an exec or a guest straight onto
+  // an entry, so it counts the incoming person's other entries as the
+  // promoter does, under the same two locks.
+  'substitute_event_entry',
 ]);
 
 /**

@@ -40,6 +40,7 @@ import {
 } from '@badminton/shared';
 import { WaiverState, blocksCheckIn } from './WaiverState';
 import { PlayerLeftDialog } from './PlayerLeftDialog';
+import type { Departure } from '@/lib/departure-reasons';
 import { FillEmptyPlaces } from './FillEmptyPlaces';
 import { SubstituteForEntry, type SubstituteSources } from './SubstituteDialog';
 import { CONFIRMATION_BADGE_LABELS, confirmationCounts, entryConfirmationState } from '@/lib/confirmation-badges';
@@ -96,8 +97,14 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
 
 export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot, didNotComeOn = true, checkInAfterDraw = true, markLeftOn = true, confirmations = null, canConfirmFor = false, fill = null, sub = null }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
-  const [leaving, setLeaving] = useState<{ entryId: string; label: string } | null>(null);
-  const [subbing, setSubbing] = useState<{ entryId: string; initialOut: string | null } | null>(null);
+  // LEFT, THEN SUB (00328): the Left dialog hands its reason to the sub
+  // dialog and writes nothing; Back from the sub reopens Left with it.
+  const [leaving, setLeaving] = useState<{ entryId: string; label: string; departure?: Departure | null } | null>(null);
+  const [subbing, setSubbing] = useState<{
+    entryId: string;
+    initialOut: string | null;
+    left?: { label: string; departure: Departure } | null;
+  } | null>(null);
   const subFor = (entryId: string, initialOut: string | null = null) => setSubbing({ entryId, initialOut });
   const subButton = (entryId: string, label: string, initialOut: string | null = null) => (sub ? (
     <Button
@@ -652,8 +659,15 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
           eventId={event.id}
           entryId={leaving.entryId}
           label={leaving.label}
+          initial={leaving.departure ?? null}
           onClose={() => setLeaving(null)}
-          onSub={sub ? () => { const entryId = leaving.entryId; setLeaving(null); subFor(entryId); } : undefined}
+          onSub={sub
+            ? (departure) => {
+              const { entryId, label } = leaving;
+              setLeaving(null);
+              setSubbing({ entryId, initialOut: null, left: { label, departure } });
+            }
+            : undefined}
         />
       )}
 
@@ -667,7 +681,14 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
           pairs={pairs}
           matches={matches}
           sources={sub}
-          onAddGuest={onAddOnTheSpot ? () => { setSubbing(null); onAddOnTheSpot(); } : undefined}
+          departure={subbing.left?.departure ?? null}
+          onBack={subbing.left
+            ? () => {
+              const left = subbing.left!;
+              setSubbing(null);
+              setLeaving({ entryId: subbing.entryId, label: left.label, departure: left.departure });
+            }
+            : undefined}
           onClose={() => setSubbing(null)}
         />
       )}

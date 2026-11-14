@@ -56,7 +56,7 @@ import type { ActionResult } from '@/lib/action-result';
 import { ALL_RELEASE_FLAGS_ON, type ReleaseFlags } from '@badminton/shared/src/utils/release-flags';
 import { useToast } from '@/components/toast-provider';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
-import { CourtCard, type CourtDeskRow } from './CourtCard';
+import { CourtCard, type CourtDeskRow, type SubFromLeft } from './CourtCard';
 import { getName } from './entry-name';
 import type {
   TournamentEventRow,
@@ -84,7 +84,7 @@ interface Props {
   canMarkNoShow?: boolean;
   helperCourtIds?: string[];
   /** Sub (00327) from a court card's Left, for the desk only; undefined hides it. */
-  onSub?: (entryId: string) => void;
+  onSub?: SubFromLeft;
   /** Opens Add on the spot, while the desk may add. */
   onAddOnTheSpot?: () => void;
   /** An entry just added on the spot: its placement opens once it is listed. */

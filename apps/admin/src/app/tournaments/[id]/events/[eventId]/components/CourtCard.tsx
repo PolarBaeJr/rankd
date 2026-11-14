@@ -24,6 +24,13 @@ import {
 import { useToast } from '@/components/toast-provider';
 import type { ActionResult } from '@/lib/action-result';
 import { PlayerLeftDialog } from './PlayerLeftDialog';
+import type { Departure } from '@/lib/departure-reasons';
+
+/**
+ * From Left on a court card to the sub (00328): the entry, the reason chosen,
+ * and how to come back to Left with it when the desk cancels the sub.
+ */
+export type SubFromLeft = (entryId: string, departure: Departure, onBack: () => void) => void;
 import type { TournamentMatchRow } from '@/lib/tournament-types';
 
 export type CourtSide = { entryId: string | null; label: string; absent?: boolean };
@@ -64,10 +71,12 @@ interface Props {
   /** "Left" for each side on court (00324). Only for someone who may: the desk, or a helper row on this court. */
   canMarkLeft?: boolean;
   /**
-   * The desk, with substitutions on (00327): Left offers "Sub someone in",
-   * which voids the match walked off and opens the sub. Never a helper's.
+   * The desk, with substitutions on (00327, 00328): Left offers "Sub someone
+   * in", which opens the sub with the reason and writes nothing; the sub's
+   * confirm voids the match walked off, records the departure and makes the
+   * sub in one call. Never a helper's.
    */
-  onSub?: (entryId: string) => void;
+  onSub?: SubFromLeft;
 }
 
 /**
@@ -280,11 +289,12 @@ function CourtOptions({
   onMore?: () => void;
   voidMatch?: CourtVoid;
   canMarkLeft?: boolean;
-  onSub?: (entryId: string) => void;
+  onSub?: SubFromLeft;
 }) {
   const skip = useSkipForNow(row, courtName);
   const voiding = useVoidOnCourt(row, courtName, voidMatch);
   const [leaving, setLeaving] = useState<CourtSide | null>(null);
+  const [leftReason, setLeftReason] = useState<Departure | null>(null);
   const busy = skip.pending || voiding.pending;
   const items: Array<{ label: string; onClick: () => void; danger?: boolean; disabled: boolean }> = optionIds.flatMap((id) => {
     if (id === 'more' && onMore) return [{ label: 'Cut short, walkover…', onClick: onMore, disabled: busy }];
@@ -294,7 +304,7 @@ function CourtOptions({
   });
   if (canMarkLeft) {
     for (const side of [row.a, row.b]) {
-      if (side.entryId) items.push({ label: `${side.label} left`, onClick: () => setLeaving(side), danger: true, disabled: busy });
+      if (side.entryId) items.push({ label: `${side.label} left`, onClick: () => { setLeftReason(null); setLeaving(side); }, danger: true, disabled: busy });
     }
   }
 
@@ -315,8 +325,15 @@ function CourtOptions({
           eventId={row.match.event_id}
           entryId={leaving.entryId}
           label={leaving.label}
-          onClose={() => setLeaving(null)}
-          onSub={onSub ? () => { const entryId = leaving.entryId!; setLeaving(null); onSub(entryId); } : undefined}
+          initial={leftReason}
+          onClose={() => { setLeaving(null); setLeftReason(null); }}
+          onSub={onSub
+            ? (departure) => {
+              const side = leaving;
+              setLeaving(null);
+              onSub(side.entryId!, departure, () => { setLeftReason(departure); setLeaving(side); });
+            }
+            : undefined}
         />
       )}
     </>

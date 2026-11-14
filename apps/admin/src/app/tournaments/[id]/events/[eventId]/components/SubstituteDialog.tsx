@@ -3,10 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input } from '@badminton/ui';
-import { enterReserveAndCheckIn, substituteEntry, type SubstitutionKind } from '@/lib/tournament-actions';
-import { addExecOnTheSpot } from '@/lib/tournament-actions/on-the-spot';
+import { leaveAndSubstitute, substituteEntry, type IncomingChoice, type SubstitutionKind } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { substitutionSummary } from '@/lib/substitution-summary';
+import { DEPARTURE_REASON_LABELS, type Departure } from '@/lib/departure-reasons';
 import { matchSides } from '@badminton/shared';
 import { getName } from './entry-name';
 import type {
@@ -23,16 +23,32 @@ export interface SubstituteMember {
 }
 
 /**
- * SUB (00327): somebody in for one member of a pair, or for the whole entry.
- * The person coming in is picked from who is already here (entered and not
- * playing, a guest added on the spot included), the reserves, then the execs:
- * a reserve or an exec is entered first, by the same paths Fill the empty
- * places uses, and then takes the place. A guest is added with Add on the
- * spot, so there is one way to make a guest.
+ * SUB (00327, 00328): somebody in for one member of a pair, or for the whole
+ * entry. The person coming in is picked from who is already here (entered and
+ * not playing), the reserves, then the execs, or is a guest typed by name.
+ * None of them is entered first: the sub reuses the entry, so a full event
+ * still takes them mid-play, and the one server call makes the sub, resolves
+ * the reserve off the waitlist, or makes the guest's record.
+ *
+ * FROM "LEFT" (departure given): the confirm is the only write, and it records
+ * the departure and voids the match on court in the same call. Back returns to
+ * the Left dialog with nothing written.
  *
  * NOT A <form>, for the court card: Dialog renders in place, inside the score
  * form there.
  */
+
+/** A radio value as the server is sent it. */
+export function choiceFor(value: string, guestName: string): IncomingChoice | null {
+  const at = value.indexOf(':');
+  const source = value.slice(0, at);
+  const id = value.slice(at + 1);
+  if (source === 'spare' || source === 'exec') return id ? { source, playerId: id } : null;
+  if (source === 'reserve') return id ? { source, waitlistId: id } : null;
+  if (value === 'guest') return guestName.trim() ? { source: 'guest', name: guestName.trim() } : null;
+  return null;
+}
+
 export function SubstituteDialog({
   eventId,
   entryId,
@@ -44,10 +60,11 @@ export function SubstituteDialog({
   waitlist,
   execs,
   canEnterSpares,
-  reservesOpen = true,
+  canAddGuest = false,
   canOverride,
   summary,
-  onAddGuest,
+  departure = null,
+  onBack,
   onClose,
 }: {
   eventId: string;
@@ -63,16 +80,18 @@ export function SubstituteDialog({
   waitlist: WaitlistEntry[];
   /** Execs not in the event. */
   execs: PlayerSummary[];
-  /** Kill switch fill_empty_places and the add key: a reserve or an exec can be entered from here. */
+  /** Kill switch fill_empty_places and the add key: a reserve or an exec can come in. */
   canEnterSpares: boolean;
-  /** The waitlist enters only during registration and check-in (fill_event_from_waitlist). */
-  reservesOpen?: boolean;
+  /** Kill switch add_on_the_spot and the add key: a guest can come in by name. */
+  canAddGuest?: boolean;
   /** An exec: may let in a member restricted from entering events. */
   canOverride: boolean;
   /** What the person coming in takes over, from substitutionSummary. */
   summary: string;
-  /** Opens Add on the spot, for a guest. */
-  onAddGuest?: () => void;
+  /** From "Left": why they left. Recorded only when the sub is confirmed. */
+  departure?: Departure | null;
+  /** From "Left": back to that dialog, nothing written. */
+  onBack?: () => void;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -80,22 +99,25 @@ export function SubstituteDialog({
   const [kind, setKind] = useState<SubstitutionKind>(isDoubles ? 'partner' : 'team');
   const [partnerOut, setPartnerOut] = useState<string | null>(initialOut);
   const [incoming, setIncoming] = useState<Record<string, string>>({});
+  const [guestNames, setGuestNames] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [override, setOverride] = useState(false);
   const [pending, setPending] = useState(false);
 
   const outgoing = kind === 'team' ? members.map((m) => m.id) : partnerOut ? [partnerOut] : [];
-  const chosen = outgoing.map((id) => incoming[id] ?? '');
-  const ready = outgoing.length > 0 && chosen.every((c) => c !== '') && new Set(chosen).size === chosen.length;
+  const chosen = outgoing.map((id) => choiceFor(incoming[id] ?? '', guestNames[id] ?? ''));
+  const picked = outgoing.map((id) => incoming[id] ?? '').filter((v) => v !== 'guest');
+  const ready = outgoing.length > 0 && chosen.every((c) => c !== null) && new Set(picked).size === picked.length;
   // The event standard's order holds here as in Fill the empty places: an
   // exec only once no reserve is waiting, which the server refuses as well.
+  // Reserves are offered during play too: a sub takes no free place.
   const sources: Array<{ group: string; hint: string | null; options: Array<{ value: string; name: string }> }> = [
     { group: 'Here and not playing', hint: null, options: spares.map((p) => ({ value: `spare:${p.id}`, name: p.full_name ?? 'Unknown' })) },
     ...(canEnterSpares ? [
       {
         group: 'Reserves, in order',
-        hint: reservesOpen || waitlist.length === 0 ? null : 'Reserves enter only during registration and check-in.',
-        options: reservesOpen ? waitlist.map((w) => ({ value: `reserve:${w.id}`, name: w.player?.full_name ?? 'Unknown' })) : [],
+        hint: null,
+        options: waitlist.map((w) => ({ value: `reserve:${w.id}`, name: w.player?.full_name ?? 'Unknown' })),
       },
       {
         group: 'Execs',
@@ -105,54 +127,47 @@ export function SubstituteDialog({
     ] : []),
   ];
 
-  // A reserve or an exec is entered first; the player id is what the sub takes.
-  async function enter(choice: string): Promise<string | null> {
-    const [source, id] = choice.split(':') as [string, string];
-    if (source === 'spare') return id;
-    if (source === 'reserve') {
-      const res = await enterReserveAndCheckIn(eventId, id);
-      if (!res.ok) { toast(res.error, 'error'); return null; }
-      return waitlist.find((w) => w.id === id)?.player_id ?? null;
-    }
-    const res = await addExecOnTheSpot(eventId, id);
-    if (!res.ok) { toast(res.error, 'error'); return null; }
-    return res.data.playerId;
-  }
-
   async function submit() {
     if (!ready || pending) return;
     setPending(true);
-    const incomingIds: string[] = [];
-    for (const choice of chosen) {
-      const id = await enter(choice);
-      if (!id) { setPending(false); router.refresh(); return; }
-      incomingIds.push(id);
-    }
-    const res = await substituteEntry(eventId, {
+    const input = {
       kind,
       entryId,
       outgoing,
-      incoming: incomingIds,
+      incoming: chosen as IncomingChoice[],
       note: note.trim() || null,
       overrideRestriction: override,
-    });
+    };
+    const res = departure
+      ? await leaveAndSubstitute(eventId, { ...input, departure })
+      : await substituteEntry(eventId, input);
     setPending(false);
     if (!res.ok) {
-      // Anyone entered above stays entered, as a spare the desk can still use.
+      // Nothing was written: the dialog stays open to pick somebody else.
       toast(res.error, 'error');
       router.refresh();
       return;
     }
-    toast(`Subbed in. ${res.data.moved} unplayed match${res.data.moved === 1 ? '' : 'es'} moved over.`, 'success');
+    const parts = [departure ? `${label}: left, and subbed.` : 'Subbed in.'];
+    parts.push(`${res.data.moved} unplayed match${res.data.moved === 1 ? '' : 'es'} moved over.`);
+    if (res.data.warned > 0) parts.push('A warning was added to their record.');
+    toast(parts.join(' '), 'success');
     onClose();
     router.refresh();
   }
 
+  const cancel = departure && onBack ? onBack : onClose;
+
   const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? 'Them';
 
   return (
-    <Dialog open onClose={() => { if (!pending) onClose(); }} title={`Sub for ${label}`}>
+    <Dialog open onClose={() => { if (!pending) cancel(); }} title={`Sub for ${label}`}>
       <div className="space-y-4">
+        {departure && (
+          <p className="text-sm text-[var(--text-muted)]" role="status">
+            {`Left: ${DEPARTURE_REASON_LABELS[departure.reason].toLowerCase()}. Nothing is recorded until you sub someone in: then the match on court is voided, the departure recorded and the place taken, together.`}
+          </p>
+        )}
         {isDoubles && (
           <div className="flex gap-2" role="radiogroup" aria-label="Who is replaced">
             <Button type="button" size="sm" variant={kind === 'partner' ? 'primary' : 'ghost'} aria-pressed={kind === 'partner'} onClick={() => setKind('partner')}>
@@ -199,16 +214,31 @@ export function SubstituteDialog({
                 ))}
               </div>
             ))}
+            {canAddGuest && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">A guest</p>
+                <label className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
+                  <input
+                    type="radio"
+                    name={`sub-in-${entryId}-${outId}`}
+                    value="guest"
+                    checked={incoming[outId] === 'guest'}
+                    onChange={() => setIncoming((current) => ({ ...current, [outId]: 'guest' }))}
+                  />
+                  Somebody not in the club
+                </label>
+                {incoming[outId] === 'guest' && (
+                  <Input
+                    label="Guest's name"
+                    value={guestNames[outId] ?? ''}
+                    maxLength={120}
+                    onChange={(e) => { const value = e.target.value; setGuestNames((current) => ({ ...current, [outId]: value })); }}
+                  />
+                )}
+              </div>
+            )}
           </fieldset>
         ))}
-
-        {onAddGuest && (
-          <p className="text-xs text-[var(--text-muted)]">
-            A guest?{' '}
-            <button type="button" className="underline" onClick={onAddGuest}>Add them on the spot</button>
-            {' '}first, then they are here and not playing.
-          </p>
-        )}
 
         <Input label="Note (optional)" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
 
@@ -222,9 +252,9 @@ export function SubstituteDialog({
         <p className="text-sm text-[var(--text-muted)]" role="status">{summary} A sub on its own adds no warning.</p>
 
         <div className="flex justify-between gap-2">
-          <Button type="button" variant="ghost" disabled={pending} onClick={onClose}>Cancel</Button>
+          <Button type="button" variant="ghost" disabled={pending} onClick={cancel}>{departure && onBack ? 'Back' : 'Cancel'}</Button>
           <Button type="button" loading={pending} disabled={!ready || pending} onClick={() => void submit()}>
-            Sub in
+            {departure ? 'Mark as left and sub in' : 'Sub in'}
           </Button>
         </div>
       </div>
@@ -232,12 +262,12 @@ export function SubstituteDialog({
   );
 }
 
-/** Who the desk can bring in, and whether it may enter a reserve or an exec first. */
+/** Who the desk can bring in: a reserve, an exec, a guest by name. */
 export interface SubstituteSources {
   waitlist: WaitlistEntry[];
   execs: PlayerSummary[];
   canEnterSpares: boolean;
-  reservesOpen: boolean;
+  canAddGuest: boolean;
   canOverride: boolean;
 }
 
@@ -254,7 +284,8 @@ export function SubstituteForEntry({
   pairs,
   matches,
   sources,
-  onAddGuest,
+  departure = null,
+  onBack,
   onClose,
 }: {
   eventId: string;
@@ -265,7 +296,8 @@ export function SubstituteForEntry({
   pairs: PairWithPlayers[];
   matches: TournamentMatchRow[];
   sources: SubstituteSources;
-  onAddGuest?: () => void;
+  departure?: Departure | null;
+  onBack?: () => void;
   onClose: () => void;
 }) {
   const entry = (isDoubles ? pairs : participants).find((e) => e.id === entryId);
@@ -303,10 +335,11 @@ export function SubstituteForEntry({
       waitlist={sources.waitlist}
       execs={sources.execs.filter((exec) => !taken.has(exec.id))}
       canEnterSpares={sources.canEnterSpares}
-      reservesOpen={sources.reservesOpen}
+      canAddGuest={sources.canAddGuest}
       canOverride={sources.canOverride}
       summary={substitutionSummary(sided, entryId)}
-      onAddGuest={onAddGuest}
+      departure={departure}
+      onBack={onBack}
       onClose={onClose}
     />
   );

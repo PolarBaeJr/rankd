@@ -140,5 +140,11 @@ export {
 } from './tournament-actions/attendance';
 export type { ReleaseNoShowsResult, ReserveEntryResult } from './tournament-actions/attendance';
 
-export { substituteEntry } from './tournament-actions/substitutions';
-export type { SubstitutionInput, SubstitutionKind, SubstitutionResult } from './tournament-actions/substitutions';
+export { leaveAndSubstitute, substituteEntry } from './tournament-actions/substitutions';
+export type {
+  IncomingChoice,
+  LeaveAndSubstituteInput,
+  SubstitutionInput,
+  SubstitutionKind,
+  SubstitutionResult,
+} from './tournament-actions/substitutions';

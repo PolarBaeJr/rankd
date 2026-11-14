@@ -3,14 +3,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }));
 vi.mock('@/components/toast-provider', () => ({ useToast: () => ({ toast: () => {} }) }));
-vi.mock('@/lib/tournament-actions', () => ({ enterReserveAndCheckIn: vi.fn(), substituteEntry: vi.fn() }));
-vi.mock('@/lib/tournament-actions/on-the-spot', () => ({ addExecOnTheSpot: vi.fn() }));
+vi.mock('@/lib/tournament-actions', () => ({ substituteEntry: vi.fn(), leaveAndSubstitute: vi.fn() }));
 vi.mock('@badminton/ui', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Dialog: ({ title, children }: { title: string; children: React.ReactNode }) => <div data-title={title}>{children}</div>,
 }));
 
-const { SubstituteDialog } = await import('../SubstituteDialog');
+const { SubstituteDialog, choiceFor } = await import('../SubstituteDialog');
 const { substitutionSummary } = await import('@/lib/substitution-summary');
 
 const props = {
@@ -30,7 +29,7 @@ const props = {
 
 describe('SubstituteDialog', () => {
   it('asks partner or team, who goes out, and who comes in from each source, with the summary', () => {
-    const html = renderToStaticMarkup(<SubstituteDialog {...props} initialOut="alice" onAddGuest={() => {}} />);
+    const html = renderToStaticMarkup(<SubstituteDialog {...props} initialOut="alice" canAddGuest />);
     expect(html).toContain('Sub for Alice Out / Bob Partner');
     expect(html).toContain('One partner');
     expect(html).toContain('The whole team');
@@ -43,16 +42,18 @@ describe('SubstituteDialog', () => {
     // A reserve is waiting, so no exec is offered yet.
     expect(html).toContain('Call or remove the reserves first.');
     expect(html).not.toContain('Exec One');
-    expect(html).toContain('Add them on the spot');
+    expect(html).toContain('Somebody not in the club');
+    expect(html).toContain('>Cancel<');
+    expect(html).toContain('>Sub in<');
     expect(html).toContain('Takes over 3 unplayed matches in Group B.');
     expect(html).toContain('A sub on its own adds no warning.');
     expect(html).not.toContain('restricted from entering events');
   });
 
-  it('offers the execs once nobody waits, and says reserves wait for check-in during play', () => {
-    const playing = renderToStaticMarkup(<SubstituteDialog {...props} initialOut="alice" reservesOpen={false} />);
-    expect(playing).toContain('Reserves enter only during registration and check-in.');
-    expect(playing).not.toContain('Reserve One');
+  it('offers the reserves during play too, and the execs once nobody waits', () => {
+    const playing = renderToStaticMarkup(<SubstituteDialog {...props} initialOut="alice" />);
+    expect(playing).toContain('Reserve One');
+    expect(playing).not.toContain('Reserves enter only during registration and check-in.');
     const empty = renderToStaticMarkup(<SubstituteDialog {...props} initialOut="alice" waitlist={[]} />);
     expect(empty).toContain('Exec One');
   });
@@ -63,6 +64,27 @@ describe('SubstituteDialog', () => {
     expect(html).toContain('In for Alice Out');
     expect(html).not.toContain('Reserve One');
     expect(html).toContain('restricted from entering events');
+    expect(html).not.toContain('Somebody not in the club');
+  });
+
+  it('after Left, goes Back to the reason rather than closing, and confirms both at once', () => {
+    const html = renderToStaticMarkup(
+      <SubstituteDialog {...props} initialOut="alice" departure={{ reason: 'injury', note: null }} onBack={() => {}} />,
+    );
+    expect(html).toContain('>Back<');
+    expect(html).not.toContain('>Cancel<');
+    expect(html).toContain('Mark as left and sub in');
+  });
+});
+
+describe('choiceFor', () => {
+  it('turns the picked option into who comes in, and a guest only with a name', () => {
+    expect(choiceFor('spare:carol', '')).toEqual({ source: 'spare', playerId: 'carol' });
+    expect(choiceFor('exec:x1', '')).toEqual({ source: 'exec', playerId: 'x1' });
+    expect(choiceFor('reserve:w1', '')).toEqual({ source: 'reserve', waitlistId: 'w1' });
+    expect(choiceFor('guest', '  Gina Guest ')).toEqual({ source: 'guest', name: 'Gina Guest' });
+    expect(choiceFor('guest', '   ')).toBeNull();
+    expect(choiceFor('', '')).toBeNull();
   });
 });
 

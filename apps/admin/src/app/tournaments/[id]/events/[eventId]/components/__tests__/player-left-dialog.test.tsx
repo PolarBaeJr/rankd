@@ -19,4 +19,13 @@ describe('PlayerLeftDialog', () => {
     expect(html).toContain('Any other reason is recorded with no warning.');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Mark as left/);
   });
+
+  it('coming Back from the sub, keeps the reason and note already given and writes nothing', () => {
+    const html = renderToStaticMarkup(
+      <PlayerLeftDialog eventId="e1" entryId="p1" label="Ann" initial={{ reason: 'other', note: 'Bus' }} onSub={() => {}} onClose={() => {}} />,
+    );
+    expect(html).toMatch(/value="other"[^>]*checked=""|checked=""[^>]*value="other"/);
+    expect(html).toContain('Bus');
+    expect(html).toContain('nothing is recorded until you confirm who');
+  });
 });

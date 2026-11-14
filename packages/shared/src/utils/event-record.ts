@@ -70,19 +70,33 @@ const phaseRank = (m: EventRecordMatch) => (m.phase === 'bracket' ? 1 : 0);
  * then bracket position.
  */
 export function eventRecordFor(matches: EventRecordMatch[], entryId: string): EventRecord {
+  return eventRecordBySide(matches, (m) => (m.aId === entryId ? 'a' : m.bId === entryId ? 'b' : null));
+}
+
+/**
+ * The same record, with the side each match counts for decided by the caller:
+ * 'a', 'b', or null for a match that is not theirs. Won is the winner being the
+ * entry on that side.
+ */
+export function eventRecordBySide<M extends EventRecordMatch>(
+  matches: M[],
+  sideOf: (match: M) => 'a' | 'b' | null,
+): EventRecord {
   const record: EventRecord = {
     played: 0, won: 0, lost: 0, gamesWon: 0, gamesLost: 0, pointsFor: 0, pointsAgainst: 0, last: null,
   };
-  let lastMatch: EventRecordMatch | null = null;
+  let lastMatch: M | null = null;
+  let lastSide: 'a' | 'b' = 'a';
 
   for (const m of matches) {
     if (m.is_bye) continue;
     if (m.status !== 'completed' && m.status !== 'walkover') continue;
-    if (m.aId !== entryId && m.bId !== entryId) continue;
+    const side = sideOf(m);
+    if (!side) continue;
+    const mineId = side === 'a' ? m.aId : m.bId;
 
-    const side = m.aId === entryId ? 'a' : 'b';
     record.played++;
-    if (m.winnerId === entryId) record.won++;
+    if (mineId != null && m.winnerId === mineId) record.won++;
     else record.lost++;
 
     for (const g of m.scores ?? []) {
@@ -104,15 +118,17 @@ export function eventRecordFor(matches: EventRecordMatch[], entryId: string): Ev
       ))
     ) {
       lastMatch = m;
+      lastSide = side;
     }
   }
 
   if (lastMatch) {
-    const side = lastMatch.aId === entryId ? 'a' : 'b';
+    const side = lastSide;
+    const mineId = side === 'a' ? lastMatch.aId : lastMatch.bId;
     record.last = {
       matchId: lastMatch.id,
       opponentId: side === 'a' ? lastMatch.bId : lastMatch.aId,
-      won: lastMatch.winnerId === entryId,
+      won: mineId != null && lastMatch.winnerId === mineId,
       scores: (lastMatch.scores ?? []).map((g) => ({
         mine: side === 'a' ? g.a : g.b,
         theirs: side === 'a' ? g.b : g.a,
@@ -121,6 +137,69 @@ export function eventRecordFor(matches: EventRecordMatch[], entryId: string): Ev
     };
   }
   return record;
+}
+
+// ============================================================
+// WHOSE MATCH IT IS, AFTER A SUBSTITUTION (00327 tournament_matches.lineup)
+// ============================================================
+//
+// A match names entries, and a substitution rewrites an entry's people in
+// place. So before it, every decided match of the entry gets a lineup: who
+// actually played that side. A member's own matches and record are read by
+// PERSON, not by entry:
+//   * a side whose lineup names the member is theirs, even if the entry is
+//     somebody else's now (the outgoing member keeps their history);
+//   * a side with a lineup that does NOT name the member is not theirs, even
+//     if the entry is theirs now (the incoming member is not credited with
+//     what the outgoing one played);
+//   * a side with no lineup is played by its entry's current members.
+
+export interface MatchLineup {
+  a?: string[];
+  b?: string[];
+}
+
+/** The lineup column as read, or null when there is none or it is malformed. */
+export function parseLineup(raw: unknown): MatchLineup | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: MatchLineup = {};
+  for (const key of ['a', 'b'] as const) {
+    const side = (raw as Record<string, unknown>)[key];
+    if (Array.isArray(side)) out[key] = side.filter((id): id is string => typeof id === 'string');
+  }
+  return out.a || out.b ? out : null;
+}
+
+export interface MatchViewer {
+  playerId: string;
+  /** The entry the member is on now in this event, if any. */
+  entryId: string | null;
+}
+
+/** Which side of the match the member played, or null for a match that is not theirs. */
+export function viewerSideOf(
+  match: { aId: string | null; bId: string | null; lineup?: unknown },
+  viewer: MatchViewer,
+): 'a' | 'b' | null {
+  const lineup = parseLineup(match.lineup);
+  for (const side of ['a', 'b'] as const) {
+    const named = lineup?.[side];
+    if (named) {
+      if (named.includes(viewer.playerId)) return side;
+      continue;
+    }
+    const entry = side === 'a' ? match.aId : match.bId;
+    if (viewer.entryId != null && entry === viewer.entryId) return side;
+  }
+  return null;
+}
+
+/** The member's own record in an event, by who played rather than whose entry it is. */
+export function viewerEventRecord<M extends EventRecordMatch & { lineup?: unknown }>(
+  matches: M[],
+  viewer: MatchViewer,
+): EventRecord {
+  return eventRecordBySide(matches, (m) => viewerSideOf(m, viewer));
 }
 
 /**

@@ -37,6 +37,8 @@ import {
   selectInChunks,
   selectAllInChunks,
   chunkIds,
+  parseLineup,
+  viewerSideOf,
   type ChunkResult,
 } from '@badminton/shared';
 import {
@@ -603,6 +605,20 @@ export async function assembleMemberExport(
       drawMatches.push(row);
     }
   }
+  // AND EVERY MATCH WHOSE LINEUP NAMES THEM (00327). A member subbed out of an
+  // entry is on none of its rows any more, but the matches they played before
+  // the sub say so in tournament_matches.lineup. One containment read per
+  // side, keyed on the member's own id.
+  for (const side of ['a', 'b'] as const) {
+    const rows = await reader.all('tournament_matches', (q) => q.contains('lineup', { [side]: [playerId] }));
+    for (const row of rows) {
+      const key = row.id as string;
+      if (seenDrawMatches.has(key)) continue;
+      seenDrawMatches.add(key);
+      drawMatches.push(row);
+    }
+  }
+  const ownEntryIds = new Set<string>([...participantIds, ...pairIds]);
   const ENTRY_COLUMNS = [
     'participant_a_id',
     'participant_b_id',
@@ -631,10 +647,14 @@ export async function assembleMemberExport(
     projected.you_were_marked_ready = Array.isArray(row.ready_player_ids)
       ? (row.ready_player_ids as unknown[]).includes(playerId)
       : false;
-    // Who played a match decided before a sub (00327), as whether the member did.
-    if (row.lineup && typeof row.lineup === 'object') {
-      const sides = row.lineup as { a?: unknown; b?: unknown };
-      projected.you_played = [sides.a, sides.b].some((side) => Array.isArray(side) && side.includes(playerId));
+    // Who played a match decided before a sub (00327), as whether the member
+    // did: their side by the lineup where it has one, by their entry where it
+    // has none (viewerSideOf, the event page's rule).
+    if (parseLineup(row.lineup)) {
+      const aId = ((row.pair_a_id ?? row.participant_a_id) as string | null) ?? null;
+      const bId = ((row.pair_b_id ?? row.participant_b_id) as string | null) ?? null;
+      const entryId = [aId, bId].find((id) => id != null && ownEntryIds.has(id)) ?? null;
+      projected.you_played = viewerSideOf({ aId, bId, lineup: row.lineup }, { playerId, entryId }) != null;
     }
     return projected;
   });

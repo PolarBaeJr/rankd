@@ -61,7 +61,7 @@ import { courtHelperDecision, hasHelperRow, normaliseVoidReason } from '../court
 import { permits } from '../permissions';
 import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
 import { entryPlayerIds, issueAttendanceWarnings } from '../attendance-warnings';
-import { DEPARTURE_REASONS, DEPARTURE_REASON_LABELS, departureWarns, type DepartureReason } from '../departure-reasons';
+import { DEPARTURE_REASON_LABELS, departureWarns, parseDeparture, type DepartureReason } from '../departure-reasons';
 
 // ============================================================
 // Score Entry & Advancement
@@ -2211,18 +2211,6 @@ export interface PlayerLeftResult extends BulkVoidResult {
   leftForDesk: number;
 }
 
-function parseDeparture(input: unknown): { reason: DepartureReason; note: string | null } {
-  const raw = (input ?? {}) as { reason?: unknown; note?: unknown };
-  if (typeof raw.reason !== 'string' || !(DEPARTURE_REASONS as readonly string[]).includes(raw.reason)) {
-    throw new ExpectedError('Choose why they left.');
-  }
-  const reason = raw.reason as DepartureReason;
-  const note = typeof raw.note === 'string' && raw.note.trim() !== '' ? raw.note.trim() : null;
-  if (note && note.length > 500) throw new ExpectedError('Keep the note to 500 characters.');
-  if (reason === 'other' && !note) throw new ExpectedError('Say why they left.');
-  return { reason, note };
-}
-
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -2287,15 +2275,10 @@ async function recordPlayerLeftImpl(eventId: unknown, entryId: unknown, input: u
   }
   await assertReleaseFlag('attendance_warnings');
   const { reason, note } = parseDeparture(input);
-  // LEFT, AND SOMEBODY TAKES THE PLACE (00327). The departure and its warning
-  // are recorded as ever, but the entry is not marked "Did not come" and its
-  // unplayed matches are not voided: they are what the substitute takes over.
-  // The desk's alone, since a court helper cannot sub.
-  const subbing = (input as { subbing?: unknown } | null)?.subbing === true;
-  if (subbing) {
-    if (!desk) throw new ExpectedError('Only the desk can sub somebody in.');
-    await assertReleaseFlag('substitutions');
-  }
+  // LEFT, AND SOMEBODY TAKES THE PLACE is not this action: it is
+  // leaveAndSubstitute (substitutions.ts, 00328), one transaction that voids
+  // the match on court, records the departure and makes the sub, so an entry
+  // is never left neither subbed nor out.
 
   // Before anything is marked: a database without 00324 has nowhere to keep
   // the departure, and a reasoned leave with no record is the wrong outcome.
@@ -2305,20 +2288,18 @@ async function recordPlayerLeftImpl(eventId: unknown, entryId: unknown, input: u
     throw new Error(`Could not read the departures: ${probeError.message}`);
   }
 
-  if (!subbing) {
-    const { data: noShow, error: noShowError } = await adminClient.rpc('set_field_entry_status', {
-      p_entry_id: entryId,
-      p_is_pair: doubles,
-      p_new_status: 'no_show',
-      p_actor: null,
-    });
-    if (noShowError) {
-      Sentry.captureException(noShowError);
-      throw new Error(noShowError.message);
-    }
-    const noShowResult = noShow as FencedFieldResult | null;
-    if (!noShowResult?.ok) fencedRefusal(noShowResult, doubles ? 'Pair not found' : 'Participant not found');
+  const { data: noShow, error: noShowError } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: entryId,
+    p_is_pair: doubles,
+    p_new_status: 'no_show',
+    p_actor: null,
+  });
+  if (noShowError) {
+    Sentry.captureException(noShowError);
+    throw new Error(noShowError.message);
   }
+  const noShowResult = noShow as FencedFieldResult | null;
+  if (!noShowResult?.ok) fencedRefusal(noShowResult, doubles ? 'Pair not found' : 'Participant not found');
 
   const markedAs = desk ? 'desk' : 'court_helper';
   const playerIds = await entryPlayerIds(adminClient, entryId, doubles);
@@ -2355,20 +2336,10 @@ async function recordPlayerLeftImpl(eventId: unknown, entryId: unknown, input: u
     event_id: event.id,
     action: 'player_left_event',
     performed_by: actorId,
-    details: { entry_id: entryId, player_ids: playerIds, reason, marked_as: markedAs, warned: warnings.length, subbing },
+    details: { entry_id: entryId, player_ids: playerIds, reason, marked_as: markedAs, warned: warnings.length },
   });
   const text = `Left the event: ${DEPARTURE_REASON_LABELS[reason].toLowerCase()}`;
   const eventMatches = await readMatchesForBulkVoid(adminClient, event.id, doubles);
-  if (subbing) {
-    // Only the match they walked off is voided: half a match has no winner to
-    // give the sub, and the sub refuses while the entry is on court.
-    const liveIds = eventMatches.filter((m) => (m.a === entryId || m.b === entryId) && m.status === 'live').map((m) => m.id);
-    const liveResult = await voidEach(adminClient, liveIds, text);
-    revalidateEventPaths(event.tournament_id, event.id);
-    revalidatePath('/my-courts');
-    return { ...liveResult, live: 0, skipped: 0, warned: warnings.length, leftForDesk: 0 };
-  }
-
   const { open, live } = openMatchesOfEntry(eventMatches, entryId);
   let result: BulkVoidResult;
   let leftForDesk = 0;
@@ -2399,7 +2370,7 @@ async function recordPlayerLeftImpl(eventId: unknown, entryId: unknown, input: u
 export async function recordPlayerLeft(
   eventId: string,
   entryId: string,
-  input: { reason: DepartureReason; note?: string | null; subbing?: boolean },
+  input: { reason: DepartureReason; note?: string | null },
 ): Promise<ActionResult<PlayerLeftResult>> {
   return runAction(() => recordPlayerLeftImpl(eventId, entryId, input));
 }

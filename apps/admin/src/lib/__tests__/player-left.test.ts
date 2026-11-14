@@ -149,17 +149,13 @@ describe('recordPlayerLeft', () => {
     expect(departures()).toEqual([]);
   });
 
-  it('keeps the place for a substitute: the desk records the departure and marks nothing', async () => {
+  // "Left, with a sub" is no longer this action: leaveAndSubstitute writes the
+  // departure, the void and the sub in one call (substitutions.test.ts), so a
+  // cancelled sub leaves nothing behind. This one always marks the no-show.
+  it('has no way to record a departure without marking the entry out', async () => {
     consoleUser.caps = new Set(['tournaments.draw.noshow.write', 'tournaments.results.void.write']);
-    const res = await recordPlayerLeft('e1', ENTRY, { reason: 'injury', subbing: true });
+    const res = await recordPlayerLeft('e1', ENTRY, { reason: 'injury', subbing: true } as never);
     expect(res.ok).toBe(true);
-    expect(db.rpcs).toEqual([]);
-    expect(departures()).toEqual([expect.objectContaining({ reason: 'injury', marked_as: 'desk' })]);
-  });
-
-  it('never lets a helper keep the place for a sub', async () => {
-    const res = await recordPlayerLeft('e1', ENTRY, { reason: 'injury', subbing: true });
-    expect(res).toMatchObject({ ok: false, error: 'Only the desk can sub somebody in.' });
-    expect(departures()).toEqual([]);
+    expect(db.rpcs.map((r: { name: string }) => r.name)).toContain('set_field_entry_status');
   });
 });

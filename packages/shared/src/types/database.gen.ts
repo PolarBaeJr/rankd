@@ -5646,6 +5646,8 @@ export type Database = {
           p_actor: string
           p_allow_restricted?: boolean
           p_combined_elo?: number
+          p_departure_note?: string
+          p_departure_reason?: string
           p_elo_before?: number
           p_entry_id: string
           p_event_id: string
@@ -5654,6 +5656,7 @@ export type Database = {
           p_note: string
           p_outgoing: string[]
           p_pair_name?: string
+          p_waitlist_ids?: string[]
         }
         Returns: Json
       }

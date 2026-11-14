@@ -1025,6 +1025,9 @@ class StubQuery {
   or() {
     return this;
   }
+  contains() {
+    return this;
+  }
   range(from: number, to: number) {
     this.from = from;
     this.to = to;
@@ -1302,6 +1305,27 @@ describe('no third party survives into the file', () => {
     expect(receipts[0]).not.toHaveProperty('reviewed_by');
     expect(receipts[0]).not.toHaveProperty('screenshot_path');
     expect(JSON.stringify(result.document)).not.toContain('SYNTH0002');
+  });
+
+  it('keeps the matches a member played before they were subbed out, and says who played', async () => {
+    // tm-out: the member's old entry is somebody else's now, but the lineup
+    // names them. tm-in: the member's entry now, played before they came in.
+    // tm-opp: their entry, only the opponent was subbed.
+    const fixtures = {
+      ...FIXTURES,
+      tournament_matches: [
+        { id: 'tm-out', event_id: 'ev-1', participant_a_id: SENTINEL, participant_b_id: SENTINEL, pair_a_id: null, pair_b_id: null, lineup: { a: [PLAYER_ID] } },
+        { id: 'tm-in', event_id: 'ev-1', participant_a_id: 'tp-1', participant_b_id: SENTINEL, pair_a_id: null, pair_b_id: null, lineup: { a: [SENTINEL] } },
+        { id: 'tm-opp', event_id: 'ev-1', participant_a_id: SENTINEL, participant_b_id: 'tp-1', pair_a_id: null, pair_b_id: null, lineup: { a: [SENTINEL] } },
+      ],
+    };
+    const result = await assembleMemberExport(stubClient(fixtures), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const byId = new Map(result.document.data.tournament_matches!.map((m) => [m.id, m]));
+    expect(byId.get('tm-out')?.you_played).toBe(true);
+    expect(byId.get('tm-in')?.you_played).toBe(false);
+    expect(byId.get('tm-opp')?.you_played).toBe(true);
+    for (const match of byId.values()) expect(match).not.toHaveProperty('lineup');
   });
 
   it('filters ready_player_ids down to the requester alone', async () => {
