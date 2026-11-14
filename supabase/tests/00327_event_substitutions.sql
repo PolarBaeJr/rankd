@@ -19,6 +19,9 @@
 -- D. A team sub in singles: the participant row is the new person's, the
 --    completed match keeps the old one in its lineup, the rating columns are
 --    the new person's to earn.
+-- E. Before play, a sub with a spare who has not checked in: the pair goes
+--    back to registered and the partner who stays keeps their check-in, so
+--    the check-in close does not release them as absent.
 -- ============================================================
 
 BEGIN;
@@ -205,6 +208,39 @@ BEGIN
     RAISE EXCEPTION 'D5: the record does not keep what F earned';
   END IF;
   RAISE NOTICE 'D passed: a team sub keeps the played match with who played it';
+END;
+$$;
+
+-- E: a third event, still at check-in. Pair 3 (C, D) is checked in; A is a
+-- spare who has not checked in yet.
+INSERT INTO tournament_events (id, tournament_id, event_type, format, status) VALUES
+ ('dddddddd-0327-4000-8000-0000000000e3', 'dddddddd-0327-4000-8000-0000000000a1', 'open_doubles', 'round_robin', 'checkin');
+INSERT INTO tournament_pairs (id, event_id, player1_id, player2_id, status, checked_in_at, player1_checked_in_at, player2_checked_in_at) VALUES
+ ('dddddddd-0327-4000-8000-0000000000b3', 'dddddddd-0327-4000-8000-0000000000e3', 'dddddddd-0327-4000-8000-000000000003', 'dddddddd-0327-4000-8000-000000000004', 'checked_in', now(), now(), now());
+INSERT INTO tournament_participants (event_id, player_id, elo_before, status) VALUES
+ ('dddddddd-0327-4000-8000-0000000000e3', 'dddddddd-0327-4000-8000-000000000001', 1000, 'registered');
+
+DO $$
+DECLARE
+  v_res jsonb;
+  v_row record;
+BEGIN
+  v_res := substitute_event_entry(
+    'dddddddd-0327-4000-8000-0000000000e3', 'dddddddd-0327-4000-8000-0000000000b3', 'partner',
+    ARRAY['dddddddd-0327-4000-8000-000000000003']::uuid[], ARRAY['dddddddd-0327-4000-8000-000000000001']::uuid[],
+    NULL, 'dddddddd-0327-4000-8000-000000000009');
+  IF NOT COALESCE((v_res->>'ok')::boolean, false) THEN
+    RAISE EXCEPTION 'E1: the sub before play returned %', v_res;
+  END IF;
+  SELECT status::text AS status, player1_checked_in_at, player2_checked_in_at INTO v_row
+    FROM tournament_pairs WHERE id = 'dddddddd-0327-4000-8000-0000000000b3';
+  IF v_row.status <> 'registered' OR v_row.player1_checked_in_at IS NOT NULL THEN
+    RAISE EXCEPTION 'E2: A has not checked in, so the pair should be registered: %', row_to_json(v_row);
+  END IF;
+  IF v_row.player2_checked_in_at IS NULL THEN
+    RAISE EXCEPTION 'E3: D checked in and lost it';
+  END IF;
+  RAISE NOTICE 'E passed: the partner who stays keeps their check-in';
 END;
 $$;
 

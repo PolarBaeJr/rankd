@@ -391,10 +391,16 @@ BEGIN
     IF v_doubles THEN
       IF v_out = v_entry.player1_id THEN
         v_new1 := v_in;
-        UPDATE tournament_pairs SET player1_id = v_in, player1_checked_in_at = v_stamp1 WHERE id = p_entry_id;
+        -- Two writes: 00309's trigger clears the stamp of a slot whose person
+        -- changes, so a stamp set in the same UPDATE as the person is lost.
+        UPDATE tournament_pairs SET player1_id = v_in WHERE id = p_entry_id;
+        UPDATE tournament_pairs SET player1_checked_in_at = v_stamp1 WHERE id = p_entry_id;
       ELSE
         v_new2 := v_in;
-        UPDATE tournament_pairs SET player2_id = v_in, player2_checked_in_at = v_stamp1 WHERE id = p_entry_id;
+        -- Two writes: 00309's trigger clears the stamp of a slot whose person
+        -- changes, so a stamp set in the same UPDATE as the person is lost.
+        UPDATE tournament_pairs SET player2_id = v_in WHERE id = p_entry_id;
+        UPDATE tournament_pairs SET player2_checked_in_at = v_stamp1 WHERE id = p_entry_id;
       END IF;
     ELSE
       UPDATE tournament_participants
@@ -429,6 +435,12 @@ BEGIN
            status = CASE WHEN status::text = 'checked_in' AND (v_stamp1 IS NULL OR v_stamp2 IS NULL)
                          THEN 'registered' ELSE status END
      WHERE id = p_entry_id;
+    -- Back to registered, 00309's trigger reads a pair-level undo and clears
+    -- both stamps; the partner who stays checked in keeps theirs.
+    UPDATE tournament_pairs
+       SET player1_checked_in_at = v_stamp1, player2_checked_in_at = v_stamp2
+     WHERE id = p_entry_id
+       AND (player1_checked_in_at IS DISTINCT FROM v_stamp1 OR player2_checked_in_at IS DISTINCT FROM v_stamp2);
   END IF;
 
   -- 3. The outgoing people's open asks to confirm their place (00325).

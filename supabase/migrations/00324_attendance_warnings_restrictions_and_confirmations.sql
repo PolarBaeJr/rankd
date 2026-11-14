@@ -176,9 +176,15 @@ CREATE TABLE IF NOT EXISTS public.event_departures (
   marked_at      timestamptz NOT NULL DEFAULT now(),
   warning_id     uuid REFERENCES public.attendance_warnings(id) ON DELETE SET NULL,
   CONSTRAINT event_departures_one_entry CHECK ((participant_id IS NULL) <> (pair_id IS NULL)),
-  CONSTRAINT event_departures_other_has_note CHECK (reason <> 'other' OR char_length(btrim(note)) > 0),
   UNIQUE (event_id, player_id)
 );
+
+-- "other" needs a note, as parseDeparture (departure-reasons.ts) requires. A
+-- missing note has to fail the check, not make it NULL, which a CHECK lets
+-- through. Outside the CREATE so a rerun over an existing table restates it.
+ALTER TABLE public.event_departures DROP CONSTRAINT IF EXISTS event_departures_other_has_note;
+ALTER TABLE public.event_departures ADD CONSTRAINT event_departures_other_has_note
+  CHECK (reason <> 'other' OR COALESCE(char_length(btrim(note)), 0) > 0);
 
 CREATE INDEX IF NOT EXISTS event_departures_player
   ON public.event_departures (player_id, marked_at DESC);
@@ -293,6 +299,12 @@ BEGIN
                     AND conrelid = 'public.tournament_events'::regclass
                     AND contype = 'c') THEN
     v_bad := array_append(v_bad, 'tournament_events_confirm_window is missing');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = 'event_departures_other_has_note'
+                    AND conrelid = 'public.event_departures'::regclass
+                    AND pg_get_constraintdef(oid) LIKE '%COALESCE%') THEN
+    v_bad := array_append(v_bad, 'event_departures_other_has_note is missing or lets a missing note through');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema = 'public' AND table_name = 'tournaments'
