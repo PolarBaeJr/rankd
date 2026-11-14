@@ -369,8 +369,14 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
     ? pairs.filter((p) => active(p.status)).length + Math.ceil(participants.filter((p) => active(p.status)).length / 2)
     : participants.filter((p) => active(p.status)).length;
   const openPlaces = event.max_participants != null ? Math.max(0, event.max_participants - filled) : null;
+  // In a doubles event an exec added to fill a place lands in the unpaired
+  // pool (tournament_participants), not a team, so the pool counts as in the
+  // event too; otherwise the exec stays on the list and could be added twice.
   const inEvent = new Set(isDoubles
-    ? pairs.flatMap((p) => [p.player1_id, p.player2_id]).filter((id): id is string => id != null)
+    ? [
+        ...pairs.flatMap((p) => [p.player1_id, p.player2_id]),
+        ...participants.filter((p) => active(p.status)).map((p) => p.player_id),
+      ].filter((id): id is string => id != null)
     : participants.map((p) => p.player_id));
 
   return (
