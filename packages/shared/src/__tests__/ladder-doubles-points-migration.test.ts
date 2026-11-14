@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -107,7 +107,9 @@ describe('00316: get_leaderboard counts doubles points', () => {
     expect(grant).toBeLessThan(code.indexOf('CREATE OR REPLACE FUNCTION public.get_leaderboard()'));
   });
 
-  it('has a hand-run rollback restating 00092 with its grant', () => {
+  // supabase/rollbacks is private and left out of the public export, so the
+  // exported tree skips this check rather than failing on a missing file.
+  it.skipIf(!existsSync(join(MIGRATIONS_DIR, '../rollbacks')))('has a hand-run rollback restating 00092 with its grant', () => {
     const down = readFileSync(join(MIGRATIONS_DIR, '../rollbacks/00316_down.sql'), 'utf8');
     const original = readFileSync(join(MIGRATIONS_DIR, migrationFiles().find((f) => f.startsWith('00092_'))!), 'utf8');
     const bodyOf = (text: string) =>
