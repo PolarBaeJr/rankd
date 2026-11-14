@@ -19,6 +19,7 @@
 // at the cap is retired instead of claimed.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { utcToClubWallClock } from '@badminton/shared';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
@@ -49,17 +50,13 @@ const pad = (n: number) => n.toString().padStart(2, '0');
 const sessionRow = () => ({
   id: SESSION_ID,
   // The job converts these as CLUB-LOCAL wall clock, so build them from the
-  // club-local rendering of START rather than from its UTC fields.
+  // club-local rendering of START rather than from its UTC fields. The app's
+  // own rendering, not Intl's: from 2026-11-01 the club is pinned at UTC-7,
+  // and a runtime with older tzdata still answers UTC-8, which put the session
+  // an hour outside the job's window.
   ...(() => {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit',
-      day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(START);
-    const get = (t: string) => parts.find((p) => p.type === t)!.value;
-    return {
-      date: `${get('year')}-${get('month')}-${get('day')}`,
-      start_time: `${get('hour') === '24' ? '00' : get('hour')}:${get('minute')}:00`,
-    };
+    const [date, time] = utcToClubWallClock(START.toISOString()).split('T');
+    return { date: date!, start_time: `${time}:00` };
   })(),
   session_rsvp: rsvps.filter((r) => r.session_id === SESSION_ID),
 });

@@ -33,7 +33,10 @@ const row = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
-function fakeAdmin(queue: Row[], opts: { download?: 'fail'; confirm?: string } = {}) {
+function fakeAdmin(
+  queue: Row[],
+  opts: { download?: 'fail'; confirm?: string; usedOrders?: string[]; releaseFlags?: Record<string, boolean> } = {},
+) {
   const calls: { fn: string; args: Record<string, unknown> }[] = [];
   const admin = {
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
@@ -53,16 +56,28 @@ function fakeAdmin(queue: Row[], opts: { download?: 'fail'; confirm?: string } =
             : { data: new Blob([new Uint8Array([1, 2, 3])]), error: null },
       }),
     },
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({
-            data: { value: { etransfer_email: 'club@example.org', etransfer_payee_name: 'SFU Badminton Club' } },
-            error: null,
+    from: (table: string) => {
+      if (table === 'fee_submissions') {
+        // select, eq, in, neq, not: each returns the chain, which resolves to the rows.
+        const rows = { data: (opts.usedOrders ?? []).map((reference_key) => ({ reference_key })), error: null };
+        const chain: Record<string, unknown> = { then: (resolve: (v: unknown) => void) => resolve(rows) };
+        for (const step of ['select', 'eq', 'in', 'neq', 'not']) chain[step] = () => chain;
+        return chain;
+      }
+      return {
+        select: () => ({
+          eq: (_column: string, key: string) => ({
+            maybeSingle: async () => ({
+              data:
+                key === 'release_flags'
+                  ? { value: opts.releaseFlags ?? {} }
+                  : { value: { etransfer_email: 'club@example.org', etransfer_payee_name: 'SFU Badminton Club' } },
+              error: null,
+            }),
           }),
         }),
-      }),
-    }),
+      };
+    },
   };
   return { admin: admin as unknown as SupabaseClient, calls };
 }
@@ -75,6 +90,41 @@ function fakeOcr(read: OcrRead | (() => OcrRead), opts: { busy?: boolean } = {})
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+const REC_DESKTOP = [
+  'Order #: O-6555541',
+  'Total Before Tax: $25.00',
+  'Program Name: Badminton Club',
+  'Offering/Instance: Main Campus Fall 2026 - Casual',
+].join('\n');
+
+describe('a near-duplicate SFU Rec order number', () => {
+  const recRow = () => row({ method: 'sfu_rec', amount_cents: 2500 });
+
+  it('holds a receipt whose order number is one digit off one already used', async () => {
+    // A doubled 5 read off a second screenshot of O-655541.
+    const { admin, calls } = fakeAdmin([recRow()], { usedOrders: ['655541'] });
+    expect(await checkSubmission(admin, 'sub-1', fakeOcr({ text: REC_DESKTOP }))).toBe('reference_used');
+    expect(calls.some((c) => c.fn === 'auto_confirm_fee_submission')).toBe(false);
+    expect(calls.find((c) => c.fn === 'flag_fee_submission_ocr')!.args).toMatchObject({
+      p_flag: 'reference_used',
+      p_detail: 'The order number is one digit off O-655541, already on another receipt',
+      p_reference: 'O-6555541',
+      p_method: 'sfu_rec',
+    });
+  });
+
+  it('confirms when no used number is that close, and leaves the exact one to the database', async () => {
+    const { admin, calls } = fakeAdmin([recRow()], { usedOrders: ['655411', '6555541'] });
+    expect(await checkSubmission(admin, 'sub-1', fakeOcr({ text: REC_DESKTOP }))).toBe('ok');
+    expect(calls.some((c) => c.fn === 'auto_confirm_fee_submission')).toBe(true);
+  });
+
+  it('confirms as before while its kill switch is off', async () => {
+    const { admin } = fakeAdmin([recRow()], { usedOrders: ['655541'], releaseFlags: { near_duplicate_order: false } });
+    expect(await checkSubmission(admin, 'sub-1', fakeOcr({ text: REC_DESKTOP }))).toBe('ok');
+  });
+});
 
 describe('checkSubmission', () => {
   it('confirms a clean receipt with its reference, amount and hash', async () => {
