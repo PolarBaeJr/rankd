@@ -19,6 +19,9 @@
 //   - courts.ts       : a tournament's own courts (00273): add, rename, order,
 //                       switch off, and import the courts already typed
 //   - court-helpers.ts: naming console members to keep score on a court (00310)
+//   - attendance.ts   : the event standard at the desk (00324 to 00326): a place
+//                       confirmed for a member, releasing no-shows, the reserves
+//   - substitutions.ts: somebody in for one member of a team or the whole entry (00327)
 //   - _internal.ts    — private helpers (NOT 'use server' — revalidation,
 //                       notifications, Elo apply/reverse, standings)
 export {
@@ -29,6 +32,7 @@ export {
   setEventWindows,
   setEventWaitlist,
   setEventWaitlistLimit,
+  setEventAttendanceSettings,
 } from './tournament-actions/events';
 
 export {
@@ -103,8 +107,9 @@ export {
   voidCourtHelperMatch,
   voidOpenMatchesForEntry,
   voidUnplayedMatches,
+  recordPlayerLeft,
 } from './tournament-actions/results';
-export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts, BulkVoidResult } from './tournament-actions/results';
+export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts, BulkVoidResult, PlayerLeftResult } from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,
@@ -127,3 +132,13 @@ export {
 } from './tournament-actions/courts';
 
 export { addCourtHelper, removeCourtHelper, skipMatchForNow } from './tournament-actions/court-helpers';
+
+export {
+  confirmEntryForMember,
+  releaseCheckinNoShows,
+  enterReserveAndCheckIn,
+} from './tournament-actions/attendance';
+export type { ReleaseNoShowsResult, ReserveEntryResult } from './tournament-actions/attendance';
+
+export { substituteEntry } from './tournament-actions/substitutions';
+export type { SubstitutionInput, SubstitutionKind, SubstitutionResult } from './tournament-actions/substitutions';

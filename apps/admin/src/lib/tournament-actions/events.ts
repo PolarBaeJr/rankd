@@ -25,6 +25,8 @@ import {
   effectiveWindows,
   validateEffectiveWindows,
   windowColumnsFromWallClock,
+  checkinCutoffInstant,
+  eventStartInstant,
   type WindowColumns,
 } from '@badminton/shared';
 import type {
@@ -48,6 +50,7 @@ import {
   type WaitlistFillResult,
 } from './_internal';
 import { fillFreeCourts, type AutoCallReport } from './auto-call';
+import { assertReleaseFlag, getReleaseFlags } from '../release-flags';
 
 // ============================================================
 // Event Management
@@ -258,6 +261,37 @@ function normalizeEventPoints(format: string, raw: unknown) {
   return res.table;
 }
 
+// THE EVENT STANDARD'S DEFAULTS FOR A NEW EVENT, each behind its own switch.
+// Check-in closes 15 minutes before the start, when the tournament has a start
+// time and no tournament-wide close of its own (checkin_cutoff_default). An
+// event that is not external keeps a waitlist and asks its entrants to confirm
+// (event_standard_defaults), unless the console said otherwise.
+async function eventStandardFields(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  external: boolean,
+  config: { waitlist_enabled?: boolean; confirm_required?: boolean },
+): Promise<Record<string, unknown>> {
+  const flags = await getReleaseFlags();
+  const fields: Record<string, unknown> = {};
+  if (flags.checkin_cutoff_default) {
+    const { data: tournament, error } = await adminClient.from('tournaments')
+      .select('start_date, starts_time, checkin_closes_at')
+      .eq('id', tournamentId)
+      .maybeSingle();
+    if (error) Sentry.captureException(error);
+    const row = tournament as { start_date?: string | null; starts_time?: string | null; checkin_closes_at?: string | null } | null;
+    if (row?.start_date && row.starts_time && !row.checkin_closes_at) {
+      fields.checkin_closes_at = checkinCutoffInstant(eventStartInstant(row.start_date, row.starts_time)).toISOString();
+    }
+  }
+  if (flags.event_standard_defaults && !external) {
+    fields.waitlist_enabled = config.waitlist_enabled ?? true;
+    fields.confirm_required = config.confirm_required ?? true;
+  }
+  return fields;
+}
+
 async function createTournamentEventImpl(
   tournamentId: string,
   config: {
@@ -280,6 +314,9 @@ async function createTournamentEventImpl(
     format_config?: unknown;
     /** A legacy event's points table (00275). Absent or the default stores nothing. */
     points_config?: unknown;
+    /** The event standard's defaults apply when these are left unset. */
+    waitlist_enabled?: boolean;
+    confirm_required?: boolean;
   }
 ) {
   const admin = await requireCapability('tournaments.manage.event.create.write');
@@ -322,8 +359,9 @@ async function createTournamentEventImpl(
   // A placement bonus is paid into ratings, so an event none of whose stages
   // is rated pays none.
   const bonusAllowed = !external && (!formatConfig || anyStageRated(formatConfig));
+  const standardFields = await eventStandardFields(adminClient, tournamentId, external, config);
 
-  const { data, error } = await adminClient.from('tournament_events').insert({
+  const insertEvent = (extra: Record<string, unknown>) => adminClient.from('tournament_events').insert({
     tournament_id: tournamentId,
     event_type: config.event_type,
     format: config.format,
@@ -367,14 +405,23 @@ async function createTournamentEventImpl(
     ...(formatConfig ? { format_config: formatConfig as never, rated: !external } : {}),
     // Likewise only named when it differs from the default (00275).
     ...(pointsConfig ? { points_config: pointsConfig as never } : {}),
+    ...extra,
   }).select().single();
 
-  if (error) {
+  let { data, error } = await insertEvent(standardFields);
+  // confirm_required arrives with 00324: before it, the event is made without
+  // the standard's columns rather than not at all.
+  if (error && isColumnMissing(error) && 'confirm_required' in standardFields) {
+    const { confirm_required: _pending, ...withoutConfirm } = standardFields;
+    ({ data, error } = await insertEvent(withoutConfirm));
+  }
+
+  if (error || !data) {
     if (staged && isStagedSchemaMissing(error)) throw new ExpectedError(STAGED_MIGRATION_MISSING);
     if (pointsConfig && isColumnMissing(error)) throw new ExpectedError(POINTS_MIGRATION_MISSING);
-    if (error.code === '23514') throw new ExpectedError(error.message);
+    if (error?.code === '23514') throw new ExpectedError(error.message);
     Sentry.captureException(error);
-    throw new Error(error.message);
+    throw new Error(error?.message ?? 'The event could not be created.');
   }
 
   await logAudit(adminClient, {
@@ -846,6 +893,62 @@ export async function setEventWaitlist(
   settings: Parameters<typeof setEventWaitlistImpl>[1],
 ): Promise<ActionResult<{ promoted: number }>> {
   return runAction(() => setEventWaitlistImpl(eventId, settings));
+}
+
+// THE EVENT STANDARD'S CONFIRMATION (00325): whether entrants are asked to
+// confirm their place, and the window, in hours before the start. The CHECK in
+// 00324 is the real bound; this says it first, in words.
+async function setEventAttendanceSettingsImpl(eventId: unknown, raw: unknown): Promise<void> {
+  const admin = await requireCapability('tournaments.manage.event.update.write');
+  await assertReleaseFlag('entry_confirmation');
+  if (typeof eventId !== 'string' || eventId === '') throw new Error('Event not found');
+  const input = (raw ?? {}) as { confirmRequired?: unknown; opensHours?: unknown; deadlineHours?: unknown };
+  const opens = input.opensHours;
+  const deadline = input.deadlineHours;
+  if (typeof input.confirmRequired !== 'boolean'
+    || !Number.isInteger(opens) || !Number.isInteger(deadline)
+    || (deadline as number) < 1 || (opens as number) > 336 || (deadline as number) >= (opens as number)) {
+    throw new ExpectedError('The ask opens before the deadline: the deadline is at least 1 hour before the start, the ask at most 336.');
+  }
+  const adminClient = createAdminClient();
+
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError || !event) throw new Error(eventError?.message ?? 'Event not found');
+  if (!('confirm_required' in event)) throw new ExpectedError('Run migration 00324 first');
+  if (event.external_event === true) {
+    throw new ExpectedError('An external event\'s teams are entered by name, so nobody is asked to confirm.');
+  }
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('Confirmation can only be changed while the event is taking entries or checking in.');
+  }
+
+  const { error } = await adminClient.from('tournament_events').update({
+    confirm_required: input.confirmRequired,
+    confirm_opens_hours: opens as number,
+    confirm_deadline_hours: deadline as number,
+  }).eq('id', eventId);
+  if (error) {
+    if (error.code === '23514') throw new ExpectedError(error.message);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'event_attendance_updated',
+    performed_by: admin.id,
+    details: { confirm_required: input.confirmRequired, opens_hours: opens, deadline_hours: deadline },
+  });
+  revalidateEventPaths(event.tournament_id, eventId);
+}
+
+export async function setEventAttendanceSettings(
+  eventId: string,
+  settings: { confirmRequired: boolean; opensHours: number; deadlineHours: number },
+): Promise<ActionResult> {
+  return runAction(() => setEventAttendanceSettingsImpl(eventId, settings));
 }
 
 const WAITLIST_LIMIT_MIGRATION_MISSING = 'Run migration 00312 first';

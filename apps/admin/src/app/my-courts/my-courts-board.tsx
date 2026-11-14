@@ -27,6 +27,8 @@ interface Props {
   courtVoid?: boolean;
   /** Kill switch auto_call_skips_absent; off, Next up skips nobody, like auto-call. */
   skipAbsent?: boolean;
+  /** Kill switch attendance_warnings; off, the card has no "Left". */
+  markLeft?: boolean;
 }
 
 const save: CourtScoreSave = (matchId, scores) => enterCourtHelperResult(matchId, scores);
@@ -36,7 +38,7 @@ const voidMatch: CourtVoid = (matchId, reason) => voidCourtHelperMatch(matchId, 
  * One tournament's courts for a helper. Each court shows the event whose match
  * is on it, else the event with a match waiting for it, else a free court.
  */
-export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoid = true, skipAbsent = true }: Props) {
+export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoid = true, skipAbsent = true, markLeft = true }: Props) {
   const boards = useMemo(
     () =>
       events.flatMap((e) => {
@@ -101,6 +103,7 @@ export function MyCourtsBoard({ courts, courtIds, busyCourtIds, events, courtVoi
             busyElsewhere={courtsInUse.has(court.id) && !onCourt(board)}
             save={save}
             voidMatch={courtVoid ? voidMatch : undefined}
+            canMarkLeft={markLeft}
           />
         );
       })}

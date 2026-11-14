@@ -264,6 +264,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               tournamentId={id}
               defaultEloMultiplier={tournament.event_multiplier}
               defaultPlacementBonus={tournament.placement_bonus_enabled !== false}
+              standardDefaults={releaseFlags.event_standard_defaults}
               siblings={(events ?? []).map((ev) => ({
                 id: ev.id,
                 event_type: ev.event_type,

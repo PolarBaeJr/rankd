@@ -21,6 +21,7 @@ import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { LiveEvent } from '../live-event';
 import { loadPartnerBoard } from '@/lib/partner-board';
 import { partnerAdvice } from '@/lib/partner-check';
@@ -403,6 +404,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
             linked={linked}
             canLink={canEdit && may('tournaments.manage.create.write') && !cancelled}
             nonMembers={externals}
+            standardDefaults={(await getReleaseFlags()).event_standard_defaults}
           />
         )}
 

@@ -27,6 +27,11 @@
 // function asks is console-only. Each of these migrations has a down script in
 // supabase/rollbacks, never run automatically.
 //
+// THE PLAYER APP READS THE ROW TOO, since the event standard (00324 to 00326):
+// apps/player/src/lib/release-flags.ts, the same rule, for the attendance
+// policy, the entry restriction and the confirmation. Those eight switches are
+// app-only: no function asks them.
+//
 // Deliberately dependency-free, so a client component can import it deeply.
 
 export interface ReleaseFlagDefinition {
@@ -125,6 +130,70 @@ export const RELEASE_FLAGS = [
     label: 'Ladder counts doubles points',
     description: 'The ladder counts a member\'s doubles points as well as their singles points.',
     off: 'Off: the ladder counts singles points only, as before.',
+    since: '1.2.0',
+  },
+  // The event standard (00324 to 00326). App-only: no function asks these.
+  {
+    id: 'attendance_policy_ack',
+    label: 'Attendance policy at sign-up',
+    description: 'Entering an event or joining its waitlist shows the attendance policy and asks the member to accept it.',
+    off: 'Off: no policy text and no acceptance asked at sign-up, and Discord takes entries again.',
+    since: '1.2.0',
+  },
+  {
+    id: 'attendance_warnings',
+    label: 'Attendance warnings',
+    description: 'A no-show or leaving without telling the desk writes a warning on the member, shown on their player page.',
+    off: 'Off: no warning is written, and the Left without telling us button is hidden.',
+    since: '1.2.0',
+  },
+  {
+    id: 'entry_restriction',
+    label: 'Entry restrictions',
+    description: 'An exec can restrict a member from entering events, and the member\'s own entry and waitlist join are refused while it lasts.',
+    off: 'Off: nothing is refused at entry, and a new restriction cannot be made.',
+    since: '1.2.0',
+  },
+  {
+    id: 'checkin_cutoff_default',
+    label: 'Check-in closes before the start',
+    description: 'A new event\'s check-in closes 15 minutes before the tournament starts, and the windows editor offers that time.',
+    off: 'Off: a new event gets no check-in close of its own, as before.',
+    since: '1.2.0',
+  },
+  {
+    id: 'entry_confirmation',
+    label: 'Confirm your place',
+    description: 'Members entered in an event that asks for it are emailed, pushed and shown a banner to confirm their place before the day, and an entry nobody confirmed goes to the waitlist.',
+    off: 'Off: nothing is sent or released, Confirm is refused, and the banners are hidden.',
+    since: '1.2.0',
+  },
+  {
+    id: 'fill_empty_places',
+    label: 'Fill empty places at check-in',
+    description: 'When check-in closes the desk releases the no-shows, then fills their places from the reserves, then from the execs.',
+    off: 'Off: no release of no-shows, no reserve check-in and no exec fill on the Check-In tab.',
+    since: '1.2.0',
+  },
+  {
+    id: 'event_standard_defaults',
+    label: 'Standard event defaults',
+    description: 'A new event starts as pools then placement, with the waitlist on and confirmation asked.',
+    off: 'Off: a new event starts as single elimination, with the waitlist off and no confirmation, as before.',
+    since: '1.2.0',
+  },
+  {
+    id: 'day_lead',
+    label: 'Day lead',
+    description: 'A tournament names the one exec who makes the calls on the day, shown on its page.',
+    off: 'Off: the day lead is hidden and cannot be saved.',
+    since: '1.2.0',
+  },
+  {
+    id: 'substitutions',
+    label: 'Substitutions',
+    description: 'The desk or the day lead can put somebody in for one member of a team, or for a whole entry, before or during an event. Played matches keep who played them.',
+    off: 'Off: no Sub action, substitutions refused.',
     since: '1.2.0',
   },
 ] as const satisfies readonly ReleaseFlagDefinition[];

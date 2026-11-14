@@ -11,6 +11,7 @@ import {
   playerApprovedEmail,
   accountInactiveEmail,
   weeklyDigestEmail,
+  eventConfirmationEmail,
 } from './templates';
 import { buildUnsubscribeUrl } from './unsubscribe';
 import { isEmailCategoryEnabled, type NotificationCategory } from '../utils/notifications';
@@ -455,4 +456,15 @@ export async function sendWeeklyDigestEmail(
   const url = `${process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000'}/my-stats`;
   const { subject, html } = weeklyDigestEmail(name, data, url);
   return sendCategoryEmail(to, 'announcements', subject, html);
+}
+
+export async function sendEventConfirmationEmail(
+  to: string,
+  args: Parameters<typeof eventConfirmationEmail>[0],
+): Promise<SendOutcome> {
+  const { subject, html } = eventConfirmationEmail(args);
+  // Transactional, like the approved email: this is about the member's own
+  // place, and a member who muted tournament news has not thereby agreed to
+  // lose it unasked. Gate 1 (suppressions, bounces, complaints) still applies.
+  return sendCategoryEmail(to, 'tournaments', subject, html, { transactional: true });
 }

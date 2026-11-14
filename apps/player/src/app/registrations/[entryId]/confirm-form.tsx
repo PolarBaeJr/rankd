@@ -9,6 +9,7 @@ import { rejectImportedEntry } from '@/lib/registration-import-actions';
 import { useToast } from '@/components/toast-provider';
 import { EventWaiverConsent } from '@/app/tournaments/[id]/EventWaiverConsent';
 import { SoloEntryConsent } from '@/app/tournaments/[id]/SoloEntryConsent';
+import { AttendancePolicyConsent } from '@/app/tournaments/[id]/AttendancePolicyConsent';
 
 // Confirm or "Not me" for an entry a Google Form asked for. The boxes are the
 // same ones the event page's Enter dialog shows, and the server refuses without
@@ -21,6 +22,7 @@ export function ConfirmImportForm({
   doubles,
   partnerName,
   doneHref,
+  policyOn = false,
 }: {
   entryId: string;
   kind: 'tournament' | 'club_event';
@@ -28,16 +30,20 @@ export function ConfirmImportForm({
   doubles: boolean;
   partnerName: string | null;
   doneHref: string;
+  /** The attendance_policy_ack switch: the policy is shown and accepted at entry. */
+  policyOn?: boolean;
 }) {
   const [waiverAccepted, setWaiverAccepted] = useState(false);
   const [doublesAccepted, setDoublesAccepted] = useState(false);
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   const [busy, setBusy] = useState<'confirm' | 'reject' | null>(null);
   const { toast } = useToast();
   const router = useRouter();
 
   const needsWaiver = kind === 'tournament' && !!waiverText;
   const needsDoubles = kind === 'tournament' && doubles;
-  const ready = (!needsWaiver || waiverAccepted) && (!needsDoubles || doublesAccepted);
+  const needsPolicy = kind === 'tournament' && policyOn;
+  const ready = (!needsWaiver || waiverAccepted) && (!needsDoubles || doublesAccepted) && (!needsPolicy || policyAccepted);
 
   async function confirm() {
     setBusy('confirm');
@@ -46,6 +52,7 @@ export function ConfirmImportForm({
         const res = await confirmImportedTournamentEntry(entryId, {
           eventWaiverAccepted: waiverAccepted,
           soloEntryAcknowledged: doublesAccepted,
+          attendancePolicyAcknowledged: needsPolicy && policyAccepted,
         });
         if (!res.ok) {
           toast(res.error, 'error');
@@ -111,6 +118,7 @@ export function ConfirmImportForm({
         ) : (
           <SoloEntryConsent accepted={doublesAccepted} onAcceptedChange={setDoublesAccepted} />
         ))}
+      {needsPolicy && <AttendancePolicyConsent accepted={policyAccepted} onAcceptedChange={setPolicyAccepted} />}
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <Button onClick={confirm} loading={busy === 'confirm'} disabled={!ready || busy !== null}>
           Confirm

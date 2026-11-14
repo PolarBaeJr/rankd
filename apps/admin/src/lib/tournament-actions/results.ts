@@ -60,6 +60,8 @@ import { requireConsoleUser } from '../court-helper-gate';
 import { courtHelperDecision, hasHelperRow, normaliseVoidReason } from '../court-helpers';
 import { permits } from '../permissions';
 import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
+import { entryPlayerIds, issueAttendanceWarnings } from '../attendance-warnings';
+import { DEPARTURE_REASONS, DEPARTURE_REASON_LABELS, departureWarns, type DepartureReason } from '../departure-reasons';
 
 // ============================================================
 // Score Entry & Advancement
@@ -2081,9 +2083,9 @@ type BulkVoidMatch = {
 };
 
 async function readPlayingEvent(adminClient: ReturnType<typeof createAdminClient>, eventId: unknown) {
-  if (typeof eventId !== 'string' || eventId === '') throw new ExpectedError('Event not found');
+  if (typeof eventId !== 'string' || eventId === '') throw new Error('Event not found');
   const { data: event, error } = await adminClient.from('tournament_events')
-    .select('id, tournament_id, event_type, status')
+    .select('id, tournament_id, event_type, status, format')
     .eq('id', eventId)
     .maybeSingle();
   if (error) throw new Error(`Could not read the event: ${error.message}`);
@@ -2143,7 +2145,7 @@ async function voidEach(
  */
 async function voidOpenMatchesForEntryImpl(eventId: unknown, entryId: unknown, reason: unknown): Promise<BulkVoidResult> {
   await requireCapability('tournaments.results.void.write');
-  await requireCapability('tournaments.draw.noshow.write');
+  const admin = await requireCapability('tournaments.draw.noshow.write');
   await assertReleaseFlag('did_not_come');
   const text = normaliseVoidReason(reason);
   if (typeof entryId !== 'string' || entryId === '') throw new ExpectedError('That entry is not in this event.');
@@ -2171,6 +2173,19 @@ async function voidOpenMatchesForEntryImpl(eventId: unknown, entryId: unknown, r
   const noShowResult = noShow as FencedFieldResult | null;
   if (!noShowResult?.ok) fencedRefusal(noShowResult, doubles ? 'Pair not found' : 'Participant not found');
 
+  // The event standard: a member who did not come is warned, both of a pair.
+  // Not on a repeat press: the mark was already there.
+  if (!noShowResult.already && await releaseFlagOn('attendance_warnings')) {
+    await issueAttendanceWarnings(adminClient, {
+      playerIds: await entryPlayerIds(adminClient, entryId, doubles),
+      tournamentId: event.tournament_id,
+      eventId: event.id,
+      kind: 'no_show',
+      source: 'did_not_come',
+      actorId: admin.id,
+    });
+  }
+
   const { open, live } = openMatchesOfEntry(await readMatchesForBulkVoid(adminClient, event.id, doubles), entryId);
   const done = await voidEach(adminClient, open.map((m) => m.id), text);
   revalidateEventPaths(event.tournament_id, event.id);
@@ -2183,6 +2198,210 @@ export async function voidOpenMatchesForEntry(
   reason: string,
 ): Promise<ActionResult<BulkVoidResult>> {
   return runAction(() => voidOpenMatchesForEntryImpl(eventId, entryId, reason));
+}
+
+// ============================================================
+// A member who left part way through (00324 event_departures)
+// ============================================================
+
+export interface PlayerLeftResult extends BulkVoidResult {
+  /** Members warned: only "left without telling anyone" warns. */
+  warned: number;
+  /** Their matches a court helper cannot void, left for the desk's "Did not come". */
+  leftForDesk: number;
+}
+
+function parseDeparture(input: unknown): { reason: DepartureReason; note: string | null } {
+  const raw = (input ?? {}) as { reason?: unknown; note?: unknown };
+  if (typeof raw.reason !== 'string' || !(DEPARTURE_REASONS as readonly string[]).includes(raw.reason)) {
+    throw new ExpectedError('Choose why they left.');
+  }
+  const reason = raw.reason as DepartureReason;
+  const note = typeof raw.note === 'string' && raw.note.trim() !== '' ? raw.note.trim() : null;
+  if (note && note.length > 500) throw new ExpectedError('Keep the note to 500 characters.');
+  if (reason === 'other' && !note) throw new ExpectedError('Say why they left.');
+  return { reason, note };
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * "LEFT": the member is gone for the rest of the event, with the reason the
+ * desk or a court helper chose. Play takes it the way it takes "Did not come":
+ * the entry is a no-show, so auto-call stops picking them, and their matches
+ * are voided. Only "left without telling anyone" puts a warning on the record;
+ * every other reason is recorded with none.
+ *
+ * WHO MAY. The desk, holding the no-show and void capabilities, for any entry.
+ * Otherwise a court helper, only for an entry playing right now on a court
+ * they help on, by the same rule as voiding that match from the court card. A
+ * helper voids that match through the helper void and nothing else: the
+ * entry's other open matches are not on their court, so they are counted and
+ * left for the desk, whose "Did not come" finishes them without a second
+ * warning.
+ */
+async function recordPlayerLeftImpl(eventId: unknown, entryId: unknown, input: unknown): Promise<PlayerLeftResult> {
+  const { viewer, level, permissions } = await requireConsoleUser();
+  const actorId = viewer.id as string;
+  const desk = permits(level, permissions, 'tournaments.draw.noshow.write')
+    && permits(level, permissions, 'tournaments.results.void.write');
+  if (typeof entryId !== 'string' || !UUID_PATTERN.test(entryId)) throw new ExpectedError('That entry is not in this event.');
+  const adminClient = createAdminClient();
+  const { event, doubles } = await readPlayingEvent(adminClient, eventId);
+
+  const { data: entry, error: entryError } = await adminClient.from(doubles ? 'tournament_pairs' : 'tournament_participants')
+    .select('id')
+    .eq('id', entryId)
+    .eq('event_id', event.id)
+    .maybeSingle();
+  if (entryError) throw new Error(`Could not read the entry: ${entryError.message}`);
+  if (!entry) throw new ExpectedError('That entry is not in this event.');
+
+  // A helper's authority is a match of this entry live on their court.
+  let helperMatchId: string | null = null;
+  if (!desk) {
+    const { data: liveRows, error: liveError } = await adminClient.from('tournament_matches')
+      .select('id, status, stage, court_id, pair_a_id, pair_b_id, participant_a_id, participant_b_id')
+      .eq('event_id', event.id)
+      .eq('status', 'live');
+    if (liveError) throw new Error(`Could not read the event's matches: ${liveError.message}`);
+    const theirs = (liveRows ?? []).filter((m) => (doubles
+      ? m.pair_a_id === entryId || m.pair_b_id === entryId
+      : m.participant_a_id === entryId || m.participant_b_id === entryId));
+    let refusal = 'Only the desk, or a helper on the court they are playing on, can mark them as left.';
+    for (const m of theirs) {
+      const courtId = (m.court_id as string | null) ?? null;
+      const decision = courtHelperDecision({
+        canDesk: false,
+        match: { status: m.status as string, stage: (m.stage as number | null) ?? null, court_id: courtId },
+        eventFormat: event.format as string | null,
+        hasHelperRow: courtId ? await hasHelperRow(adminClient, courtId, actorId) : false,
+      });
+      if (decision.kind === 'helper') {
+        helperMatchId = m.id as string;
+        break;
+      }
+      if (decision.kind === 'refuse') refusal = decision.reason;
+    }
+    if (!helperMatchId) throw new ExpectedError(refusal);
+  }
+  await assertReleaseFlag('attendance_warnings');
+  const { reason, note } = parseDeparture(input);
+  // LEFT, AND SOMEBODY TAKES THE PLACE (00327). The departure and its warning
+  // are recorded as ever, but the entry is not marked "Did not come" and its
+  // unplayed matches are not voided: they are what the substitute takes over.
+  // The desk's alone, since a court helper cannot sub.
+  const subbing = (input as { subbing?: unknown } | null)?.subbing === true;
+  if (subbing) {
+    if (!desk) throw new ExpectedError('Only the desk can sub somebody in.');
+    await assertReleaseFlag('substitutions');
+  }
+
+  // Before anything is marked: a database without 00324 has nowhere to keep
+  // the departure, and a reasoned leave with no record is the wrong outcome.
+  const { error: probeError } = await adminClient.from('event_departures').select('id').limit(1);
+  if (probeError) {
+    if (['42P01', 'PGRST205'].includes(probeError.code ?? '')) throw new ExpectedError('Run migration 00324 first');
+    throw new Error(`Could not read the departures: ${probeError.message}`);
+  }
+
+  if (!subbing) {
+    const { data: noShow, error: noShowError } = await adminClient.rpc('set_field_entry_status', {
+      p_entry_id: entryId,
+      p_is_pair: doubles,
+      p_new_status: 'no_show',
+      p_actor: null,
+    });
+    if (noShowError) {
+      Sentry.captureException(noShowError);
+      throw new Error(noShowError.message);
+    }
+    const noShowResult = noShow as FencedFieldResult | null;
+    if (!noShowResult?.ok) fencedRefusal(noShowResult, doubles ? 'Pair not found' : 'Participant not found');
+  }
+
+  const markedAs = desk ? 'desk' : 'court_helper';
+  const playerIds = await entryPlayerIds(adminClient, entryId, doubles);
+  const warnings = departureWarns(reason)
+    ? await issueAttendanceWarnings(adminClient, {
+      playerIds,
+      tournamentId: event.tournament_id,
+      eventId: event.id,
+      kind: 'left_without_notice',
+      source: markedAs,
+      note,
+      actorId,
+    })
+    : [];
+  for (const playerId of playerIds) {
+    const { error } = await adminClient.from('event_departures').insert({
+      event_id: event.id,
+      player_id: playerId,
+      participant_id: doubles ? null : entryId,
+      pair_id: doubles ? entryId : null,
+      reason,
+      note,
+      marked_by: actorId,
+      marked_as: markedAs,
+      warning_id: warnings.find((w) => w.playerId === playerId)?.warningId ?? null,
+    });
+    // A second press is the same departure.
+    if (error && error.code !== '23505') {
+      Sentry.captureException(new Error(`Departure write failed: ${error.message}`), { extra: { eventId: event.id } });
+    }
+  }
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: event.id,
+    action: 'player_left_event',
+    performed_by: actorId,
+    details: { entry_id: entryId, player_ids: playerIds, reason, marked_as: markedAs, warned: warnings.length, subbing },
+  });
+  const text = `Left the event: ${DEPARTURE_REASON_LABELS[reason].toLowerCase()}`;
+  const eventMatches = await readMatchesForBulkVoid(adminClient, event.id, doubles);
+  if (subbing) {
+    // Only the match they walked off is voided: half a match has no winner to
+    // give the sub, and the sub refuses while the entry is on court.
+    const liveIds = eventMatches.filter((m) => (m.a === entryId || m.b === entryId) && m.status === 'live').map((m) => m.id);
+    const liveResult = await voidEach(adminClient, liveIds, text);
+    revalidateEventPaths(event.tournament_id, event.id);
+    revalidatePath('/my-courts');
+    return { ...liveResult, live: 0, skipped: 0, warned: warnings.length, leftForDesk: 0 };
+  }
+
+  const { open, live } = openMatchesOfEntry(eventMatches, entryId);
+  let result: BulkVoidResult;
+  let leftForDesk = 0;
+  if (desk) {
+    result = { ...(await voidEach(adminClient, open.map((m) => m.id), text)), live, skipped: 0 };
+  } else {
+    // The helper void's own switch still holds: with it off, the match stays
+    // on court for the desk.
+    let voided = 0;
+    let failed = 0;
+    if (helperMatchId && await releaseFlagOn('desk_helper_void')) {
+      try {
+        await voidMatchImpl(helperMatchId, text, { kind: 'helper', actorId });
+        voided = 1;
+      } catch (err) {
+        if (!(err instanceof ExpectedError)) Sentry.captureException(err);
+        failed = 1;
+      }
+    }
+    leftForDesk = open.length;
+    result = { voided, failed, live: Math.max(0, live - voided), skipped: 0 };
+  }
+  revalidateEventPaths(event.tournament_id, event.id);
+  revalidatePath('/my-courts');
+  return { ...result, warned: warnings.length, leftForDesk };
+}
+
+export async function recordPlayerLeft(
+  eventId: string,
+  entryId: string,
+  input: { reason: DepartureReason; note?: string | null; subbing?: boolean },
+): Promise<ActionResult<PlayerLeftResult>> {
+  return runAction(() => recordPlayerLeftImpl(eventId, entryId, input));
 }
 
 /** "VOID UNPLAYED": every match of a stage, or of one group of it, nothing has happened on yet. */

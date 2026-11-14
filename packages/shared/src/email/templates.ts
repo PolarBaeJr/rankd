@@ -287,3 +287,25 @@ export function weeklyDigestEmail(
     `),
   };
 }
+
+// "Confirm your place" (00325): the event standard asks every entrant, a day or
+// two ahead, whether they are still coming. One button, and the way out spelled
+// out, because a member who cannot come and says so gives a reserve the place.
+export function eventConfirmationEmail(args: {
+  firstName: string | null;
+  tournamentName: string;
+  eventLabel: string;
+  deadlineText: string;
+  url: string;
+}): { subject: string; html: string } {
+  return {
+    subject: subj(`Confirm your place: ${args.tournamentName}`),
+    html: wrap(`
+      <h2 style="color: #E94560; margin-bottom: 16px;">Confirm your place</h2>
+      <p>Hi ${escapeHtml(args.firstName ?? 'there')},</p>
+      <p>You are entered in <strong>${escapeHtml(args.eventLabel)}</strong> at <strong>${escapeHtml(args.tournamentName)}</strong>. Confirm by <strong>${escapeHtml(args.deadlineText)}</strong> that you are coming, or your place goes to the next player on the waitlist.</p>
+      <a href="${escapeHtml(args.url)}" style="${BUTTON_STYLES}">Confirm</a>
+      <p style="${MUTED} margin-top: 16px;">If you cannot come, withdraw so a reserve gets your place.</p>
+    `),
+  };
+}

@@ -25,7 +25,9 @@ import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from
 import { assertFeatureOn, getFeatureFlags } from './feature-gate';
 import { refuseClosedTournament } from './tournament-closed';
 import { loadEntryWindows, windowsFor } from './tournament-windows';
-import { enterEventCore, type RegisterOptions } from './tournament-entry-core';
+import { ATTENDANCE_POLICY_REFUSAL, enterEventCore, type RegisterOptions } from './tournament-entry-core';
+import { assertReleaseFlag, getReleaseFlags } from './release-flags';
+import { assertNoEntryRestriction } from './entry-restriction';
 import {
   fillFromWaitlistAfterFree,
   isWaitlistMissing,
@@ -126,11 +128,12 @@ async function confirmImportedTournamentEntryImpl(
 
   let settled = await settleImportEntry(service, entryId, player.id);
   if (!settled.ok && settled.reason === 'not_entered') {
-    // Only the two flags the member's own dialog would send, never anything
+    // Only the flags the member's own dialog would send, never anything
     // else from the client.
     await registerForEventImpl(entry.tournament_event_id, {
       eventWaiverAccepted: opts?.eventWaiverAccepted === true,
       soloEntryAcknowledged: opts?.soloEntryAcknowledged === true,
+      attendancePolicyAcknowledged: opts?.attendancePolicyAcknowledged === true,
     });
     settled = await settleImportEntry(service, entryId, player.id);
   }
@@ -274,6 +277,47 @@ async function withdrawFromEventImpl(eventId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// CONFIRM YOUR PLACE (00325)
+// ---------------------------------------------------------------------------
+// The member keeps their place by confirming it before the deadline. Only from
+// the page's button, never on a GET: a mail scanner opening the link must not
+// confirm for anybody. confirm_event_entry checks the row is the caller's own.
+
+export async function confirmEventEntry(eventId: string): Promise<ActionResult<{ already: boolean }>> {
+  return runAction(() => confirmEventEntryImpl(eventId));
+}
+
+async function confirmEventEntryImpl(eventId: string): Promise<{ already: boolean }> {
+  const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
+  await assertReleaseFlag('entry_confirmation');
+  if (!isUuid(eventId)) throw new Error('Event not found');
+  const service = createServiceRoleClient();
+
+  const { data, error } = await service.rpc('confirm_event_entry', { p_event_id: eventId, p_player_id: player.id });
+  if (error) {
+    if (['PGRST202', '42883'].includes(error.code ?? '')) throw new ExpectedError('Confirming is not available yet.');
+    throw new Error(error.message);
+  }
+  const result = data as { ok: boolean; reason?: string; already?: boolean; tournament_id?: string } | null;
+  if (!result?.ok) {
+    switch (result?.reason) {
+      case 'not_asked':
+        throw new ExpectedError('There is nothing to confirm for this event.');
+      case 'released':
+        throw new ExpectedError('The deadline passed and your place went to the waitlist.');
+      case 'past_deadline':
+        throw new ExpectedError('The deadline has passed. Ask the organizers at the desk.');
+      default:
+        throw new Error('Could not confirm your place. Please try again shortly.');
+    }
+  }
+  if (result.tournament_id) revalidateTournamentPaths(result.tournament_id, eventId);
+  revalidatePath('/feed');
+  return { already: result.already === true };
+}
+
+// ---------------------------------------------------------------------------
 // THE WAITLIST (00278)
 // ---------------------------------------------------------------------------
 // A member who could not get into a full event can queue for it. Joining asks
@@ -313,7 +357,7 @@ async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): P
   if (!event) throw new Error('Event not found');
   if (event.external_event) throw new ExpectedError('This event is entered by the organisers.');
 
-  // The same two consents an entry needs, because a promotion later enters the
+  // The same consents an entry needs, because a promotion later enters the
   // member without asking again.
   const doubles = isDoublesEvent(event.event_type);
   if (doubles && !opts?.soloEntryAcknowledged) {
@@ -326,6 +370,11 @@ async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): P
   if (eventWaiverText && !opts?.eventWaiverAccepted) {
     throw new ExpectedError('You must accept the event waiver to join the waitlist');
   }
+  const releaseFlags = await getReleaseFlags();
+  if (releaseFlags.attendance_policy_ack && !opts?.attendancePolicyAcknowledged) {
+    throw new ExpectedError(ATTENDANCE_POLICY_REFUSAL);
+  }
+  if (releaseFlags.entry_restriction) await assertNoEntryRestriction(service, player.id);
 
   const { data: joined, error: joinErr } = await service.rpc('join_event_waitlist', {
     p_event_id: eventId,

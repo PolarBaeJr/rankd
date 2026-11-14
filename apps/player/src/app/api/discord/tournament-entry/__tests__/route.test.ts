@@ -4,8 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (tested in lib/__tests__/discord-member.test.ts) and the entry is
 // enterEventCore, the web's own body (tested through registerForEvent). What
 // this file pins is the route's half: every refusal it can answer, that a
-// waiver tournament and a doubles event are sent to the website, and that
-// Discord never asks the core to record an event waiver acceptance.
+// waiver tournament, a doubles event and any event while the attendance policy
+// switch is on are sent to the website, and that Discord never asks the core to
+// record an event waiver acceptance.
 
 const PLAYER = { id: 'player-me', full_name: 'Me Myself', status: 'competitive', is_banned: false, active_flag: true };
 const EVENT_ID = '11111111-2222-4333-8444-555555555555';
@@ -14,6 +15,7 @@ let caller: { ok: true; player: typeof PLAYER } | { ok: false; refusal: string }
 let event: Record<string, unknown> | null = null;
 let eventError: { message: string } | null = null;
 let coreError: Error | null = null;
+let policyOn = false;
 const resolveCalls: unknown[][] = [];
 const coreCalls: unknown[][] = [];
 
@@ -43,6 +45,10 @@ vi.mock('@/lib/supabase-server', () => ({
       return chain;
     },
   }),
+}));
+
+vi.mock('@/lib/release-flags', () => ({
+  releaseFlagOn: vi.fn(async (id: string) => (id === 'attendance_policy_ack' ? policyOn : true)),
 }));
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -75,6 +81,7 @@ beforeEach(() => {
   };
   eventError = null;
   coreError = null;
+  policyOn = false;
   resolveCalls.length = 0;
   coreCalls.length = 0;
 });
@@ -138,6 +145,16 @@ describe('POST /api/discord/tournament-entry', () => {
   it('sends a doubles event to the website', async () => {
     event = { ...event, event_type: 'mixed_doubles' };
     expect((await (await post(BODY)).json()).refusal).toBe('website');
+    expect(coreCalls).toHaveLength(0);
+  });
+
+  it('sends every event to the website while the attendance policy is asked', async () => {
+    policyOn = true;
+    expect(await (await post(BODY)).json()).toEqual({
+      ok: false,
+      refusal: 'website',
+      url: `https://club.example.invalid/tournaments/t1/events/${EVENT_ID}`,
+    });
     expect(coreCalls).toHaveLength(0);
   });
 

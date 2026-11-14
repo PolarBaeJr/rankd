@@ -10,6 +10,7 @@ import {
 import { resolveDiscordPlayer, type PlayRefusal } from '@/lib/discord-member';
 import { enterEventCore, type EntryPlayer } from '@/lib/tournament-entry-core';
 import { eventTypeLabel, publicBase } from '@/lib/discord-tournament-text';
+import { releaseFlagOn } from '@/lib/release-flags';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,8 @@ export const dynamic = 'force-dynamic';
 //     and Discord never creates one: eventWaiverAccepted is never sent.
 //   - a doubles event. Entering one alone is agreeing to be paired with
 //     whoever the exec chooses, and that sentence is the website's dialog.
+//   - any event while the attendance_policy_ack switch is on. The attendance
+//     policy is accepted in the website's dialog, and Discord does not ask.
 //
 // A refusal is a 200 with a code, as on the challenges route; 'rule' carries
 // the app's own sentence.
@@ -80,7 +83,11 @@ export async function POST(request: Request) {
     | undefined;
   if (!event || !tournament || tournament.status === 'draft') return refuse('not_found');
 
-  if (tournament.waiver_text?.trim() || isDoublesEvent(event.event_type)) {
+  if (
+    tournament.waiver_text?.trim()
+    || isDoublesEvent(event.event_type)
+    || (await releaseFlagOn('attendance_policy_ack'))
+  ) {
     const base = publicBase();
     return refuse('website', {
       url: base ? `${base}/tournaments/${event.tournament_id}/events/${event.id}` : null,

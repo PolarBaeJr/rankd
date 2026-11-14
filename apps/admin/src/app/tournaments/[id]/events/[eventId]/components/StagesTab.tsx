@@ -83,6 +83,8 @@ interface Props {
   /** Holds the no-show key: with canVoid, Did not come on a group's table. */
   canMarkNoShow?: boolean;
   helperCourtIds?: string[];
+  /** Sub (00327) from a court card's Left, for the desk only; undefined hides it. */
+  onSub?: (entryId: string) => void;
   /** Opens Add on the spot, while the desk may add. */
   onAddOnTheSpot?: () => void;
   /** An entry just added on the spot: its placement opens once it is listed. */
@@ -112,7 +114,7 @@ const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named ma
  */
 export function StagesTab({
   event, matches, participants, pairs, isDoubles, canGenerate, courts, busyCourtIds, canManageCourts, canEnterResult,
-  canVoid = false, canMarkNoShow = false, helperCourtIds = [],
+  canVoid = false, canMarkNoShow = false, helperCourtIds = [], onSub,
   onAddOnTheSpot, pendingLateEntryId = null, onPendingLateHandled, releaseFlags = ALL_RELEASE_FLAGS_ON,
 }: Props) {
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
@@ -218,6 +220,13 @@ export function StagesTab({
   const activeCourts = useMemo(() => (courts ?? []).filter((c) => c.active), [courts]);
 
   const categoryWarning = useMemo(() => (isDoubles ? uncategorisedWarning(pairs) : null), [isDoubles, pairs]);
+  // THE EVENT STANDARD (checkin_cutoff_default): stage 1 is drawn after check-in
+  // closes and the no-shows are released, so a reserve can still take a place.
+  // A warning only: the desk may have a reason.
+  const unreleased = entries.filter((e) => e.status === 'registered').length;
+  const cutoffWarning = releaseFlags.checkin_cutoff_default && unreleased > 0
+    ? `${unreleased} ${unreleased === 1 ? 'entry has' : 'entries have'} not checked in. Close check-in and release the no-shows on the Check-in tab first, so reserves can take their places.`
+    : null;
 
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
@@ -380,6 +389,8 @@ export function StagesTab({
       busyElsewhere={courtsInUse.has(court.id) && !rows.some((r) => r.state === 'live' && r.match.court_id === court.id)}
       onMore={setScoreMatchId}
       voidMatch={releaseFlags.desk_helper_void && (canVoid || helperCourtIds.includes(court.id)) ? voidCourtHelperMatch : undefined}
+      canMarkLeft={releaseFlags.attendance_warnings && ((canVoid && canMarkNoShow) || helperCourtIds.includes(court.id))}
+      onSub={canVoid && canMarkNoShow ? onSub : undefined}
     />
   );
 
@@ -500,6 +511,11 @@ export function StagesTab({
                     {control.blockedReason && (
                       <p id={hintId} className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">
                         {control.blockedReason}
+                      </p>
+                    )}
+                    {control.action === 'draw' && view.number === 1 && cutoffWarning && (
+                      <p role="status" className="text-xs text-[var(--color-warning)] max-w-[15rem] text-right">
+                        {cutoffWarning}
                       </p>
                     )}
                     {control.action === 'draw' && view.stage.scoring.handicap && categoryWarning && (

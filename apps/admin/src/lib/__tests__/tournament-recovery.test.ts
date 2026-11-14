@@ -388,6 +388,8 @@ const makeClient = vi.hoisted(() => () => {
 
 vi.mock('next/cache', () => ({ revalidatePath }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
+// results.ts reaches notify.ts through the attendance warnings (00324).
+vi.mock('server-only', () => ({}));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
 

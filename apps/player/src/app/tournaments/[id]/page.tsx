@@ -30,6 +30,7 @@ import { FeedbackForm } from './feedback-form';
 import { LiveTournament } from '../live-tournament';
 import { tournamentFormLink } from '@/lib/event-form-link';
 import { VisitorSignup } from '@/components/visitor-signup';
+import { getReleaseFlags } from '@/lib/release-flags';
 
 /**
  * The teams this member is in, across these events, and WHO WITH.
@@ -205,6 +206,22 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       ? { receiptPending: membership.receiptPending, payOnline: flags.membership }
       : null;
 
+  const releaseFlags = await getReleaseFlags();
+  // Who makes the calls on the day (00324). Its own read, through the named FK
+  // because tournaments has two to players; a failed read shows no line.
+  const dayLeadId = (tournament as { day_lead_player_id?: string | null }).day_lead_player_id ?? null;
+  const dayLeadName = releaseFlags.day_lead && dayLeadId
+    ? await supabase
+        .from('tournaments')
+        .select('day_lead:players!tournaments_day_lead_player_id_fkey(full_name)')
+        .eq('id', id)
+        .maybeSingle()
+        .then(({ data }) => {
+          const lead = (data as { day_lead?: { full_name: string | null } | Array<{ full_name: string | null }> | null } | null)?.day_lead;
+          return (Array.isArray(lead) ? lead[0] : lead)?.full_name ?? null;
+        })
+    : null;
+
   return (
     <div data-screen-label="Tournament">
       {/* The event list below prints each event's status and its entry count,
@@ -264,6 +281,11 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <span className="muted" style={{ textTransform: 'capitalize' }}>{tournament.format}</span>
               <span className="muted">·</span>
             </div>
+            {dayLeadName && (
+              <p className="muted" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+                On the day, {dayLeadName} makes the calls.
+              </p>
+            )}
           </div>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <span className={TOURNAMENT_STATUS_TAG[tournament.status as string] ?? 'tag'}>
@@ -417,6 +439,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     membershipBlocked={feeNeeded ? 'Club fee needed' : null}
                     registrationNotice={windowNotices.registration}
                     checkinNotice={windowNotices.checkin}
+                    policyOn={releaseFlags.attendance_policy_ack}
                   />
                   )}
                 </div>

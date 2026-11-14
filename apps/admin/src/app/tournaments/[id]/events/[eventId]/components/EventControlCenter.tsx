@@ -30,6 +30,8 @@ import type {
   PairWithPlayers,
   WaitlistEntry,
   CategoryRequest,
+  ConfirmationRow,
+  PlayerSummary,
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
@@ -40,6 +42,7 @@ import { EventHeader } from './EventHeader';
 import { ParticipantsTab, type ParticipantPartners } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { AddOnTheSpotDialog } from './AddOnTheSpotDialog';
+import { SubstituteForEntry, type SubstituteSources } from './SubstituteDialog';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { StagesTab } from './StagesTab';
@@ -122,13 +125,19 @@ interface Props {
   partners?: ParticipantPartners | null;
   // Who is looking, so the panel offers Cancel on their own requests only.
   viewerId: string;
+  /** An exec: the day lead's test, and who may let a restricted member in as a sub. */
+  viewerIsExec?: boolean;
   /** The courts this viewer helps on (00310), for the court card's Void. */
   helperCourtIds?: string[];
   /** The kill switches (release-flags.ts). The server actions ask them again. */
   releaseFlags?: ReleaseFlags;
+  /** Who confirmed their place (00325); null when the event does not ask. */
+  confirmations?: ConfirmationRow[] | null;
+  /** The execs, who fill an empty place last (00326). */
+  execs?: PlayerSummary[];
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, helperCourtIds = [], releaseFlags = ALL_RELEASE_FLAGS_ON }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, imported = null, signedUpAt = null, partners = null, viewerId, viewerIsExec = false, helperCourtIds = [], releaseFlags = ALL_RELEASE_FLAGS_ON, confirmations = null, execs = [] }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -216,9 +225,25 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
   const router = useRouter();
   const [spotOpen, setSpotOpen] = useState(false);
+  const [courtSub, setCourtSub] = useState<string | null>(null);
   const [pendingLate, setPendingLate] = useState<string | null>(null);
   const clearPendingLate = useCallback(() => setPendingLate(null), []);
   const canAddOnTheSpot = releaseFlags.add_on_the_spot && drawCapabilities.soloAdd && status !== 'completed';
+  // SUB (00327): the desk holding check-in and the add key, or the day lead.
+  // The server asks the same; this only hides a button that would be refused.
+  const isDayLead = releaseFlags.day_lead && viewerIsExec
+    && (tournament as { day_lead_player_id?: string | null }).day_lead_player_id === viewerId;
+  const canSub = releaseFlags.substitutions && status !== 'completed'
+    && ((drawCapabilities.manageCourts && drawCapabilities.add) || isDayLead);
+  const subSources: SubstituteSources | null = canSub
+    ? {
+      waitlist: waitlist ?? [],
+      execs,
+      canEnterSpares: releaseFlags.fill_empty_places && drawCapabilities.soloAdd,
+      reservesOpen: status === 'registration' || status === 'checkin',
+      canOverride: viewerIsExec,
+    }
+    : null;
   const takenPlayerIds = new Set<string>([
     ...participants.filter((p) => p.status !== 'withdrawn' && p.status !== 'disqualified').map((p) => p.player_id),
     ...pairs.filter((p) => p.status !== 'withdrawn' && p.status !== 'disqualified')
@@ -295,6 +320,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         // which is what decides whether the knockout can be drawn yet. The
         // whole event on the other two formats, where nothing reads it.
         poolUndecided={poolMatchesUndecided(poolMatches, isDoubles)}
+        releaseFlags={releaseFlags}
         drawCapabilities={drawCapabilities}
         // WHETHER THE DRAW THAT EXISTS HAS A BRONZE MATCH, read off the matches
         // themselves. The third-place choice is deliberately not stored on
@@ -375,6 +401,19 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       </div>
 
       {/* Tab Content */}
+      {courtSub && subSources && (
+        <SubstituteForEntry
+          eventId={event.id}
+          entryId={courtSub}
+          isDoubles={isDoubles}
+          participants={participants}
+          pairs={pairs}
+          matches={matches}
+          sources={subSources}
+          onAddGuest={canAddOnTheSpot ? () => { setCourtSub(null); setSpotOpen(true); } : undefined}
+          onClose={() => setCourtSub(null)}
+        />
+      )}
       {spotOpen && (
         <AddOnTheSpotDialog
           eventId={event.id}
@@ -424,6 +463,19 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canVoidNoShow={drawCapabilities.voidResult && drawCapabilities.markNoShow}
             didNotComeOn={releaseFlags.did_not_come}
             checkInAfterDraw={releaseFlags.check_in_after_draw}
+            markLeftOn={releaseFlags.attendance_warnings}
+            confirmations={releaseFlags.entry_confirmation ? confirmations : null}
+            canConfirmFor={drawCapabilities.manageCourts}
+            sub={subSources}
+            fill={releaseFlags.fill_empty_places && waitlist && (drawCapabilities.markNoShow || drawCapabilities.soloAdd)
+              ? {
+                waitlist,
+                execs,
+                canRelease: drawCapabilities.markNoShow,
+                canAdd: drawCapabilities.soloAdd,
+                warns: releaseFlags.attendance_warnings,
+              }
+              : null}
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
           />
         )}
@@ -471,6 +523,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             canMarkNoShow={drawCapabilities.markNoShow}
             helperCourtIds={helperCourtIds}
             releaseFlags={releaseFlags}
+            onSub={canSub ? setCourtSub : undefined}
             onAddOnTheSpot={canAddOnTheSpot ? () => setSpotOpen(true) : undefined}
             pendingLateEntryId={pendingLate}
             onPendingLateHandled={clearPendingLate}

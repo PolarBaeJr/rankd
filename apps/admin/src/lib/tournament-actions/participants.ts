@@ -30,6 +30,7 @@ import {
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
 import { releaseFlagOn } from '../release-flags';
+import { entryPlayerIds, rescindEventWarnings } from '../attendance-warnings';
 import { checkInWindow } from '../participant-controls';
 import {
   requireCapability,
@@ -1601,6 +1602,19 @@ async function returnEntryToWaiting(
   if (!result.tournament_id || !result.event_id) {
     Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable, page not revalidated'));
     throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+  }
+
+  // An undone no-show takes back the warning the mark wrote. A warning the desk
+  // wrote by hand stays: that was its own decision.
+  if (expected === 'no_show' && await releaseFlagOn('attendance_warnings')) {
+    await rescindEventWarnings(adminClient, {
+      playerIds: await entryPlayerIds(adminClient, entryId, isPair),
+      tournamentId: result.tournament_id,
+      eventId: result.event_id,
+      sources: ['did_not_come', 'checkin_close'],
+      actorId,
+      reason: 'The no-show was undone.',
+    });
   }
   revalidateEventPaths(result.tournament_id, result.event_id);
 }

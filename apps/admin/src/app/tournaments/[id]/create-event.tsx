@@ -45,16 +45,20 @@ export function CreateEventButton({
   // event's own column, which every event took as true. The event's column
   // still decides; events created before this keep what they have.
   defaultPlacementBonus = true,
+  // The event standard (event_standard_defaults): a new event opens as pools
+  // then placement, the club's usual shape. Off, the old single elimination.
+  standardDefaults = false,
 }: {
   tournamentId: string;
   siblings?: SiblingEvent[];
   defaultEloMultiplier?: number | null;
   defaultPlacementBonus?: boolean;
+  standardDefaults?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [eventType, setEventType] = useState<TournamentEventType>('mens_singles');
-  const [format, setFormat] = useState<TournamentEventFormat>('single_elimination');
+  const [format, setFormat] = useState<TournamentEventFormat>(standardDefaults ? 'staged' : 'single_elimination');
   const [formatValues, setFormatValues] = useState<EventFormatValues>(EMPTY_FORMAT_VALUES);
   const [maxParticipants, setMaxParticipants] = useState('');
   const [seedingMethod, setSeedingMethod] = useState<TournamentSeedingMethod>('elo');

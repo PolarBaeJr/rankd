@@ -23,6 +23,7 @@ import {
 } from '@/lib/live-desk';
 import { useToast } from '@/components/toast-provider';
 import type { ActionResult } from '@/lib/action-result';
+import { PlayerLeftDialog } from './PlayerLeftDialog';
 import type { TournamentMatchRow } from '@/lib/tournament-types';
 
 export type CourtSide = { entryId: string | null; label: string; absent?: boolean };
@@ -60,6 +61,13 @@ interface Props {
   save?: CourtScoreSave;
   /** Voids the match on court. Given only to someone who may (the void key, or a helper row on this court). */
   voidMatch?: CourtVoid;
+  /** "Left" for each side on court (00324). Only for someone who may: the desk, or a helper row on this court. */
+  canMarkLeft?: boolean;
+  /**
+   * The desk, with substitutions on (00327): Left offers "Sub someone in",
+   * which voids the match walked off and opens the sub. Never a helper's.
+   */
+  onSub?: (entryId: string) => void;
 }
 
 /**
@@ -69,13 +77,14 @@ interface Props {
  */
 export function CourtCard({
   court, groupName, rows, courts, cfg, isLive, canEnterResult, canManageCourts, busyElsewhere, onMore, save, voidMatch,
+  canMarkLeft = false, onSub,
 }: Props) {
   const onCourt = rows.find((r) => r.state === 'live' && r.match.court_id === court.id) ?? null;
   const next = nextMatchForCourt(rows, court, courts, cfg, { busyEntries: liveEntrants(rows, onCourt?.match.id) });
   const name = courtLabel(court.label) ?? court.label;
   const optionIds = courtCardOptions({ more: !!onMore && canEnterResult, skip: canEnterResult, void: !!voidMatch });
   // Keyed by match, so a void reason typed for one match never carries to the next on this court.
-  const options = onCourt && optionIds.length > 0 ? (
+  const options = onCourt && (optionIds.length > 0 || canMarkLeft) ? (
     <CourtOptions
       key={onCourt.match.id}
       row={onCourt}
@@ -83,6 +92,8 @@ export function CourtCard({
       optionIds={optionIds}
       onMore={onMore ? () => onMore(onCourt.match.id) : undefined}
       voidMatch={voidMatch}
+      canMarkLeft={canMarkLeft}
+      onSub={onSub}
     />
   ) : null;
 
@@ -261,23 +272,31 @@ function PutOnCourt({ row, court }: { row: CourtDeskRow; court: TournamentCourt 
  * match. Inside the score form, so the trigger is type="button".
  */
 function CourtOptions({
-  row, courtName, optionIds, onMore, voidMatch,
+  row, courtName, optionIds, onMore, voidMatch, canMarkLeft = false, onSub,
 }: {
   row: CourtDeskRow;
   courtName: string;
   optionIds: ReturnType<typeof courtCardOptions>;
   onMore?: () => void;
   voidMatch?: CourtVoid;
+  canMarkLeft?: boolean;
+  onSub?: (entryId: string) => void;
 }) {
   const skip = useSkipForNow(row, courtName);
   const voiding = useVoidOnCourt(row, courtName, voidMatch);
+  const [leaving, setLeaving] = useState<CourtSide | null>(null);
   const busy = skip.pending || voiding.pending;
-  const items = optionIds.flatMap((id) => {
+  const items: Array<{ label: string; onClick: () => void; danger?: boolean; disabled: boolean }> = optionIds.flatMap((id) => {
     if (id === 'more' && onMore) return [{ label: 'Cut short, walkover…', onClick: onMore, disabled: busy }];
     if (id === 'skip') return [{ label: 'Skip for now', onClick: () => void skip.run(), disabled: busy }];
     if (id === 'void' && voidMatch) return [{ label: 'Void match', onClick: voiding.ask, danger: true, disabled: busy }];
     return [];
   });
+  if (canMarkLeft) {
+    for (const side of [row.a, row.b]) {
+      if (side.entryId) items.push({ label: `${side.label} left`, onClick: () => setLeaving(side), danger: true, disabled: busy });
+    }
+  }
 
   return (
     <>
@@ -291,6 +310,15 @@ function CourtOptions({
         items={items}
       />
       {voiding.dialog}
+      {leaving?.entryId && (
+        <PlayerLeftDialog
+          eventId={row.match.event_id}
+          entryId={leaving.entryId}
+          label={leaving.label}
+          onClose={() => setLeaving(null)}
+          onSub={onSub ? () => { const entryId = leaving.entryId!; setLeaving(null); onSub(entryId); } : undefined}
+        />
+      )}
     </>
   );
 }

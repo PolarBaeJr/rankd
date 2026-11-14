@@ -35,6 +35,8 @@ import { ReliabilityEditor } from './reliability-editor';
 import { CancelDeletionButton } from './cancel-deletion-button';
 import { RequireWaiverResignatureButton } from './require-waiver-resignature-button';
 import { DiscordLinkPanel } from './discord-link-panel';
+import { AttendancePanel, type AttendanceWarningRow, type EntryRestrictionRow } from './attendance-panel';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { GuestMembership } from './guest-membership';
 import { Panel, PanelLabel, PanelRow } from './panel';
 import { notFound } from 'next/navigation';
@@ -276,6 +278,43 @@ export default async function PlayerDetailPage({
   ]);
 
   if (!player) notFound();
+
+  // ATTENDANCE (00324), behind players.read and the two switches. Read on its
+  // own, so a database without the tables is an empty panel, not a broken page.
+  const releaseFlags = await getReleaseFlags();
+  const showAttendance = canRead && (releaseFlags.attendance_warnings || releaseFlags.entry_restriction);
+  const [warningsRead, restrictionsRead] = showAttendance
+    ? await Promise.all([
+        supabase.from('attendance_warnings')
+          .select('id, kind, source, note, issued_at, rescinded_at, rescind_reason, event:tournament_events(event_type, tournament:tournaments(name))')
+          .eq('player_id', id)
+          .order('issued_at', { ascending: false })
+          .limit(50),
+        supabase.from('event_entry_restrictions')
+          .select('id, reason, starts_at, ends_at, lifted_at')
+          .eq('player_id', id)
+          .order('created_at', { ascending: false })
+          .limit(20),
+      ])
+    : [{ data: null }, { data: null }];
+  const attendanceWarnings: AttendanceWarningRow[] = ((warningsRead.data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const embed = row.event as { event_type?: string; tournament?: { name?: string } | { name?: string }[] | null } | null;
+    const tournament = Array.isArray(embed?.tournament) ? embed?.tournament[0] : embed?.tournament;
+    const type = embed?.event_type
+      ? (TOURNAMENT_EVENT_TYPE_LABELS as Record<string, string>)[embed.event_type] ?? embed.event_type
+      : null;
+    return {
+      id: row.id as string,
+      kind: row.kind as string,
+      source: row.source as string,
+      note: (row.note as string | null) ?? null,
+      issued_at: row.issued_at as string,
+      rescinded_at: (row.rescinded_at as string | null) ?? null,
+      rescind_reason: (row.rescind_reason as string | null) ?? null,
+      where: type && tournament?.name ? `${type} at ${tournament.name}` : type,
+    };
+  });
+  const entryRestrictions = (restrictionsRead.data ?? []) as EntryRestrictionRow[];
 
   // A guest (00292), and who asked an admin to make them a member, if anyone.
   const guest = player as { is_guest?: boolean; email?: string | null; guest_member_requested_by?: string | null; guest_member_requested_at?: string | null };
@@ -895,6 +934,20 @@ export default async function PlayerDetailPage({
             isAdmin={isAdmin}
             requestedBy={guestRequester}
             requestedAt={guest.guest_member_requested_at ?? null}
+          />
+        </Panel>
+      )}
+
+      {showAttendance && (
+        <Panel title="Attendance" icon={<AlertTriangle className="h-4 w-4 text-[var(--text-muted)]" />}>
+          <AttendancePanel
+            playerId={player.id}
+            warnings={attendanceWarnings}
+            restrictions={entryRestrictions}
+            warningsOn={releaseFlags.attendance_warnings}
+            restrictionsOn={releaseFlags.entry_restriction}
+            canRestrict={viewerSet.has('players.ban.write')}
+            canLift={viewerSet.has('players.reinstate.write')}
           />
         </Panel>
       )}

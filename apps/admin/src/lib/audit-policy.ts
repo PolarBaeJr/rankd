@@ -269,6 +269,20 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // scores were judged by a category it no longer has. This row is the only
   // record of who decided that and on whose request.
   'pair_category_change_approved',
+
+  // The event standard (00324). No risk pattern matches these, so they are
+  // classified by hand: a warning and a restriction decide whether a member may
+  // enter future events, and the row is the only record of who decided it.
+  'attendance_warning_issued',
+  'attendance_warning_rescinded',
+  'entry_restriction_created',
+  'entry_restriction_lifted',
+  // A member marked as left, with the reason: the only record of who said a
+  // departure was reasoned, which is what decides whether it warned.
+  'player_left_event',
+  // Who came in for whom, and who made the call: a team's results stay with
+  // the people who played them, and this says when that changed.
+  'event_substitution_made',
 ]);
 
 /**

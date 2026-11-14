@@ -527,6 +527,52 @@ export async function assembleMemberExport(
     resolved_by_role: officerDescriptor(row.resolved_by as string | null),
   }));
 
+  // The event standard (00324, 00325): the member's own warnings,
+  // restrictions and confirmation requests. The officer columns go the way
+  // resolved_by does; a confirmation the member made themselves says so.
+  data.attendance_warnings = (
+    await reader.all('attendance_warnings', (q) => q.eq('player_id', playerId))
+  ).map((row) => ({
+    ...dropColumns(row, ['issued_by', 'rescinded_by']),
+    issued_by_role: officerDescriptor(row.issued_by as string | null),
+    rescinded_by_role: officerDescriptor(row.rescinded_by as string | null),
+  }));
+  data.event_entry_restrictions = (
+    await reader.all('event_entry_restrictions', (q) => q.eq('player_id', playerId))
+  ).map((row) => ({
+    ...dropColumns(row, ['created_by', 'lifted_by']),
+    created_by_role: officerDescriptor(row.created_by as string | null),
+    lifted_by_role: officerDescriptor(row.lifted_by as string | null),
+  }));
+  data.event_departures = (
+    await reader.all('event_departures', (q) => q.eq('player_id', playerId))
+  ).map((row) => ({
+    ...dropColumns(row, ['marked_by']),
+    marked_by_role: officerDescriptor(row.marked_by as string | null),
+  }));
+  data.event_substitutions = (
+    await reader.all('event_substitutions', (q) => q.or(orEq(['outgoing_player_id', 'incoming_player_id'], playerId)))
+  ).map((row) => {
+    const out = row.outgoing_player_id === playerId;
+    return {
+      ...dropColumns(row, [
+        'outgoing_player_id',
+        'incoming_player_id',
+        'made_by',
+        ...(out ? [] : ['outgoing_elo_before', 'outgoing_elo_change']),
+      ]),
+      your_side: out ? 'subbed_out' : 'subbed_in',
+      other_person: members.forMember((out ? row.incoming_player_id : row.outgoing_player_id) as string | null),
+      made_by_role: officerDescriptor(row.made_by as string | null),
+    };
+  });
+  data.tournament_event_confirmations = (
+    await reader.all('tournament_event_confirmations', (q) => q.eq('player_id', playerId))
+  ).map((row) => ({
+    ...dropColumns(row, ['confirmed_by']),
+    confirmed_by_role: row.confirmed_by === playerId ? 'you' : officerDescriptor(row.confirmed_by as string | null),
+  }));
+
   // The draw matches the member's own entries appear in.
   //
   // ONE READ PER COLUMN, NOT ONE `.or()` OVER ALL FOUR, and the reason is the
@@ -572,6 +618,7 @@ export async function assembleMemberExport(
       ...ENTRY_COLUMNS,
       'result_entered_by',
       'ready_player_ids',
+      'lineup',
     ]);
     for (const column of ENTRY_COLUMNS) {
       projected[column] = entrants.forMember(row[column] as string | null);
@@ -584,6 +631,11 @@ export async function assembleMemberExport(
     projected.you_were_marked_ready = Array.isArray(row.ready_player_ids)
       ? (row.ready_player_ids as unknown[]).includes(playerId)
       : false;
+    // Who played a match decided before a sub (00327), as whether the member did.
+    if (row.lineup && typeof row.lineup === 'object') {
+      const sides = row.lineup as { a?: unknown; b?: unknown };
+      projected.you_played = [sides.a, sides.b].some((side) => Array.isArray(side) && side.includes(playerId));
+    }
     return projected;
   });
 
@@ -898,7 +950,7 @@ export async function assembleMemberExport(
       'id, name, start_date, end_date, status, created_by',
     )
   ).map((row) => ({
-    ...dropColumns(row, ['created_by']),
+    ...dropColumns(row, ['created_by', 'day_lead_player_id']),
     you_created_this: row.created_by === playerId,
   }));
 

@@ -119,3 +119,20 @@ export async function notifyPlayers(
 
   return { delivered };
 }
+
+// Push only, for a member who already has the in-app row: the database wrote it
+// in the same transaction as the change it reports (a waitlist promotion in
+// 00278, say), so notifyPlayers would write it twice. Same opt-in filter, and
+// the same fire-and-forget.
+export async function pushPlayers(
+  adminClient: ReturnType<typeof createAdminClient>,
+  playerIds: string[],
+  push: PushPayload,
+  category: NotificationCategory,
+): Promise<void> {
+  if (playerIds.length === 0) return;
+  const recipients = await filterPushRecipients(adminClient, playerIds, category);
+  if (recipients.length > 0) {
+    sendPushToPlayers(adminClient, recipients, push).catch((err) => Sentry.captureException(err));
+  }
+}

@@ -53,6 +53,8 @@ import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visi
 import { onVisibleTracks } from '@/lib/session-track-filter';
 import { getFeatureFlags } from '@/lib/feature-gate';
 import { PaymentBanner } from '@/components/payment-banner';
+import { EntryConfirmationBanner } from '@/components/entry-confirmation-banner';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { attendeeCountsBySession } from '@/lib/session-attendee-counts';
 import {
   CALENDAR_WEEKDAYS,
@@ -852,6 +854,11 @@ export default async function FeedPage() {
       {/* Unpaid fees, with the way to pay them. Renders nothing when there is
           nothing owed, a receipt is already in, or the read fails. */}
       {isApproved && on('fees') && <PaymentBanner player={player} />}
+
+      {/* Confirm your place (00325), for each event still asking. */}
+      {isApproved && on('tournaments') && (await getReleaseFlags()).entry_confirmation && (
+        <EntryConfirmationBanner playerId={player.id} />
+      )}
 
       {/* ── A TOURNAMENT IS ON ────────────────────────────────────
           Full width, above the schedule, so a member standing in the gym

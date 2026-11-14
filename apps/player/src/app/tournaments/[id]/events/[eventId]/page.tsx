@@ -26,6 +26,7 @@ import {
   eventRatingLine,
   registrationWindowNotice,
   checkinWindowNotice,
+  formatClubEventTime,
 } from '@badminton/shared';
 import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
 import { getMyWaitlistState, type MyWaitlistState } from '@/lib/event-waitlist';
@@ -48,6 +49,9 @@ import { loadMyMembershipScreen } from '@/lib/membership-screen';
 import { getFeatureFlags } from '@/lib/feature-gate';
 import { refuseClosedTournament } from '@/lib/tournament-closed';
 import { YourEventSoFar } from './YourEventSoFar';
+import { getReleaseFlags } from '@/lib/release-flags';
+import { loadMyPendingConfirmations } from '@/lib/event-confirmations';
+import { loadMySubstitutions } from '@/lib/event-substitutions';
 
 /**
  * The match's own state, said to a member rather than to a database.
@@ -562,6 +566,16 @@ export default async function EventDetailPage({
     if (mine) myRating = eventRatingLine(mine.elo_before, mine.elo_after, mine.elo_change);
   }
 
+  const releaseFlags = await getReleaseFlags();
+  // Asked to confirm their place (00325), and not yet: the link and the deadline.
+  const pendingConfirmation = releaseFlags.entry_confirmation && currentPlayer && playerRegistration
+    ? (await loadMyPendingConfirmations(currentPlayer.id, eventId))[0] ?? null
+    : null;
+  // Subbed in or out (00327). Read with the switch off too: a sub made while
+  // it was on is still what happened.
+  const mySubs = currentPlayer ? await loadMySubstitutions(currentPlayer.id, eventId) : null;
+  const subbedOut = !playerEntryId && (mySubs?.outFor.length ?? 0) > 0;
+
   return (
     <div className="space-y-5 pb-28 px-4 sm:px-0">
       {/* THE SCREEN THIS WHOLE CHANGE IS FOR. An entrant sits courtside with
@@ -642,6 +656,12 @@ export default async function EventDetailPage({
               </p>
             )}
 
+            {subbedOut && (
+              <p className="text-sm text-[var(--text-secondary)] mb-4" role="status">
+                You were subbed out: {mySubs!.outFor.join(' and ')} took your place. The matches you played stay on your record.
+              </p>
+            )}
+
             <EventActions
               eventId={eventId}
               eventStatus={eventStatus}
@@ -654,6 +674,13 @@ export default async function EventDetailPage({
               checkinNotice={checkinNotice}
               waitlist={waitlist}
               clubEvent={clubEvent}
+              policyOn={releaseFlags.attendance_policy_ack}
+              confirmation={pendingConfirmation
+                ? {
+                  href: `/tournaments/${tournamentId}/events/${eventId}/confirm`,
+                  by: pendingConfirmation.deadlineAt ? formatClubEventTime(pendingConfirmation.deadlineAt) : '',
+                }
+                : null}
             />
           </div>
         </div>
@@ -689,6 +716,11 @@ export default async function EventDetailPage({
             {playerOutOfEvent && (
               <p className="px-4 pb-2 text-xs text-[var(--text-secondary)]" role="status">
                 You are no longer in this event. Any unplayed match here is forfeited to your opponent.
+              </p>
+            )}
+            {(mySubs?.inFor.length ?? 0) > 0 && (
+              <p className="px-4 pb-2 text-xs text-[var(--text-secondary)]" role="status">
+                Subbed in for {mySubs!.inFor.join(' and ')}. A match played before you came in stays with whoever played it.
               </p>
             )}
             <div className="px-4 pb-4 space-y-2">

@@ -15,10 +15,14 @@ import { join } from 'node:path';
 const MIGRATIONS_DIR = join(__dirname, '../../../../supabase/migrations');
 const migrationFiles = () => readdirSync(MIGRATIONS_DIR).filter((f) => /^\d+_.*\.sql$/.test(f)).sort();
 
-/** The latest CREATE of a function across the directory, body bounded by its own dollar tag. */
-function latestBody(name: string): { file: string; body: string } | null {
+/**
+ * The latest CREATE of a function across the directory, body bounded by its own
+ * dollar tag. With `before`, only the files that sort before that prefix.
+ */
+function latestBody(name: string, before?: string): { file: string; body: string } | null {
   let found: { file: string; body: string } | null = null;
   for (const file of migrationFiles()) {
+    if (before && file >= before) break;
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     const head = new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:public\\.)?${name}\\s*\\(`, 'gi');
     let match: RegExpExecArray | null;
@@ -130,7 +134,8 @@ describe('00320: possible_duplicate_dismissals', () => {
 
 describe('00320: merges', () => {
   it('restates merge_players_disposable as 00311 had it plus the three dismissal columns', () => {
-    expect(latestBody('merge_players_disposable')?.file).toMatch(/^00320_/);
+    // 00324 restates it again with the event standard's eight rows.
+    expect(latestBody('merge_players_disposable', '00324_')?.file).toMatch(/^00320_/);
     const before = disposableRows('00311_');
     expect(before).toHaveLength(31);
     const after = disposableRows('00320_');

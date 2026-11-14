@@ -48,6 +48,15 @@ describe('the registry', () => {
       'quiet_refresh',
       'near_duplicate_order',
       'ladder_doubles_points',
+      'attendance_policy_ack',
+      'attendance_warnings',
+      'entry_restriction',
+      'checkin_cutoff_default',
+      'entry_confirmation',
+      'fill_empty_places',
+      'event_standard_defaults',
+      'day_lead',
+      'substitutions',
     ]);
   });
 
