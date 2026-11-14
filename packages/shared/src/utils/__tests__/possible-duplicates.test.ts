@@ -53,8 +53,8 @@ describe('findPossibleDuplicates', () => {
   it('calls the same name likely, with case, accents, spacing and order ignored', () => {
     const pairs = findPossibleDuplicates([
       person('a', { first_name: 'José', last_name: 'Núñez', full_name: 'José Núñez', email: 'one@sfu.ca' }),
-      person('b', { full_name: '  jose   NUNEZ ', email: 'two@gmail.com' }),
-      person('c', { full_name: 'Nunez Jose', email: 'three@gmail.com' }),
+      person('b', { full_name: '  jose   NUNEZ ', email: 'two@example.com' }),
+      person('c', { full_name: 'Nunez Jose', email: 'three@example.com' }),
     ]);
     expect(pairs).toHaveLength(3);
     for (const pair of pairs) {
