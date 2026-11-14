@@ -21,11 +21,17 @@
 // THE DATABASE READS THE SAME ROW. release_flag_on(p_id) (00318) has the same
 // rule, and the functions 00315 restated ask it, so check_in_after_draw also
 // puts the draw's field and the undo of a check-in back as they were (00272,
-// 00276, 00309), and the ladder fix (00316) asks ladder_doubles_points. 00317
+// 00276, 00309), the ladder fix (00316) asks ladder_doubles_points, and the
+// minute job that applies a group's time cap (00331) asks group_time_cap. 00317
 // is not switched in the database: two service-role helpers that only
 // add_on_the_spot calls, so that switch covers them. A switch here that no
 // function asks is console-only. Each of these migrations has a down script in
 // supabase/rollbacks, never run automatically.
+//
+// THE PLAYER APP READS THE ROW TOO, since the event standard (00324 to 00326):
+// apps/player/src/lib/release-flags.ts, the same rule, for the attendance
+// policy, the entry restriction and the confirmation. Those eight switches are
+// app-only: no function asks them.
 //
 // Deliberately dependency-free, so a client component can import it deeply.
 
@@ -125,6 +131,127 @@ export const RELEASE_FLAGS = [
     label: 'Ladder counts doubles points',
     description: 'The ladder counts a member\'s doubles points as well as their singles points.',
     off: 'Off: the ladder counts singles points only, as before.',
+    since: '1.2.0',
+  },
+  // The event standard (00324 to 00326). App-only: no function asks these.
+  {
+    id: 'attendance_policy_ack',
+    label: 'Attendance policy at sign-up',
+    description: 'Entering an event or joining its waitlist shows the attendance policy and asks the member to accept it.',
+    off: 'Off: no policy text and no acceptance asked at sign-up, and Discord takes entries again.',
+    since: '1.2.0',
+  },
+  {
+    id: 'attendance_warnings',
+    label: 'Attendance warnings',
+    description: 'A no-show or leaving without telling the desk writes a warning on the member, shown on their player page.',
+    off: 'Off: no warning is written, and the Left without telling us button is hidden.',
+    since: '1.2.0',
+  },
+  {
+    id: 'entry_restriction',
+    label: 'Entry restrictions',
+    description: 'An exec can restrict a member from entering events, and the member\'s own entry and waitlist join are refused while it lasts.',
+    off: 'Off: nothing is refused at entry, and a new restriction cannot be made.',
+    since: '1.2.0',
+  },
+  {
+    id: 'checkin_cutoff_default',
+    label: 'Check-in closes before the start',
+    description: 'A new event\'s check-in closes 15 minutes before the tournament starts, and the windows editor offers that time.',
+    off: 'Off: a new event gets no check-in close of its own, as before.',
+    since: '1.2.0',
+  },
+  {
+    id: 'entry_confirmation',
+    label: 'Confirm your place',
+    description: 'Members entered in an event that asks for it are emailed, pushed and shown a banner to confirm their place before the day, and an entry nobody confirmed goes to the waitlist.',
+    off: 'Off: nothing is sent or released, Confirm is refused, and the banners are hidden.',
+    since: '1.2.0',
+  },
+  {
+    id: 'fill_empty_places',
+    label: 'Fill empty places at check-in',
+    description: 'When check-in closes the desk releases the no-shows, then fills their places from the reserves, then from the execs.',
+    off: 'Off: no release of no-shows, no reserve check-in and no exec fill on the Check-In tab.',
+    since: '1.2.0',
+  },
+  {
+    id: 'event_standard_defaults',
+    label: 'Standard event defaults',
+    description: 'A new event starts as pools then placement, with the waitlist on and confirmation asked.',
+    off: 'Off: a new event starts as single elimination, with the waitlist off and no confirmation, as before.',
+    since: '1.2.0',
+  },
+  {
+    id: 'day_lead',
+    label: 'Day lead',
+    description: 'A tournament names the one exec who makes the calls on the day, shown on its page.',
+    off: 'Off: the day lead is hidden and cannot be saved.',
+    since: '1.2.0',
+  },
+  {
+    id: 'substitutions',
+    label: 'Substitutions',
+    description: 'The desk or the day lead can put somebody in for one member of a team, or for a whole entry, before or during an event. Played matches keep who played them.',
+    off: 'Off: no Sub action, substitutions refused.',
+    since: '1.2.0',
+  },
+  // Event day, wave 2 (00329 onward).
+  {
+    id: 'decided_off_court',
+    label: 'Decided off court',
+    description: 'The desk or a court helper records a match the two sides settled without playing: the winner advances, no scores are kept and nobody\'s rating moves.',
+    off: 'Off: no Decided off court option; a result needs a score.',
+    since: '1.2.0',
+  },
+  {
+    id: 'injury_retirement',
+    label: 'Retired',
+    description: 'A match a side stopped part way through is recorded with the games so far and who retired, rated as a walkover, and the side that retired can leave the event injured in the same step.',
+    off: 'Off: no Retired option; a retirement is a walkover or a void, as before.',
+    since: '1.2.0',
+  },
+  {
+    id: 'late_arrival_reinstate',
+    label: 'Late arrival after release',
+    description: 'A member whose place was released at check-in close and who then arrives is reinstated while the place is free, or put back on the reserves when it is not. Their no-show warning is rescinded only when reinstated.',
+    off: 'Off: no Reinstate or Back to the reserves; a latecomer comes back only through Add on the spot.',
+    since: '1.2.0',
+  },
+  {
+    id: 'group_time_cap',
+    label: 'Group time cap',
+    description: 'The desk sets a time on a groups stage, a pool or one group; from then no new match of it starts, the ones on court finish, and its table stands. Read by the minute job in the database as well.',
+    off: 'Off: no cap control; the automatic sweep does nothing and no group is locked.',
+    since: '1.2.0',
+  },
+  {
+    id: 'merge_thin_groups',
+    label: 'Merge thin groups',
+    description: 'A group left with one or two teams before it plays is offered a merge into another group of its pool, as one round robin of everyone still in both.',
+    off: 'Off: no merge suggestion; the merge action refuses.',
+    since: '1.2.0',
+  },
+  {
+    id: 'results_post',
+    label: 'Top 4 announced',
+    description: 'Finalizing an event posts one short announcement of its top 4, which also goes to Discord, and sends the Marketing holders the same lines to copy. A re-finalize edits that announcement.',
+    off: 'Off: finalizing posts nothing and sends no Marketing notice.',
+    since: '1.2.0',
+  },
+  {
+    id: 'social_posts',
+    label: 'Social posts',
+    description: 'Meet the teams, New teams and draw slides for Instagram, with a caption to copy, on the event\'s Social posts page. New teams added within 10 minutes share one notice to the Marketing holders.',
+    off: 'Off: no Social posts notices; the page and its images are not found.',
+    since: '1.2.0',
+  },
+  {
+    id: 'generate_teams',
+    label: 'Generate teams',
+    description: 'The Teams screen on a doubles event: generate teams from the unpaired pool days before, preview and confirm them, tell both members who they are paired with, add, edit or split a team by hand, and re-pair orphans. A re-run keeps the published teams.',
+    off: 'Off: the Teams screen is hidden and its actions refuse; pairing is the existing buttons.',
     since: '1.2.0',
   },
 ] as const satisfies readonly ReleaseFlagDefinition[];

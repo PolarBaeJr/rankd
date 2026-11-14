@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Badge, AvatarChip, Button, Dialog } from '@badminton/ui';
-import { isDoublesEvent, placementBonusFor } from '@badminton/shared';
+import { isDoublesEvent, matchResultLabel, placementBonusFor } from '@badminton/shared';
 import type { TournamentEventType, TournamentBonusSettings } from '@badminton/shared';
 import { undoMatchResult } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
@@ -15,7 +15,6 @@ import type {
   TournamentMatchRow,
   ParticipantWithPlayer,
   PairWithPlayers,
-  GameScore,
 } from '@/lib/tournament-types';
 
 interface Props {
@@ -181,8 +180,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles, bon
           </div>
           <div className="divide-y divide-[var(--border)]">
             {completedMatchList.map((m) => {
-              const scores = (m.scores as GameScore[] | null) ?? [];
-              const scoreStr = scores.map((s) => `${s.a}-${s.b}`).join(', ');
+              const scoreStr = matchResultLabel(m);
               return (
                 <div key={m.id} className="px-4 py-2.5 flex items-center justify-between">
                   <div className="text-sm text-[var(--text-primary)]">

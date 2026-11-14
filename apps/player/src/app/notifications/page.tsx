@@ -1,12 +1,15 @@
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { CLUB_TIMEZONE, formatRelativeTime } from '@badminton/shared';
 import { redirect } from 'next/navigation';
+import { Fragment } from 'react';
 import { BellOff } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
 import { MarkAllRead, NotificationRow } from './actions';
+import { CopyTextButton } from './CopyTextButton';
 import {
   groupNotificationsByAge,
   notificationAction,
+  notificationCopyText,
   notificationHeadline,
   notificationLabel,
   notificationTone,
@@ -108,6 +111,7 @@ export default async function NotificationsPage() {
       tone: notificationTone(n.type),
       when: formatRelativeTime(n.created_at),
       action: notificationAction(n.type, metadata),
+      copyText: notificationCopyText(metadata),
     };
   });
 
@@ -147,24 +151,27 @@ export default async function NotificationsPage() {
               <div key={section.key} id={`notif-${section.key}`} className="notif-section">
                 <div className="notif-group">{section.label}</div>
                 {section.items.map((row) => (
-                  <NotificationRow key={row.id} id={row.id} isRead={row.isRead} href={row.action?.href ?? null}>
-                    <div className="notif-body">
-                      <div className="notif-headline">{row.headline}</div>
-                      <div className="notif-detail">
-                        <span className="notif-kind" data-tone={row.tone}>
-                          {row.kind}
-                        </span>
-                        {' · '}
-                        {row.when}
+                  <Fragment key={row.id}>
+                    <NotificationRow id={row.id} isRead={row.isRead} href={row.action?.href ?? null}>
+                      <div className="notif-body">
+                        <div className="notif-headline">{row.headline}</div>
+                        <div className="notif-detail">
+                          <span className="notif-kind" data-tone={row.tone}>
+                            {row.kind}
+                          </span>
+                          {' · '}
+                          {row.when}
+                        </div>
                       </div>
-                    </div>
-                    {/* A span, not a <Button>: the whole row is already the click
-                        target, and a button inside a button (or inside a link) is
-                        invalid markup that React complains about on hydration.
-                        Rows with nowhere to go get nothing here rather than a
-                        control that does not work. */}
-                    {row.action && <span className="notif-cta">{row.action.label}</span>}
-                  </NotificationRow>
+                      {/* A span, not a <Button>: the whole row is already the click
+                          target, and a button inside a button (or inside a link) is
+                          invalid markup that React complains about on hydration.
+                          Rows with nowhere to go get nothing here rather than a
+                          control that does not work. */}
+                      {row.action && <span className="notif-cta">{row.action.label}</span>}
+                    </NotificationRow>
+                    {row.copyText && <CopyTextButton text={row.copyText} />}
+                  </Fragment>
                 ))}
               </div>
             ))}

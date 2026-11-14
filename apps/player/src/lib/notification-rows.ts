@@ -133,6 +133,21 @@ function str(metadata: NotificationMetadata, key: string): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function consoleUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Text a notice carries for the member to copy (00333), or null. */
+export function notificationCopyText(metadata: NotificationMetadata): string | null {
+  return str(metadata, 'copy_text');
+}
+
 /**
  * Where a row's affordance goes, or null when there is nowhere honest to send
  * the member. A button that lands on a 404 — or on a list page that does not
@@ -236,6 +251,13 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
         return entryId && isUuid(entryId)
           ? { href: `/registrations/${entryId}`, label: 'Confirm' }
           : { href: '/notifications', label: 'View' };
+      }
+      // 00333: a results post or a set of social slides is ready for the
+      // Marketing holders. Both are actioned in the console, whose absolute
+      // URL the console wrote; anything but an http(s) URL gets no button.
+      if (str(metadata, 'kind') === 'event_results_handoff' || str(metadata, 'kind') === 'social_posts_ready') {
+        const href = consoleUrl(str(metadata, 'console_url'));
+        return href ? { href, label: 'Open' } : null;
       }
       if (challengeId) return { href: `/challenges/${challengeId}`, label: 'View' };
       if (tournamentId) return event('View');

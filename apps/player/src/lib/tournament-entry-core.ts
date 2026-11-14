@@ -34,6 +34,8 @@ import { getFeatureFlags } from './feature-gate';
 import { refuseClosedTournament } from './tournament-closed';
 import { loadEntryWindows, windowsFor } from './tournament-windows';
 import { waitlistLimitReached } from './event-waitlist';
+import { getReleaseFlags } from './release-flags';
+import { assertNoEntryRestriction } from './entry-restriction';
 
 /**
  * What the member has to have been TOLD before this runs.
@@ -53,7 +55,14 @@ export interface RegisterOptions {
    * the dialog that says so, and nothing else sets it.
    */
   soloEntryAcknowledged?: boolean;
+  /**
+   * The event standard's attendance policy, shown by the sign-up dialog. While
+   * the attendance_policy_ack switch is on, an entry without it is refused.
+   */
+  attendancePolicyAcknowledged?: boolean;
 }
+
+export const ATTENDANCE_POLICY_REFUSAL = 'Read and accept the attendance policy before you enter.';
 
 /** What the body reads off the acting player. */
 export type EntryPlayer = {
@@ -267,6 +276,13 @@ export async function enterEventCore(
     throw new ExpectedError('You are already in a pair in this event.');
   }
 
+  // The attendance policy is the same kind of gate: the dialog shows it, and an
+  // entry that did not carry the acceptance was never shown it.
+  const releaseFlags = await getReleaseFlags();
+  if (releaseFlags.attendance_policy_ack && !opts?.attendancePolicyAcknowledged) {
+    throw new ExpectedError(ATTENDANCE_POLICY_REFUSAL);
+  }
+
   // A WITHDRAWN ROW IS STILL A ROW, and the insert below would collide with it
   // on UNIQUE(event_id, player_id). Saying "Already registered" to somebody
   // looking at their own withdrawal is the one reading that cannot be right, so
@@ -289,6 +305,8 @@ export async function enterEventCore(
   if (eventWaiverText && !opts?.eventWaiverAccepted) {
     throw new ExpectedError('You must accept the event waiver to register');
   }
+
+  if (releaseFlags.entry_restriction) await assertNoEntryRestriction(service, player.id);
 
   // NO 400 FALLBACK. elo_before is a snapshot that seeding, the pool display
   // and the legacy undo path all read back as fact, so inventing 400 for a

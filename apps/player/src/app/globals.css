@@ -2678,6 +2678,8 @@ html, body { overflow-x: clip; }
 .notif-row.read:hover { opacity: 1; }
 
 .notif-body { flex: 1; min-width: 0; }
+/* A notice's copy control (00333), under its row rather than inside the link. */
+.notif-copy { display: flex; justify-content: flex-end; padding: 0 0 12px; }
 .notif-headline { font-size: 14px; line-height: 1.35; }
 .notif-detail {
   font-family: var(--mono);

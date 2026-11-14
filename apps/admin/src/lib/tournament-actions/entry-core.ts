@@ -7,6 +7,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { relinkConfirmations } from '../teams/relink';
 import { lateEntryWindow } from '../stage-controls';
 import {
   calculateTeamRating,
@@ -740,6 +741,11 @@ export async function addPairCore(
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  // Inside the confirmation window the two solo entries this pair replaced
+  // had the members' confirmation rows; they follow the pair, straight after
+  // the write so a later step that fails cannot leave them behind.
+  await relinkConfirmations(adminClient, eventId, [player1Id, player2Id]);
 
   // A staged event's head starts read the team's category. Best effort: the
   // members' declared categories, else what the event type implies, and only

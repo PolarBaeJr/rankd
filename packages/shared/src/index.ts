@@ -60,6 +60,7 @@ export * from './utils/club-events';
 export * from './utils/tournament-windows';
 export * from './utils/tournament-details';
 export * from './utils/doubles-pool';
+export * from './utils/team-builder';
 export * from './utils/competition-category';
 export * from './utils/privilege-claim';
 export * from './utils/elo-review';
@@ -70,6 +71,7 @@ export * from './utils/entry-fee';
 export * from './utils/form-signed-waivers';
 export * from './utils/entry-membership';
 export * from './utils/match-result';
+export * from './utils/match-result-label';
 export * from './utils/game-rules';
 export * from './utils/staged-format';
 export * from './utils/season';
@@ -85,6 +87,7 @@ export * from './utils/match-court';
 export * from './utils/account-standing';
 export * from './utils/tours';
 export * from './utils/possible-duplicates';
+export * from './utils/event-standard';
 // Safe in the barrel BECAUSE it computes no hashes. ./utils/event-waiver, which
 // does, stays out of it — node:crypto must not reach the player bundle.
 export * from './utils/event-waiver-eligibility';

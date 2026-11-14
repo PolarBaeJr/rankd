@@ -28,6 +28,11 @@ const store = vi.hoisted(() => ({
   player: {} as Record<string, unknown>,
   // An RPC that PostgREST does not know: the 00278 functions before the migration.
   rpcError: null as { code: string; message: string } | null,
+  // The event standard's two entry switches (00324). Off by default so every
+  // test above the event standard section is about its own refusal.
+  flags: { attendance_policy_ack: false, entry_restriction: false } as Record<string, boolean>,
+  restrictions: [] as Record<string, unknown>[],
+  restrictionError: null as { code: string; message: string } | null,
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
@@ -41,7 +46,11 @@ vi.mock('../supabase-server', async (importOriginal) => ({
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       chain.select = self; chain.eq = self; chain.or = self; chain.limit = self;
-      chain.in = self; chain.is = self; chain.not = self; chain.order = self;
+      chain.in = self; chain.is = self; chain.not = self; chain.order = self; chain.lte = self;
+      if (table === 'event_entry_restrictions') {
+        chain.then = (resolve: (v: unknown) => unknown) =>
+          Promise.resolve({ data: store.restrictionError ? null : store.restrictions, error: store.restrictionError }).then(resolve);
+      }
       if (table === 'club_fees') {
         chain.then = (resolve: (v: unknown) => unknown) =>
           Promise.resolve({ data: store.duesError ? null : store.dues, error: store.duesError }).then(resolve);
@@ -67,6 +76,10 @@ vi.mock('../actions/_shared', async (importOriginal) => ({
   requirePlayer: () => Promise.resolve(store.player),
   assertCurrentWaiver: () => Promise.resolve(),
 }));
+vi.mock('../release-flags', async () => {
+  const { ALL_RELEASE_FLAGS_ON } = await import('@badminton/shared');
+  return { getReleaseFlags: () => Promise.resolve({ ...ALL_RELEASE_FLAGS_ON, ...store.flags }) };
+});
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('next/headers', () => ({ headers: () => Promise.resolve(new Map()) }));
 
@@ -76,6 +89,9 @@ beforeEach(() => {
   store.rpcCalls = 0;
   store.rpcError = null;
   store.duesError = null;
+  store.flags = { attendance_policy_ack: false, entry_restriction: false };
+  store.restrictions = [];
+  store.restrictionError = null;
   store.activeSeason = { id: 's-active' };
   store.player = {
     id: 'p1', is_banned: false, membership_type: 'internal', competition_category: 'mens',
@@ -367,5 +383,69 @@ describe('the waitlist', () => {
 
     store.rpcResult = { ok: true, tournament_id: 't1' };
     expect((await leaveEventWaitlist('e1')).ok).toBe(true);
+  });
+});
+
+describe('the event standard at entry (00324)', () => {
+  beforeEach(() => {
+    store.rpcResult = { ok: true, tournament_id: 't1' };
+  });
+
+  it('refuses an entry and a waitlist join without the attendance policy while the switch is on', async () => {
+    store.flags.attendance_policy_ack = true;
+    const entered = await registerForEvent('e1');
+    expect(entered.ok).toBe(false);
+    if (!entered.ok) expect(entered.error).toMatch(/attendance policy/);
+    const joined = await joinEventWaitlist('e1');
+    expect(joined.ok).toBe(false);
+    if (!joined.ok) expect(joined.error).toMatch(/attendance policy/);
+    expect(store.rpcCalls).toBe(0);
+  });
+
+  it('enters a member who accepted it', async () => {
+    store.flags.attendance_policy_ack = true;
+    const r = await registerForEvent('e1', { attendancePolicyAcknowledged: true });
+    expect(r.ok).toBe(true);
+    expect(store.rpcCalls).toBe(1);
+  });
+
+  it('never asks while the switch is off', async () => {
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(true);
+  });
+
+  it('refuses a restricted member at entry and at the waitlist', async () => {
+    store.flags.entry_restriction = true;
+    store.restrictions = [{ id: 'r1', ends_at: null }];
+    const entered = await registerForEvent('e1');
+    expect(entered.ok).toBe(false);
+    if (!entered.ok) expect(entered.error).toMatch(/cannot enter events until an exec lifts it/);
+    const joined = await joinEventWaitlist('e1');
+    expect(joined.ok).toBe(false);
+    if (!joined.ok) expect(joined.error).toMatch(/cannot enter events/);
+    expect(store.rpcCalls).toBe(0);
+  });
+
+  it('names the date a restriction ends', async () => {
+    store.flags.entry_restriction = true;
+    store.restrictions = [{ id: 'r1', ends_at: '2026-12-01T20:00:00Z' }];
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/until Dec 1, 2026/);
+  });
+
+  it('lets a member in when the table is missing, and refuses when the read fails', async () => {
+    store.flags.entry_restriction = true;
+    store.restrictionError = { code: 'PGRST205', message: 'no table' };
+    expect((await registerForEvent('e1')).ok).toBe(true);
+    store.restrictionError = { code: '57014', message: 'timeout' };
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Cannot check your entry right now/);
+  });
+
+  it('does not read restrictions while the switch is off', async () => {
+    store.restrictions = [{ id: 'r1', ends_at: null }];
+    expect((await registerForEvent('e1')).ok).toBe(true);
   });
 });

@@ -14,3 +14,5 @@ export * from './issues';
 export * from './edit';
 export * from './extend';
 export * from './courts';
+export * from './time-cap';
+export * from './merge';

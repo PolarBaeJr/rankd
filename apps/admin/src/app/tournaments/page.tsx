@@ -10,6 +10,7 @@ import {
   clubToday,
 } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { getReleaseFlags } from '@/lib/release-flags';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import {
   Card,
@@ -139,6 +140,18 @@ export default async function TournamentsPage({
     scopedSeason?.id,
   ).order('start_date', { ascending: false });
   const tournaments = (tournamentRows ?? []) as TournamentRow[];
+
+  // The execs a day lead is picked from (00324), only for a viewer who may edit
+  // and only while the switch is on: null hides the picker.
+  const dayLeadExecs = canEdit && (await getReleaseFlags()).day_lead
+    ? await supabase
+        .from('players')
+        .select('id, full_name')
+        .eq('is_exec', true)
+        .not('status', 'in', '("suspended","pending_approval")')
+        .order('full_name')
+        .then(({ data, error }) => (error ? null : (data ?? [])))
+    : null;
   const tournamentIds = tournaments.map((t) => t.id);
 
   // The events carry everything the parent row cannot say: which disciplines
@@ -596,6 +609,7 @@ export default async function TournamentsPage({
                           canEdit={canEdit}
                           canArchive={canArchive}
                           canDelete={canDelete}
+                          dayLeadExecs={dayLeadExecs}
                         />
                       </>
                     }
@@ -661,6 +675,7 @@ export default async function TournamentsPage({
                               canEdit={canEdit}
                               canArchive={canArchive}
                               canDelete={canDelete}
+                              dayLeadExecs={dayLeadExecs}
                             />
                             <ActionLink href={`/tournaments/${t.id}`}>{STAGE_ACTION[stage]}</ActionLink>
                           </div>

@@ -21,7 +21,7 @@ import type {
   PairWithPlayers,
 } from '@/lib/tournament-types';
 import { getName } from './entry-name';
-import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { ScoreEntryDialog, type DecidedOptions } from './ScoreEntryDialog';
 
 // ---------------------------------------------------------------------------
 // COURT MANAGEMENT — where an event is RUN rather than recorded.
@@ -49,6 +49,8 @@ import { ScoreEntryDialog } from './ScoreEntryDialog';
 // ---------------------------------------------------------------------------
 
 interface Props {
+  /** Decided off court and Retired in the score dialog (00329). */
+  decided?: DecidedOptions;
   matches: TournamentMatchRow[];
   /** Needed by the shared ScoreEntryDialog — it resolves the per-round shape from it. */
   event: TournamentEventRow;
@@ -129,6 +131,7 @@ function tintSurface(token: string, fill: number, edge: number): React.CSSProper
 }
 
 export function CourtManagementTab({
+  decided,
   matches,
   event,
   participants,
@@ -384,6 +387,7 @@ export function CourtManagementTab({
           isDoubles={isDoubles}
           entries={placeableEntries}
           onClose={() => setScoreMatchId(null)}
+          decided={decided}
         />
       )}
     </>

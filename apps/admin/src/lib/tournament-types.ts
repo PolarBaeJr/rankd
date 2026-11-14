@@ -91,6 +91,14 @@ export type WaitlistEntry = {
   player: PlayerSummary | null;
 };
 
+// One entrant asked to confirm their place (00325): ids and how it stands.
+export type ConfirmationRow = {
+  player_id: string;
+  participant_id: string | null;
+  pair_id: string | null;
+  status: 'pending' | 'confirmed' | 'released' | 'unreached' | 'void';
+};
+
 // A waiting change to a played team's category (00279). A null category is
 // Unset.
 export type CategoryRequest = {

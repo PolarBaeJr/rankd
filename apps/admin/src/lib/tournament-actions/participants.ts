@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { relinkConfirmations } from '../teams/relink';
 // The withdrawal/DQ reason is exec-only free text and no longer lives on the
 // entry row — 00118. See lib/private-notes.ts.
 import { PAIR_NOTES, PARTICIPANT_NOTES, writePrivateNote } from '../private-notes';
@@ -30,6 +31,7 @@ import {
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
 import { releaseFlagOn } from '../release-flags';
+import { entryPlayerIds, rescindEventWarnings } from '../attendance-warnings';
 import { checkInWindow } from '../participant-controls';
 import {
   requireCapability,
@@ -1019,6 +1021,9 @@ async function splitPairImpl(
     throw new Error(error.message);
   }
 
+  // The pair's confirmation rows go back to the members' solo entries.
+  await relinkConfirmations(adminClient, event.id, [pair.player1_id, pair.player2_id]);
+
   const nameOfHalf = (id: string) =>
     pickName(id === pair.player1_id ? pair.player1 : pair.player2) ?? 'This player';
 
@@ -1193,6 +1198,10 @@ async function swapPairMemberImpl(
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  // The incoming member's row moves to the pair, the outgoing one's back to
+  // their solo entry.
+  await relinkConfirmations(adminClient, event.id, [outgoingPlayerId, incomingPlayerId, partnerId]);
 
   // NOTHING IS INVOICED AND NOTHING IS REFUNDED. Both members already have their
   // one club_fees row for this tournament — the incoming one because they had to
@@ -1601,6 +1610,19 @@ async function returnEntryToWaiting(
   if (!result.tournament_id || !result.event_id) {
     Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable, page not revalidated'));
     throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+  }
+
+  // An undone no-show takes back the warning the mark wrote. A warning the desk
+  // wrote by hand stays: that was its own decision.
+  if (expected === 'no_show' && await releaseFlagOn('attendance_warnings')) {
+    await rescindEventWarnings(adminClient, {
+      playerIds: await entryPlayerIds(adminClient, entryId, isPair),
+      tournamentId: result.tournament_id,
+      eventId: result.event_id,
+      sources: ['did_not_come', 'checkin_close'],
+      actorId,
+      reason: 'The no-show was undone.',
+    });
   }
   revalidateEventPaths(result.tournament_id, result.event_id);
 }

@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { queueDrawSocialPosts } from '../social-posts/queue';
 import { runAction, type ActionResult } from '../action-result';
 import {
   isDoublesEvent,
@@ -1680,6 +1681,13 @@ async function generateSingleEliminationBracketImpl(
           : {}),
     },
   });
+
+  // Draw slides for the Marketing holders (social_posts, 00333). Never fails the draw.
+  try {
+    await queueDrawSocialPosts(adminClient, eventId);
+  } catch (err) {
+    Sentry.captureException(err);
+  }
 
   // Notify all participants that bracket is published. A pool-seeded event may
   // hold entries who did not make the cut, so it notifies the drawn field only

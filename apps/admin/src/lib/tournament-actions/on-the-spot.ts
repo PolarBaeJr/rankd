@@ -44,6 +44,8 @@ export interface OnTheSpotResult {
   /** The tournament entry made: a pair, or a participant. */
   entryId: string;
   isPair: boolean;
+  /** Who was added, a guest's new id included, so a substitution can take them. */
+  playerId: string;
   name: string;
   checkedIn: boolean;
   waiverUnsigned: boolean;
@@ -194,6 +196,7 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
   return {
     entryId: entry.id,
     isPair: !!input.partnerId,
+    playerId,
     name,
     checkedIn,
     waiverUnsigned,
@@ -204,4 +207,37 @@ async function addOnTheSpotImpl(raw: unknown): Promise<OnTheSpotResult> {
 
 export async function addOnTheSpot(input: OnTheSpotInput): Promise<ActionResult<OnTheSpotResult>> {
   return runAction(() => addOnTheSpotImpl(input));
+}
+
+// THE LAST STEP OF FILLING THE EMPTY PLACES: an exec takes one, at no fee. Only
+// once no reserve is still waiting, because a reserve asked first and an exec
+// is the club making up the numbers.
+async function addExecOnTheSpotImpl(eventId: unknown, playerId: unknown): Promise<OnTheSpotResult> {
+  await requireCapability('tournaments.draw.participants.add.write');
+  await assertReleaseFlag('fill_empty_places');
+  const event = parseOrThrow(z.string().uuid(), eventId);
+  const player = parseOrThrow(z.string().uuid(), playerId);
+  const adminClient = createAdminClient();
+
+  const { data: exec, error: execError } = await adminClient.from('players')
+    .select('id, is_exec')
+    .eq('id', player)
+    .maybeSingle();
+  if (execError) throw new Error(`Could not read the member: ${execError.message}`);
+  if (!exec?.is_exec) throw new ExpectedError('Only an exec can fill a place this way.');
+
+  const { count, error: waitingError } = await adminClient.from('tournament_event_waitlist')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', event)
+    .eq('status', 'waiting');
+  if (waitingError && !['42P01', 'PGRST205'].includes(waitingError.code ?? '')) {
+    throw new Error(`Could not read the waitlist: ${waitingError.message}`);
+  }
+  if ((count ?? 0) > 0) throw new ExpectedError('Call or remove the reserves first.');
+
+  return addOnTheSpotImpl({ eventId: event, playerId: player, chargeFee: false });
+}
+
+export async function addExecOnTheSpot(eventId: string, playerId: string): Promise<ActionResult<OnTheSpotResult>> {
+  return runAction(() => addExecOnTheSpotImpl(eventId, playerId));
 }

@@ -33,16 +33,19 @@ export function ClubEventTournamentCard({
   linked,
   canLink,
   nonMembers,
+  standardDefaults = false,
 }: {
   eventId: string;
   linked: { tournamentId: string; eventId: string; status: string } | null;
   canLink: boolean;
   nonMembers: number;
+  /** event_standard_defaults: a club event's tournament opens as a round robin. */
+  standardDefaults?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
   const [eventType, setEventType] = useState<LinkTournamentInput['event_type']>('open_doubles');
-  const [format, setFormat] = useState<LinkTournamentInput['format']>('single_elimination');
+  const [format, setFormat] = useState<LinkTournamentInput['format']>(standardDefaults ? 'round_robin' : 'single_elimination');
   const [rated, setRated] = useState(false);
   const [busy, setBusy] = useState(false);
   // The choices stay hidden until the exec asks to make the tournament, like

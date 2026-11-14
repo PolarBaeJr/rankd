@@ -14,6 +14,8 @@ export interface PartnerPerson {
   /** Null for a non-member sign-up, who has no player record. */
   playerId: string | null;
   name: string;
+  /** Other names they go by (display name, handle), matched only by the generate_teams tiers. */
+  aliases?: string[];
   /** What they typed on the Form, as typed. */
   wrote: string | null;
   /** The desk's choice: null partnerKey is "No preferred partner". Null desk is no choice. */
@@ -84,13 +86,58 @@ export function normalizeName(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
-/** The keys a typed note can mean, best tier first; empty when none. */
-function matchTyped(note: string, self: PartnerPerson, people: PartnerPerson[]): string[] {
+/** True when two strings are at most one insertion, deletion, substitution or adjacent swap apart. */
+function withinOneEdit(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) {
+    const differ: number[] = [];
+    for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) differ.push(index);
+    if (differ.length === 1) return true;
+    return differ.length === 2 && differ[1] === differ[0]! + 1 && a[differ[0]!] === b[differ[1]!] && a[differ[1]!] === b[differ[0]!];
+  }
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+  let index = 0;
+  while (index < shorter.length && shorter[index] === longer[index]) index += 1;
+  return shorter.slice(index) === longer.slice(index + 1);
+}
+
+/** The fuzzy token rule: equal, or both 4+ characters and one edit apart, or one a 4+ character prefix of the other. */
+function tokenClose(typed: string, candidate: string): boolean {
+  if (typed === candidate) return true;
+  if (typed.length < 4 || candidate.length < 4) return false;
+  return withinOneEdit(typed, candidate) || candidate.startsWith(typed) || typed.startsWith(candidate);
+}
+
+/** First token against first, last against last (or the last's initial); never any token against any. */
+function fuzzyAligned(tokens: string[], candidate: string[]): boolean {
+  if (!tokenClose(tokens[0]!, candidate[0]!)) return false;
+  if (tokens.length === 1) return true;
+  if (candidate.length < 2) return false;
+  const last = tokens[tokens.length - 1]!;
+  const candidateLast = candidate[candidate.length - 1]!;
+  return tokenClose(last, candidateLast) || candidateLast.startsWith(last);
+}
+
+/**
+ * The keys a typed note can mean, best tier first; empty when none. The first
+ * hit tier wins, and more than one person in it is ambiguous, never a guess.
+ *
+ * The 00311 tiers: the exact name, then the first name with the last name's
+ * start. With `fuzzy` (generate_teams) three more follow, for the notes a real
+ * sign-up form produced: a display name or handle, the surname first, and a
+ * nickname or one-letter slip.
+ */
+function matchTyped(note: string, self: PartnerPerson, people: PartnerPerson[], fuzzy: boolean): string[] {
   const wanted = normalizeName(note);
   const tokens = wanted.split(' ');
   const others = people
     .filter((person) => person.key !== self.key)
-    .map((person) => ({ key: person.key, normalized: normalizeName(person.name) }))
+    .map((person) => ({
+      key: person.key,
+      normalized: normalizeName(person.name),
+      aliases: (person.aliases ?? []).map(normalizeName).filter((alias) => alias !== ''),
+    }))
     .filter((person) => person.normalized !== '');
 
   const exact = others.filter((person) => person.normalized === wanted);
@@ -98,13 +145,33 @@ function matchTyped(note: string, self: PartnerPerson, people: PartnerPerson[]):
 
   const first = tokens[0]!;
   const last = tokens[tokens.length - 1]!;
-  return others
+  const byFirstName = others
     .filter((person) => {
       const candidate = person.normalized.split(' ');
       if (candidate[0] !== first) return false;
       if (tokens.length === 1) return true;
       return candidate.length > 1 && candidate[candidate.length - 1]!.startsWith(last);
     })
+    .map((person) => person.key);
+  if (byFirstName.length > 0 || !fuzzy) return byFirstName;
+
+  const byAlias = others.filter((person) => person.aliases.includes(wanted));
+  if (byAlias.length > 0) return byAlias.map((person) => person.key);
+
+  if (tokens.length > 1) {
+    const reversed = [...tokens].reverse().join(' ');
+    const surnameFirst = others.filter((person) => person.normalized === reversed);
+    if (surnameFirst.length > 0) return surnameFirst.map((person) => person.key);
+  }
+
+  const reversedTokens = [...tokens].reverse();
+  return others
+    .filter((person) =>
+      [person.normalized, ...person.aliases].some((label) => {
+        const candidate = label.split(' ');
+        return fuzzyAligned(tokens, candidate) || (tokens.length > 1 && fuzzyAligned(reversedTokens, candidate));
+      }),
+    )
     .map((person) => person.key);
 }
 
@@ -118,6 +185,8 @@ export function checkPartners(input: {
   people: PartnerPerson[];
   teams?: [string, string][];
   pool?: Set<string>;
+  /** The generate_teams tiers: aliases, surname first, and near spellings. */
+  fuzzy?: boolean;
 }): PartnerCheckResult {
   const { people } = input;
   const pool = input.pool ?? new Set<string>();
@@ -163,7 +232,7 @@ export function checkPartners(input: {
       resolved.set(person.key, { state: 'none', source: 'typed' });
       continue;
     }
-    const hits = matchTyped(note, person, people);
+    const hits = matchTyped(note, person, people, input.fuzzy === true);
     if (hits.length === 1) resolved.set(person.key, { state: 'matched', source: 'typed', partnerKey: hits[0]! });
     else if (hits.length > 1) resolved.set(person.key, { state: 'ambiguous', candidates: hits });
     else resolved.set(person.key, { state: 'no_match' });

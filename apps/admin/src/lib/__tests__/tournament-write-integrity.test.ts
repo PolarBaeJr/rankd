@@ -1517,9 +1517,12 @@ const autoCall = vi.hoisted(() => ({ fillFreeCourts: vi.fn() }));
 vi.mock('../tournament-actions/auto-call', () => ({
   fillFreeCourts: (...args: unknown[]) => autoCall.fillFreeCourts(...args),
 }));
+// The results post (00333) is tested on its own (event-results-post.test.ts).
+vi.mock('../event-results-post', () => ({ postEventResults: async () => ({ posted: 'off', notified: 0 }) }));
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
+  recordOffCourtResult, recordRetirement,
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses, recomputeEventStandings } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
@@ -1921,6 +1924,22 @@ describe('a decided match is never left unrated', () => {
     expect(alice.singles_losses).toBe(1);
     expect(alice.singles_wins).toBe(0);
     expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(6);
+  });
+
+  it('re-rates an edited result off who played it, not who holds the entry after a sub (00327)', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    // Carol came in for Alice after the match: the entry is hers now and the
+    // match's lineup says Alice played side a.
+    store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.player_id = 'pl-carol';
+    store.db.ratings!.push({ player_id: 'pl-carol', singles_elo: 1000, singles_provisional: false, singles_matches_played: 30 });
+    store.db.reliability_metrics!.push({ player_id: 'pl-carol', matches_completed: 5 });
+    match(QF).lineup = { a: ['pl-alice'] };
+
+    expect((await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Scores read off the wrong sheet')).ok).toBe(true);
+
+    expect(ratingOf('pl-alice')).toBe(974);
+    expect(ratingOf('pl-bob')).toBe(1026);
+    expect(ratingOf('pl-carol')).toBe(1000);
   });
 
   it('says so plainly when the result cannot be taken back off either', async () => {
@@ -2518,6 +2537,86 @@ describe('sweep margin multiplier', () => {
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     expect(ratingOf('pl-alice')).toBe(1045);
+  });
+});
+
+// 00329: DECIDED OFF COURT is never rated; RETIRED is rated as a walkover is,
+// margin 1.0 and no per-game figures, whoever was ahead when they stopped.
+describe('results decided off court and by retirement', () => {
+  const ratingCalls = () => store.rpcCalls.filter((c) => c.name === 'apply_tournament_match_rating');
+  const switchOff = (...ids: string[]) => {
+    store.db.platform_settings!.push({ key: 'release_flags', value: Object.fromEntries(ids.map((id) => [id, false])) });
+  };
+
+  it('records off court with no scores, advances the winner and rates nobody', async () => {
+    const res = await recordOffCourtResult(QF, 'b');
+
+    expect(res.ok).toBe(true);
+    expect(match(QF)).toMatchObject({
+      status: 'completed', scores: [], result_kind: 'off_court', retired_side: null,
+      winner_participant_id: 'p-bob', loser_participant_id: 'p-alice',
+    });
+    expect(ratingCalls()).toEqual([]);
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(match(SF).participant_a_id).toBe('p-bob');
+    expect(store.db.tournament_audit_log!.at(-1)).toMatchObject({
+      action: 'result_entered', details: expect.objectContaining({ result_kind: 'off_court' }),
+    });
+  });
+
+  it('rates a retirement at margin 1.0 with zero game figures, keeping the partial score', async () => {
+    // A 2-0 played would be a sweep (1026); a retirement is never one.
+    const res = await recordRetirement(QF, { retiredSide: 'b', scores: [{ a: 21, b: 15 }, { a: 21, b: 17 }], leaves: false });
+
+    expect(res.ok).toBe(true);
+    expect(match(QF)).toMatchObject({
+      status: 'completed', result_kind: 'retired', retired_side: 'b',
+      scores: [{ a: 21, b: 15 }, { a: 21, b: 17 }], winner_participant_id: 'p-alice',
+    });
+    expect(ratingOf('pl-alice')).toBe(1023);
+    const entries = ratingCalls()[0]!.args.p_entries as Array<Record<string, unknown>>;
+    for (const entry of entries) {
+      expect(entry).toMatchObject({ points_scored: 0, points_allowed: 0, games_won: 0, games_lost: 0 });
+    }
+  });
+
+  it('accepts a retiree who was ahead, and an unfinished last game', async () => {
+    const res = await recordRetirement(QF, { retiredSide: 'a', scores: [{ a: 21, b: 10 }, { a: 9, b: 4 }], leaves: false });
+
+    expect(res.ok).toBe(true);
+    expect(match(QF).winner_participant_id).toBe('p-bob');
+  });
+
+  it('refuses a score that is not one, before anything is written', async () => {
+    const res = await recordRetirement(QF, { retiredSide: 'a', scores: [{ a: 21.5, b: 10 }], leaves: false });
+
+    expect(res.ok === false && res.error).toBe('Each game score is a whole number from 0 to 99.');
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('refuses while its switch is off', async () => {
+    switchOff('decided_off_court', 'injury_retirement');
+    const offCourt = await recordOffCourtResult(QF, 'a');
+    expect(offCourt.ok).toBe(false);
+    const retired = await recordRetirement(QF, { retiredSide: 'a', scores: [], leaves: false });
+    expect(retired.ok).toBe(false);
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('asks the results capability', async () => {
+    capabilityGate.refuse = 'Not authorised';
+    const res = await recordOffCourtResult(QF, 'a');
+    expect(res.ok).toBe(false);
+    expect(capabilityGate.asked).toContain('tournaments.results.enter.write');
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('refuses to edit a decided result: undo it and enter it again', async () => {
+    await recordOffCourtResult(QF, 'a');
+    const res = await editMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a', 'Typo');
+
+    expect(res.ok === false && res.error).toBe('Undo this result and enter it again.');
+    expect(match(QF).result_kind).toBe('off_court');
   });
 });
 
@@ -7968,6 +8067,44 @@ describe('an event\'s own points table', () => {
   });
 });
 
+describe('the event standard\'s defaults for a new event', () => {
+  const row = (id: string) => store.db.tournament_events!.find((e) => e.id === id)!;
+  const flagsOff = (ids: string[]) => {
+    store.db.platform_settings!.push({ key: 'release_flags', value: Object.fromEntries(ids.map((id) => [id, false])) });
+  };
+
+  it('keeps a waitlist and asks entrants to confirm, unless the console said otherwise', async () => {
+    const standard = await createTournamentEvent('t1', { event_type: 'mens_singles', format: 'round_robin' });
+    expect(standard.ok && row(standard.data.id)).toMatchObject({ waitlist_enabled: true, confirm_required: true });
+    const chosen = await createTournamentEvent('t1', { event_type: 'mens_singles', format: 'round_robin', confirm_required: false });
+    expect(chosen.ok && row(chosen.data.id).confirm_required).toBe(false);
+  });
+
+  it('leaves an external event and a switched-off standard alone', async () => {
+    const external = await createTournamentEvent('t1', { event_type: 'mens_doubles', format: 'round_robin', external_event: true });
+    expect(external.ok && 'confirm_required' in row(external.data.id)).toBe(false);
+    flagsOff(['event_standard_defaults']);
+    const off = await createTournamentEvent('t1', { event_type: 'mens_singles', format: 'round_robin' });
+    expect(off.ok && 'confirm_required' in row(off.data.id)).toBe(false);
+  });
+
+  it('closes check-in 15 minutes before a tournament with a start time and no close of its own', async () => {
+    Object.assign(store.db.tournaments![0]!, { start_date: '2026-11-21', starts_time: '10:00:00', checkin_closes_at: null });
+    const timed = await createTournamentEvent('t1', { event_type: 'mens_singles', format: 'round_robin' });
+    // BC keeps UTC-7 through the winter from 2026-11-01, so 10:00 is 17:00Z.
+    expect(timed.ok && row(timed.data.id).checkin_closes_at).toBe('2026-11-21T16:45:00.000Z');
+
+    store.db.tournaments![0]!.checkin_closes_at = '2026-11-21T17:30:00.000Z';
+    const own = await createTournamentEvent('t1', { event_type: 'mens_singles', format: 'round_robin' });
+    expect(own.ok && 'checkin_closes_at' in row(own.data.id)).toBe(false);
+
+    store.db.tournaments![0]!.checkin_closes_at = null;
+    flagsOff(['checkin_cutoff_default']);
+    const off = await createTournamentEvent('t1', { event_type: 'mens_singles', format: 'round_robin' });
+    expect(off.ok && 'checkin_closes_at' in row(off.data.id)).toBe(false);
+  });
+});
+
 describe('a tournament\'s own bonus amounts', () => {
   const tournament = () => store.db.tournaments![0]!;
 
@@ -8061,6 +8198,43 @@ describe('a tournament\'s own bonus amounts', () => {
       expect(tournament().name).toBe('Renamed Cup');
       expect('placement_bonus_amounts' in tournament()).toBe(false);
     });
+  });
+});
+
+describe('the day lead (00324)', () => {
+  const base = { name: 'Test Cup', start_date: '2026-10-01', event_multiplier: 1.15, placement_bonus_enabled: true };
+  const tournament = () => store.db.tournaments![0]!;
+  beforeEach(() => {
+    tournament().day_lead_player_id = null;
+    store.db.players = [
+      { id: '00000000-0000-4000-8000-00000000e001', full_name: 'Exec Lead', is_exec: true },
+      { id: '00000000-0000-4000-8000-00000000e002', full_name: 'Plain Member', is_exec: false },
+    ];
+  });
+
+  it('names an exec, and clears with null', async () => {
+    const named = await updateTournament('t1', { ...base, day_lead_player_id: '00000000-0000-4000-8000-00000000e001' });
+    expect(named.ok).toBe(true);
+    expect(tournament().day_lead_player_id).toBe('00000000-0000-4000-8000-00000000e001');
+    const cleared = await updateTournament('t1', { ...base, day_lead_player_id: null });
+    expect(cleared.ok).toBe(true);
+    expect(tournament().day_lead_player_id).toBeNull();
+  });
+
+  it('refuses a member who is not an exec, and leaves the lead alone when the form sends none', async () => {
+    tournament().day_lead_player_id = '00000000-0000-4000-8000-00000000e001';
+    const refused = await updateTournament('t1', { ...base, day_lead_player_id: '00000000-0000-4000-8000-00000000e002' });
+    expect(refused.ok === false && refused.error).toBe('The day lead must be an exec.');
+    const untouched = await updateTournament('t1', { ...base, name: 'Renamed Cup' });
+    expect(untouched.ok).toBe(true);
+    expect(tournament().day_lead_player_id).toBe('00000000-0000-4000-8000-00000000e001');
+  });
+
+  it('refuses the field while the switch is off', async () => {
+    store.db.platform_settings!.push({ key: 'release_flags', value: { day_lead: false } });
+    const res = await updateTournament('t1', { ...base, day_lead_player_id: '00000000-0000-4000-8000-00000000e001' });
+    expect(res.ok === false && res.error).toMatch(/switched off/);
+    expect(tournament().day_lead_player_id).toBeNull();
   });
 });
 

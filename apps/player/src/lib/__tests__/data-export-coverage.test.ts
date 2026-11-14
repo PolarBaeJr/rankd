@@ -703,6 +703,7 @@ const FIXTURES: Record<string, StubRow[]> = {
       loser_pair_id: SENTINEL,
       result_entered_by: SENTINEL,
       ready_player_ids: [PLAYER_ID, SENTINEL],
+      lineup: { a: [PLAYER_ID], b: [SENTINEL] },
     },
   ],
   registration_imports: [
@@ -760,6 +761,80 @@ const FIXTURES: Record<string, StubRow[]> = {
       resolved_by: SENTINEL,
       reason: null,
       promoted_participant_id: null,
+    },
+  ],
+  attendance_warnings: [
+    {
+      id: 'aw-1',
+      player_id: PLAYER_ID,
+      tournament_id: 'trn-1',
+      event_id: 'ev-1',
+      kind: 'no_show',
+      source: 'did_not_come',
+      note: null,
+      issued_by: SENTINEL,
+      issued_at: '2026-10-01T18:00:00Z',
+      rescinded_at: '2026-10-02T18:00:00Z',
+      rescinded_by: SENTINEL,
+      rescind_reason: 'The no-show was undone.',
+    },
+  ],
+  event_entry_restrictions: [
+    {
+      id: 'er-1',
+      player_id: PLAYER_ID,
+      reason: 'Two no-shows this term',
+      starts_at: '2026-10-03T18:00:00Z',
+      ends_at: null,
+      created_by: SENTINEL,
+      created_at: '2026-10-03T18:00:00Z',
+      lifted_at: '2026-10-10T18:00:00Z',
+      lifted_by: SENTINEL,
+    },
+  ],
+  event_departures: [
+    {
+      id: 'ed-1',
+      event_id: 'ev-1',
+      player_id: PLAYER_ID,
+      participant_id: 'tp-1',
+      pair_id: null,
+      reason: 'injury',
+      note: null,
+      marked_by: SENTINEL,
+      marked_as: 'court_helper',
+      marked_at: '2026-10-01T19:00:00Z',
+      warning_id: null,
+    },
+  ],
+  event_substitutions: [
+    {
+      id: 'es-1',
+      event_id: 'ev-1',
+      kind: 'partner',
+      outgoing_player_id: SENTINEL,
+      incoming_player_id: PLAYER_ID,
+      participant_id: null,
+      pair_id: 'pair-1',
+      note: null,
+      outgoing_elo_before: 1200,
+      outgoing_elo_change: null,
+      matches_kept: 1,
+      matches_moved: 2,
+      made_by: SENTINEL,
+      made_at: '2026-10-01T19:30:00Z',
+    },
+  ],
+  tournament_event_confirmations: [
+    {
+      id: 'ec-1',
+      event_id: 'ev-1',
+      player_id: PLAYER_ID,
+      participant_id: 'tp-1',
+      pair_id: null,
+      status: 'confirmed',
+      email_outcome: 'sent',
+      confirmed_by: SENTINEL,
     },
   ],
   legacy_tournament_participants: [
@@ -867,7 +942,7 @@ const FIXTURES: Record<string, StubRow[]> = {
   announcements: [{ id: 'ann-1', title: 'Season opener', author_id: PLAYER_ID }],
   sessions: [{ id: 'sess-1', name: 'Tuesday drop-in', date: '2026-09-15', host_player_id: SENTINEL }],
   tournaments: [
-    { id: 'trn-1', name: 'Fall Open', start_date: '2026-10-01', created_by: SENTINEL },
+    { id: 'trn-1', name: 'Fall Open', start_date: '2026-10-01', created_by: SENTINEL, day_lead_player_id: SENTINEL },
   ],
   tournament_events: [{ id: 'ev-1', tournament_id: 'trn-1', event_type: 'MS' }],
   discord_role_revocations: [{ discord_user_id: '900000000000000001', queued_at: '2026-09-01' }],
@@ -948,6 +1023,9 @@ class StubQuery {
     return this;
   }
   or() {
+    return this;
+  }
+  contains() {
     return this;
   }
   range(from: number, to: number) {
@@ -1227,6 +1305,27 @@ describe('no third party survives into the file', () => {
     expect(receipts[0]).not.toHaveProperty('reviewed_by');
     expect(receipts[0]).not.toHaveProperty('screenshot_path');
     expect(JSON.stringify(result.document)).not.toContain('SYNTH0002');
+  });
+
+  it('keeps the matches a member played before they were subbed out, and says who played', async () => {
+    // tm-out: the member's old entry is somebody else's now, but the lineup
+    // names them. tm-in: the member's entry now, played before they came in.
+    // tm-opp: their entry, only the opponent was subbed.
+    const fixtures = {
+      ...FIXTURES,
+      tournament_matches: [
+        { id: 'tm-out', event_id: 'ev-1', participant_a_id: SENTINEL, participant_b_id: SENTINEL, pair_a_id: null, pair_b_id: null, lineup: { a: [PLAYER_ID] } },
+        { id: 'tm-in', event_id: 'ev-1', participant_a_id: 'tp-1', participant_b_id: SENTINEL, pair_a_id: null, pair_b_id: null, lineup: { a: [SENTINEL] } },
+        { id: 'tm-opp', event_id: 'ev-1', participant_a_id: SENTINEL, participant_b_id: 'tp-1', pair_a_id: null, pair_b_id: null, lineup: { a: [SENTINEL] } },
+      ],
+    };
+    const result = await assembleMemberExport(stubClient(fixtures), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const byId = new Map(result.document.data.tournament_matches!.map((m) => [m.id, m]));
+    expect(byId.get('tm-out')?.you_played).toBe(true);
+    expect(byId.get('tm-in')?.you_played).toBe(false);
+    expect(byId.get('tm-opp')?.you_played).toBe(true);
+    for (const match of byId.values()) expect(match).not.toHaveProperty('lineup');
   });
 
   it('filters ready_player_ids down to the requester alone', async () => {

@@ -16,7 +16,7 @@ import { defaultFeaturesValue } from '@badminton/shared/src/utils/features';
 // `membership_payments` are the exceptions: no migration seeds them, and the
 // console inserts each on its first save. So is `release_flags`, the kill
 // switches, for the same reason, and `console_pages`, the console page
-// switches (00321).
+// switches (00321), and `social_hashtags`, the caption hashtags (00333).
 const PRODUCTION_KEYS = [
   'challenge_rules',
   'club_socials',
@@ -31,6 +31,7 @@ const PRODUCTION_KEYS = [
   'session_attendance',
   'session_caps',
   'signup_settings',
+  'social_hashtags',
   'tournament_bonuses',
   'walkover_rules',
 ];

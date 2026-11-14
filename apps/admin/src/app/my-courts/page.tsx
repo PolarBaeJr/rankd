@@ -118,6 +118,9 @@ export default async function MyCourtsPage() {
             events={section.events}
             courtVoid={releaseFlags.desk_helper_void}
             skipAbsent={releaseFlags.auto_call_skips_absent}
+            markLeft={releaseFlags.attendance_warnings}
+            offCourt={releaseFlags.decided_off_court}
+            retire={releaseFlags.injury_retirement}
           />
         </section>
       ))}

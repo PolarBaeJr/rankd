@@ -26,6 +26,7 @@ import {
   type SiblingEvent,
 } from '../../../event-format-fields';
 import type { TournamentEventRow } from '@/lib/tournament-types';
+import { EventAttendanceFields } from './EventAttendanceFields';
 
 // Editing the format after the event is created. The server refuses a format
 // change once a draw exists, so from then on this dialog offers only what can
@@ -37,6 +38,8 @@ export function EventSettingsDialog({
   totalEntries,
   stagesDrawn = [],
   pointsOnly: pointsOnlyAsked = false,
+  attendanceOn = false,
+  tournamentStart = { startDate: null, startsTime: null },
   onClose,
 }: {
   event: TournamentEventRow;
@@ -51,6 +54,10 @@ export function EventSettingsDialog({
   stagesDrawn?: number[];
   /** A legacy event past its draw: only the points table can change (00275). */
   pointsOnly?: boolean;
+  /** Kill switch entry_confirmation; off, no Confirm your place section. */
+  attendanceOn?: boolean;
+  /** When the tournament starts, for the confirmation's instants. */
+  tournamentStart?: { startDate: string | null; startsTime: string | null };
   onClose: () => void;
 }) {
   // A STAGED EVENT (00272). Its stages are edited here until it is finalised;
@@ -376,6 +383,11 @@ export function EventSettingsDialog({
             ) : (
               <p className="text-xs text-[var(--text-muted)]">Waitlist: run migration 00278 first.</p>
             )}
+          </div>
+        )}
+        {!external && attendanceOn && (
+          <div className="space-y-1 border-t border-[var(--border)] pt-3">
+            <EventAttendanceFields event={event} startDate={tournamentStart.startDate} startsTime={tournamentStart.startsTime} />
           </div>
         )}
         <div className="flex items-center justify-between pt-2">

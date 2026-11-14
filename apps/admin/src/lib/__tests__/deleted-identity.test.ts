@@ -261,7 +261,14 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     tournament_fees: 'a financial record of an entry the member paid for',
     tournament_event_waitlist: 'the queue order of an event, which decided who else got a place',
     club_event_waitlist: 'the queue order of a club event, which decided who else got a place',
+    tournament_event_confirmations: 'whether an entrant confirmed their place in time, which decided whether a reserve got it, like the waitlist',
+    // NOT SETTLED, for the same reason as varsity_notes below: an officer's
+    // record about this member, held pending the records-schedule answer.
+    attendance_warnings: 'OPEN: an officer\'s attendance record about the member, held pending the records-schedule answer',
+    event_entry_restrictions: 'OPEN: an officer\'s restriction on the member entering events, held pending the records-schedule answer',
+    event_departures: 'OPEN: an officer\'s record that the member left an event and why, held pending the records-schedule answer',
     tournament_participants: 'shared competitive history, draws and results',
+    event_substitutions: 'who came in for whom on an entry, shared competitive history like the draw',
     tournament_court_helpers: 'an event-day scoring assignment made by an officer, operational and tournament-scoped',
     // NOT SETTLED, and deliberately recorded as unsettled rather than quietly
     // kept. `varsity_notes.note` is free text an exec wrote ABOUT this member,

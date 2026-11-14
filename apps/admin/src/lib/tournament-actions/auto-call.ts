@@ -27,6 +27,7 @@ import {
 import type { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { readLiveCourtUse, readTournamentCourts } from '../tournament-courts';
+import { lockedByTimeCap, readReachedTimeCaps } from '../group-time-caps';
 import { absentEntryIds, deskRows, planCourtCalls, type AutoCallReport, type AutoCallTrigger, type DeskMatch } from '../live-desk';
 
 export type { AutoCallReport, AutoCallTrigger } from '../live-desk';
@@ -143,8 +144,12 @@ export async function fillFreeCourts(
     absent = absentEntryIds((entries ?? []) as Array<{ id: string; status: string | null }>);
   }
 
+  // A group whose time cap is reached starts nothing new (00331), even in the
+  // minute before the job voids its matches.
+  const caps = await readReachedTimeCaps(client, event.id);
+  const callable = ((matches ?? []) as unknown as DeskMatch[]).filter((m) => !lockedByTimeCap(caps, m));
   const rows = deskRows(
-    (matches ?? []) as unknown as DeskMatch[],
+    callable,
     (id) => ({ entryId: id, absent: !!id && absent.has(id) }),
     doubles,
   );

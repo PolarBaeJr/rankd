@@ -1247,6 +1247,9 @@ export async function applyTournamentMatchElo(matchId: string) {
   // which clears it.
   if (match.elo_snapshot) return;
 
+  // Decided off court (00329) moves nobody: no game was played.
+  if (match.result_kind === 'off_court') return;
+
   const event = match.event as Record<string, unknown>;
   // An external event (00269) is unrated: its teams have no ratings rows. The
   // tournament_matches_external_unrated trigger refuses the snapshot as a backstop.
@@ -1316,7 +1319,13 @@ export async function applyTournamentMatchElo(matchId: string) {
   // same number; doing it once here removes any way to get the orientation
   // wrong. A walkover carries no scores at all, so total games is 0 and the
   // multiplier is 1.0 — which is what the SQL walkover branch does too.
-  const matchScores = (match.scores as Array<{ a: number; b: number }> | null) ?? [];
+  //
+  // A RETIREMENT (00329) is rated as a walkover is: its partial games stay on
+  // the row for the table and the display, but a game cut short says nothing
+  // about the margin, and the side that retired may have been ahead.
+  const matchScores = match.result_kind === 'retired'
+    ? []
+    : (match.scores as Array<{ a: number; b: number }> | null) ?? [];
   const gamesA = matchScores.filter(g => g.a > g.b).length;
   const gamesB = matchScores.filter(g => g.b > g.a).length;
   const marginMultiplier = getMarginMultiplier(
@@ -1339,6 +1348,15 @@ export async function applyTournamentMatchElo(matchId: string) {
     games_won: isSideA ? gamesA : gamesB,
     games_lost: isSideA ? gamesB : gamesA,
   });
+
+  // WHO PLAYED, when the entry was substituted after this match was decided
+  // (00327). The entry's members are the incoming people by then, and an
+  // edited result re-rated off them would move the rating of somebody who was
+  // not on court.
+  const lineup = (side: 'a' | 'b'): string[] | null => {
+    const ids = (match.lineup as Record<string, unknown> | null | undefined)?.[side];
+    return Array.isArray(ids) && ids.every((id) => typeof id === 'string') ? (ids as string[]) : null;
+  };
 
   if (doubles) {
     // For doubles, update both players in winning and losing pairs
@@ -1371,6 +1389,10 @@ export async function applyTournamentMatchElo(matchId: string) {
 
     const winnerElo = winnerPair.combined_elo ?? 400;
     const loserElo = loserPair.combined_elo ?? 400;
+    const winnerLineup = lineup(winnerId === match.pair_a_id ? 'a' : 'b');
+    const loserLineup = lineup(loserId === match.pair_a_id ? 'a' : 'b');
+    if (winnerLineup?.length === 2) [winnerPair.player1_id, winnerPair.player2_id] = winnerLineup as [string, string];
+    if (loserLineup?.length === 2) [loserPair.player1_id, loserPair.player2_id] = loserLineup as [string, string];
 
     // Single batched ratings fetch for all 4 players
     const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
@@ -1452,6 +1474,13 @@ export async function applyTournamentMatchElo(matchId: string) {
       );
     }
 
+    // A substituted side's participant row now belongs to the incoming player,
+    // so the player comes off the lineup and the row is left unstamped.
+    const winnerLineup = lineup(winnerId === match.participant_a_id ? 'a' : 'b')?.[0] ?? null;
+    const loserLineup = lineup(loserId === match.participant_a_id ? 'a' : 'b')?.[0] ?? null;
+    if (winnerLineup) winnerP.player_id = winnerLineup;
+    if (loserLineup) loserP.player_id = loserLineup;
+
     // Single batched ratings fetch
     const { data: ratings, error: ratingsErr } = await adminClient.from('ratings')
       .select('player_id, singles_elo, singles_provisional, singles_matches_played')
@@ -1502,12 +1531,12 @@ export async function applyTournamentMatchElo(matchId: string) {
       {
         player_id: winnerP.player_id, before: winnerElo,
         after: winResult.newRating, delta: winResult.delta,
-        won: true, ...winnerStats, participant_id: winnerId,
+        won: true, ...winnerStats, ...(winnerLineup ? {} : { participant_id: winnerId }),
       },
       {
         player_id: loserP.player_id, before: loserElo,
         after: loseResult.newRating, delta: loseResult.delta,
-        won: false, ...loserStats, participant_id: loserId,
+        won: false, ...loserStats, ...(loserLineup ? {} : { participant_id: loserId }),
       },
     );
   }

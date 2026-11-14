@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button, Dialog, useConfirm } from '@badminton/ui';
 import { EventWaiverConsent } from '../../EventWaiverConsent';
 import { SoloEntryConsent } from '../../SoloEntryConsent';
+import { AttendancePolicyConsent } from '../../AttendancePolicyConsent';
 import { eventHasDraw, isOutOfEvent } from '@badminton/shared';
 import { registerForEvent, withdrawFromEvent, selfCheckIn, joinEventWaitlist, leaveEventWaitlist } from '@/lib/tournament-actions';
 import type { MyWaitlistState } from '@/lib/event-waitlist';
@@ -51,9 +52,16 @@ interface Props {
    * in, so it replaces the Register and waitlist buttons (00307).
    */
   clubEvent?: { href: string; title: string } | null;
+  /** The attendance_policy_ack switch: the policy is shown and accepted at entry. */
+  policyOn?: boolean;
+  /**
+   * This member is asked to confirm their place (00325): the confirm page and
+   * the deadline in club time ('' with no start date). null: nothing to confirm.
+   */
+  confirmation?: { href: string; by: string } | null;
 }
 
-export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist, clubEvent }: Props) {
+export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist, clubEvent, policyOn = false, confirmation = null }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -61,6 +69,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   // things are being agreed to and a tournament may require either, both or
   // neither.
   const [soloAccepted, setSoloAccepted] = useState(false);
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   // The same dialog collects the same consents for joining the waitlist,
   // because a promotion later enters the member without asking again.
   const [dialogFor, setDialogFor] = useState<'enter' | 'waitlist'>('enter');
@@ -77,10 +86,22 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   // nothing here can tell them that happened, so it is an exec action
   // (withdrawPairMember). Name the partner and name who to ask: a chip on its
   // own would read as the app having lost the option.
+  // CONFIRM YOUR PLACE. A link to the page with the button, never an action
+  // here: the page states the policy and the way out ("I cannot come").
+  const confirmNotice = confirmation && playerRegistration ? (
+    <p className="text-xs text-[var(--text-secondary)] w-full" role="status">
+      <Link href={confirmation.href} className="fees-link">
+        Confirm your place{confirmation.by ? ` by ${confirmation.by}` : ''}
+      </Link>
+      {' '}or it goes to the waitlist.
+    </p>
+  ) : null;
+
   const paired = isDoubles && Boolean(playerRegistration?.paired);
   if (paired) {
     return (
       <div className="flex items-center gap-2 flex-wrap">
+        {confirmNotice}
         <span
           className={`chip ${playerRegistration!.status === 'checked_in' ? 'chip-success' : ''}`}
           style={playerRegistration!.status !== 'checked_in' ? { borderColor: 'rgba(59,130,246,0.35)', background: 'rgba(59,130,246,0.1)', color: '#93C5FD' } : undefined}
@@ -100,7 +121,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
     );
   }
 
-  async function handleRegister(opts?: { eventWaiverAccepted?: boolean; soloEntryAcknowledged?: boolean }) {
+  async function handleRegister(opts?: { eventWaiverAccepted?: boolean; soloEntryAcknowledged?: boolean; attendancePolicyAcknowledged?: boolean }) {
     setLoading(true);
     try {
       const res = await registerForEvent(eventId, opts);
@@ -118,7 +139,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
     setLoading(false);
   }
 
-  async function handleJoinWaitlist(opts?: { eventWaiverAccepted?: boolean; soloEntryAcknowledged?: boolean }) {
+  async function handleJoinWaitlist(opts?: { eventWaiverAccepted?: boolean; soloEntryAcknowledged?: boolean; attendancePolicyAcknowledged?: boolean }) {
     setLoading(true);
     try {
       const res = await joinEventWaitlist(eventId, opts);
@@ -197,12 +218,14 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   const waiverText = eventWaiverText?.trim();
   // A DOUBLES ENTRY ALWAYS GOES THROUGH THE DIALOG, waiver or no waiver — the
   // acknowledgement is what is being collected and the server refuses without
-  // it. Singles with no waiver still enters on one tap.
-  const needsDialog = Boolean(waiverText) || isDoubles;
-  const canSubmit = (!waiverText || waiverAccepted) && (!isDoubles || soloAccepted);
+  // it. Singles with no waiver still enters on one tap, unless the attendance
+  // policy is being asked.
+  const needsDialog = Boolean(waiverText) || isDoubles || policyOn;
+  const canSubmit = (!waiverText || waiverAccepted) && (!isDoubles || soloAccepted) && (!policyOn || policyAccepted);
   const enterOpts = {
     ...(waiverText ? { eventWaiverAccepted: true } : {}),
     ...(isDoubles ? { soloEntryAcknowledged: true } : {}),
+    ...(policyOn ? { attendancePolicyAcknowledged: true } : {}),
   };
 
   // A tournament run for a club event (00307): the club event is the way in,
@@ -313,7 +336,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
         return (
           <>
             <Button
-              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setDialogFor(joinWaitlist ? 'waitlist' : 'enter'); setWaiverOpen(true); }}
+              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setPolicyAccepted(false); setDialogFor(joinWaitlist ? 'waitlist' : 'enter'); setWaiverOpen(true); }}
               loading={loading}
               size="sm"
               className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
@@ -330,7 +353,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
             <Dialog
               open={waiverOpen}
               onClose={() => setWaiverOpen(false)}
-              title={dialogFor === 'waitlist' ? 'Join the waitlist' : isDoubles ? 'Enter without a partner' : 'Event waiver'}
+              title={dialogFor === 'waitlist' ? 'Join the waitlist' : isDoubles ? 'Enter without a partner' : waiverText ? 'Event waiver' : 'Enter this event'}
             >
               <div className="space-y-4">
                 {isDoubles && (
@@ -342,6 +365,9 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
                     accepted={waiverAccepted}
                     onAcceptedChange={setWaiverAccepted}
                   />
+                )}
+                {policyOn && (
+                  <AttendancePolicyConsent accepted={policyAccepted} onAcceptedChange={setPolicyAccepted} />
                 )}
                 <div className="flex items-center justify-between">
                   <Button variant="ghost" type="button" onClick={() => setWaiverOpen(false)}>Cancel</Button>
@@ -383,6 +409,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
+      {stillIn && confirmNotice}
       {/* An unpaired doubles entrant. No Check In: check-in in a doubles event
           happens on the PAIR, so offering it here is a button for a court they
           cannot yet take. Withdraw stays — leaving before you are paired

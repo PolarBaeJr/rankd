@@ -721,6 +721,34 @@ export async function previewPlayerMerge(
   });
 }
 
+async function moveAttendanceRecords(
+  adminClient: ReturnType<typeof createAdminClient>,
+  keepId: string,
+  removeId: string,
+): Promise<void> {
+  for (const table of ['attendance_warnings', 'event_entry_restrictions', 'event_departures'] as const) {
+    const { data: rows, error } = await adminClient.from(table).select('id').eq('player_id', removeId);
+    if (error) {
+      if (['42P01', 'PGRST205'].includes(error.code ?? '')) continue;
+      throw new Error(`Could not read the removed account's ${table.replace(/_/g, ' ')}: ${error.message}`);
+    }
+    for (const row of rows ?? []) {
+      const { error: moveError } = await adminClient.from(table).update({ player_id: keepId }).eq('id', row.id);
+      if (moveError && moveError.code !== '23505') {
+        throw new Error(`Could not move the removed account's ${table.replace(/_/g, ' ')}: ${moveError.message}`);
+      }
+    }
+  }
+  // Who went out and who came in (00327): the substitution is part of the
+  // person's record too, and the columns are SET NULL on delete.
+  for (const column of ['outgoing_player_id', 'incoming_player_id'] as const) {
+    const { error } = await adminClient.from('event_substitutions').update({ [column]: keepId }).eq(column, removeId);
+    if (error && !['42P01', 'PGRST205'].includes(error.code ?? '')) {
+      throw new Error(`Could not move the removed account's substitutions: ${error.message}`);
+    }
+  }
+}
+
 export async function mergePlayers(
   keepId: string,
   removeId: string,
@@ -740,6 +768,12 @@ export async function mergePlayers(
       .in('id', [keepId, removeId]);
     if (consentError) throw new Error(consentError.message);
     const consentDiffers = new Set((consents ?? []).map((c) => c.media_consent)).size > 1;
+
+    // ATTENDANCE (00324) follows the person. All three tables cascade on the
+    // member, so the removed account's warnings, restrictions and departures
+    // are moved first or the merge deletes them. Row by row: a warning the kept account already holds
+    // for the same event is a duplicate, and stays behind to go with the row.
+    await moveAttendanceRecords(adminClient, keepId, removeId);
 
     const { data, error } = await adminClient.rpc('merge_players', {
       p_keep: keepId,

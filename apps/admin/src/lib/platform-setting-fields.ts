@@ -28,6 +28,7 @@ import {
   defaultConsolePagesValue,
 } from '@badminton/shared/src/utils/console-pages';
 import { CLUB_SOCIALS_SETTING_KEY, defaultClubSocialsValue } from '@badminton/shared/src/utils/club-socials';
+import { SOCIAL_HASHTAGS_SETTING_KEY } from './social-posts/caption';
 import {
   MEMBERSHIP_PAYMENTS_SETTING_KEY,
   defaultMembershipPaymentsValue,
@@ -543,6 +544,14 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       type: 'boolean',
     },
   },
+  // 00333: the hashtags a social post's caption ends with.
+  [SOCIAL_HASHTAGS_SETTING_KEY]: {
+    hashtags: {
+      label: 'Social post hashtags',
+      hint: 'Added to the end of every caption on the Social posts page, for example #clubbadminton #doubles. Separate them with spaces. Leave empty for none.',
+      type: 'text',
+    },
+  },
   [MEMBERSHIP_PAYMENTS_SETTING_KEY]: {
     sfss_purchase_url: {
       label: 'Buy membership link',
@@ -629,6 +638,8 @@ export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = 
   // form shows what the site is already showing.
   [CLUB_SOCIALS_SETTING_KEY]: defaultClubSocialsValue,
   [MEMBERSHIP_PAYMENTS_SETTING_KEY]: defaultMembershipPaymentsValue,
+  // Absent means no hashtags (00333).
+  [SOCIAL_HASHTAGS_SETTING_KEY]: () => ({ hashtags: '' }),
 };
 
 /**

@@ -41,6 +41,7 @@ import { regenerateDrawControl, type DrawCapabilities } from '@/lib/participant-
 import { drawLeftOutMessage } from '@/lib/stage-controls';
 import type { SiblingEvent } from '../../../event-format-fields';
 import type { TournamentEventRow } from '@/lib/tournament-types';
+import { ALL_RELEASE_FLAGS_ON, type ReleaseFlags } from '@badminton/shared/src/utils/release-flags';
 
 interface Props {
   tournament: Record<string, unknown>;
@@ -83,9 +84,11 @@ interface Props {
   stagesDrawn: number[];
   /** A staged event: the entries its first draw leaves out (drawField), by name. */
   drawLeftOut?: string[];
+  /** The kill switches, for the event standard's settings (00324). */
+  releaseFlags?: ReleaseFlags;
 }
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, undecidedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolUndecided, drawCapabilities, hasThirdPlace, stagesDrawn, drawLeftOut = [] }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, undecidedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolUndecided, drawCapabilities, hasThirdPlace, stagesDrawn, drawLeftOut = [], releaseFlags = ALL_RELEASE_FLAGS_ON }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -747,6 +750,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           totalEntries={totalEntries}
           stagesDrawn={stagesDrawn}
           pointsOnly={pointsOnlySettings}
+          attendanceOn={releaseFlags.entry_confirmation}
+          tournamentStart={{ startDate: (tournament.start_date as string | null) ?? null, startsTime: (tournament.starts_time as string | null) ?? null }}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -755,6 +760,9 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           eventId={event.id as string}
           event={event}
           tournament={tournament}
+          cutoffOn={releaseFlags.checkin_cutoff_default}
+          startDate={(tournament.start_date as string | null) ?? null}
+          startsTime={(tournament.starts_time as string | null) ?? null}
           onClose={() => setWindowsOpen(false)}
         />
       )}

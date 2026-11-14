@@ -47,6 +47,8 @@ export interface TournamentData extends WindowColumns {
   starts_time?: string | null;
   ends_time?: string | null;
   location?: string | null;
+  // Who makes the calls on the day (00324). Present once the migration has run.
+  day_lead_player_id?: string | null;
   status: string;
 }
 
@@ -159,6 +161,7 @@ function TournamentFormDialog({
   tournament,
   waiverTemplates,
   clubBonusSettings = null,
+  dayLeadExecs = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -166,6 +169,8 @@ function TournamentFormDialog({
   waiverTemplates: WaiverTemplateContext;
   /** The club's bonus amounts, shown behind a blank override box. null when unread. */
   clubBonusSettings?: TournamentBonusSettings | null;
+  /** The execs to pick a day lead from; null while the day_lead switch is off. */
+  dayLeadExecs?: Array<{ id: string; full_name: string | null }> | null;
 }) {
   const isEdit = !!tournament;
   const [loading, setLoading] = useState(false);
@@ -194,6 +199,9 @@ function TournamentFormDialog({
   const [maxEventsPerPlayer, setMaxEventsPerPlayer] = useState(
     tournament?.max_events_per_player != null ? String(tournament.max_events_per_player) : '',
   );
+  const [dayLead, setDayLead] = useState(tournament?.day_lead_player_id ?? '');
+  // Only an edit, on a database with the column, with the switch on.
+  const dayLeadAvailable = isEdit && dayLeadExecs != null && 'day_lead_player_id' in (tournament ?? {});
   const [allowedMemberships, setAllowedMemberships] = useState<string[]>(
     (tournament as { allowed_memberships?: string[] } | undefined)?.allowed_memberships
       ?? ALL_MEMBERSHIP_TYPES,
@@ -274,6 +282,11 @@ function TournamentFormDialog({
         const res = await updateTournament(tournament.id, {
           ...data,
           placement_bonus_amounts: Object.keys(amounts).length > 0 ? amounts : null,
+          // Only when it changed: a lead who has since stopped being an exec
+          // must not make every other edit of the tournament fail.
+          ...(dayLeadAvailable && (dayLead || null) !== (tournament.day_lead_player_id ?? null)
+            ? { day_lead_player_id: dayLead || null }
+            : {}),
         });
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Tournament updated', 'success');
@@ -379,6 +392,22 @@ function TournamentFormDialog({
             these. Withdrawing frees it up again.
           </p>
         </div>
+        {dayLeadAvailable && (
+          <div>
+            <Select
+              label="On the day, the calls are made by"
+              value={dayLead}
+              onChange={(e) => setDayLead(e.target.value)}
+              options={[
+                { value: '', label: 'Nobody named' },
+                ...dayLeadExecs!.map((exec) => ({ value: exec.id, label: exec.full_name ?? 'Unknown' })),
+              ]}
+            />
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              An exec. Members see the name on the tournament page, so they know who decides on the day.
+            </p>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <Switch checked={placementBonus} onChange={setPlacementBonus} />
           <span className="text-sm text-[var(--text-secondary)]">Enable placement bonuses</span>
@@ -476,6 +505,7 @@ export function TournamentRowActions({
   canEdit,
   canArchive,
   canDelete,
+  dayLeadExecs = null,
 }: {
   tournament: TournamentData;
   waiverTemplates: WaiverTemplateContext;
@@ -483,6 +513,8 @@ export function TournamentRowActions({
   canEdit: boolean;
   canArchive: boolean;
   canDelete: boolean;
+  /** The execs to pick a day lead from; null while the day_lead switch is off. */
+  dayLeadExecs?: Array<{ id: string; full_name: string | null }> | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -600,6 +632,7 @@ export function TournamentRowActions({
         tournament={tournament}
         waiverTemplates={waiverTemplates}
         clubBonusSettings={clubBonusSettings}
+        dayLeadExecs={dayLeadExecs}
       />
 
       <Dialog open={confirmArchiveEvents} onClose={() => setConfirmArchiveEvents(false)} title={`Finalise events & archive ${tournament.name}`}>

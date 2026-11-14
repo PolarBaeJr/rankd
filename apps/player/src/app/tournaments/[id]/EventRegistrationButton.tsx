@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button, Dialog, useConfirm } from '@badminton/ui';
 import { EventWaiverConsent } from './EventWaiverConsent';
 import { SoloEntryConsent } from './SoloEntryConsent';
+import { AttendancePolicyConsent } from './AttendancePolicyConsent';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import type { ActionResult } from '@/lib/actions/_shared';
 import { useToast } from '@/components/toast-provider';
@@ -37,9 +38,11 @@ interface Props {
    */
   registrationNotice?: string | null;
   checkinNotice?: string | null;
+  /** The attendance_policy_ack switch: the policy is shown and accepted at entry. */
+  policyOn?: boolean;
 }
 
-export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice }: Props) {
+export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, policyOn = false }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -47,6 +50,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   // `waiverAccepted`, because they are two different things being agreed to and
   // a tournament may require one, the other, both or neither.
   const [soloAccepted, setSoloAccepted] = useState(false);
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   // Set when an entry is refused because others are queueing (00278): the
   // waitlist lives on the event's own page, so this row points there.
   const [waitlistLink, setWaitlistLink] = useState(false);
@@ -106,9 +110,10 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   const waiverText = eventWaiverText?.trim();
   // A DOUBLES ENTRY ALWAYS GOES THROUGH THE DIALOG, waiver or no waiver: the
   // acknowledgement is the thing being collected, and registerForEvent refuses
-  // without it. A singles entry with no waiver still registers on one tap.
-  const needsDialog = Boolean(waiverText) || isDoubles;
-  const canSubmit = (!waiverText || waiverAccepted) && (!isDoubles || soloAccepted);
+  // without it. A singles entry with no waiver still registers on one tap,
+  // unless the attendance policy is being asked.
+  const needsDialog = Boolean(waiverText) || isDoubles || policyOn;
+  const canSubmit = (!waiverText || waiverAccepted) && (!isDoubles || soloAccepted) && (!policyOn || policyAccepted);
 
   if (!registration) {
     if (waitlistLink && tournamentId) {
@@ -138,7 +143,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
             <Button
               size="sm"
               loading={loading}
-              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setWaiverOpen(true); }}
+              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setPolicyAccepted(false); setWaiverOpen(true); }}
               className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
             >
               Enter
@@ -146,7 +151,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
             <Dialog
               open={waiverOpen}
               onClose={() => setWaiverOpen(false)}
-              title={isDoubles ? 'Enter without a partner' : 'Event waiver'}
+              title={isDoubles ? 'Enter without a partner' : waiverText ? 'Event waiver' : 'Enter this event'}
             >
               <div className="space-y-4">
                 {isDoubles && (
@@ -159,6 +164,9 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
                     onAcceptedChange={setWaiverAccepted}
                   />
                 )}
+                {policyOn && (
+                  <AttendancePolicyConsent accepted={policyAccepted} onAcceptedChange={setPolicyAccepted} />
+                )}
                 <div className="flex items-center justify-between">
                   <Button variant="ghost" type="button" onClick={() => setWaiverOpen(false)}>Cancel</Button>
                   <Button
@@ -169,6 +177,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
                         const r = await registerForEvent(eventId, {
                           ...(waiverText ? { eventWaiverAccepted: true } : {}),
                           ...(isDoubles ? { soloEntryAcknowledged: true } : {}),
+                          ...(policyOn ? { attendancePolicyAcknowledged: true } : {}),
                         });
                         if (r.ok) setWaiverOpen(false);
                         return r;

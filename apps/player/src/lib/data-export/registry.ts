@@ -418,9 +418,11 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     why: 'Every doubles pair you were half of. Your partner appears as a pseudonym. The pair name is included because you may have chosen it, though it is often a real name and so is stripped of anything that is not yours.',
   },
   tournament_matches: {
-    playerColumns: ['result_entered_by', 'ready_player_ids'],
+    playerColumns: ['result_entered_by', 'ready_player_ids', 'lineup'],
     disposition: 'project',
-    withheldColumns: ['result_entered_by'],
+    // lineup (00327) is who played each side of a match decided before a sub,
+    // a jsonb of member uuids, so it is reduced to whether the member played.
+    withheldColumns: ['result_entered_by', 'lineup'],
     // ready_player_ids is a bare uuid[] of everybody the door has marked
     // ready, so it is filtered down to the requester's own id.
     why: 'The draw matches you appear in. The "ready" list is filtered down to you alone, because the rest of it is other entrants. Who entered the result is reduced to "you" or a club officer.',
@@ -433,6 +435,47 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // for the same reason as session_attendance.marked_by.
     withheldColumns: ['resolved_by'],
     why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
+  },
+  attendance_warnings: {
+    playerColumns: ['player_id', 'issued_by', 'rescinded_by'],
+    disposition: 'export',
+    // issued_by and rescinded_by are the OFFICERS who wrote and took back the
+    // warning (00324), projected to role descriptors as on the waitlist.
+    withheldColumns: ['issued_by', 'rescinded_by'],
+    why: 'Every attendance warning the club gave you, for which event, why, and whether it was rescinded.',
+  },
+  event_entry_restrictions: {
+    playerColumns: ['player_id', 'created_by', 'lifted_by'],
+    disposition: 'export',
+    // created_by and lifted_by are the OFFICERS who set and lifted it (00324).
+    withheldColumns: ['created_by', 'lifted_by'],
+    why: 'Every restriction on entering events the club set on you, why, for how long, and when it was lifted.',
+  },
+  event_departures: {
+    playerColumns: ['player_id', 'marked_by'],
+    disposition: 'export',
+    // marked_by is the officer or court helper who marked you as left (00324).
+    withheldColumns: ['marked_by'],
+    why: 'Every time you were marked as having left an event part way through, the reason given, and the warning it carried if any.',
+  },
+  event_substitutions: {
+    playerColumns: ['outgoing_player_id', 'incoming_player_id', 'made_by'],
+    disposition: 'project',
+    // The other person on a sub is a member too, and made_by is the officer
+    // who made it (00327). The outgoing rating columns are the outgoing
+    // person's, so a member who came in does not get them.
+    withheldColumns: ['outgoing_player_id', 'incoming_player_id', 'made_by'],
+    why: 'Every time you were subbed into or out of an event entry: which way, the note, and how many matches stayed with whoever played them. The other person appears as a pseudonym.',
+  },
+  tournament_event_confirmations: {
+    playerColumns: ['player_id'],
+    disposition: 'export',
+    // confirmed_by is the member or the officer at the desk who confirmed the
+    // place for them (00325); it has no foreign key, and is projected to "you"
+    // or a role descriptor. The mail columns stay: they say whether the club
+    // reached the member.
+    withheldColumns: ['confirmed_by'],
+    why: 'Every time the club asked you to confirm your place in an event, whether you were reached, and whether you confirmed or the place was released.',
   },
   club_event_waitlist: {
     playerColumns: ['player_id', 'resolved_by'],
@@ -589,9 +632,12 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     why: 'Only enough of each club session to make your attendance and RSVP rows legible, plus a flag where you hosted it. The club calendar is not personal information and is not exported under that label.',
   },
   tournaments: {
-    playerColumns: ['created_by'],
+    // day_lead_player_id (00324) names the exec who makes the calls on the
+    // day. Never selected, as created_by is never shipped: the tournament is
+    // context for the member's entries, not a record about them.
+    playerColumns: ['created_by', 'day_lead_player_id'],
     disposition: 'project',
-    withheldColumns: ['created_by'],
+    withheldColumns: ['created_by', 'day_lead_player_id'],
     why: 'Only enough of each tournament to make your entries legible, plus a flag where you created it.',
   },
   club_events: {
@@ -951,6 +997,9 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
     'The item lines of a club expense\'s receipt (00313), each ticked as the club\'s or personal. It hangs off a club_ledger expense row and holds no player column; an item ticked personal is stored as "Personal item", with no description of what was bought.',
   club_expense_tax_lines:
     'The tax lines printed on a club expense\'s receipt (00313). It hangs off a club_ledger expense row and holds no player column.',
+  stage_group_time_caps: 'A time after which a stage, pool or group of a tournament event plays no new match (00331). No player column; who set or applied one is in the audit log.',
+  event_results_posts: 'The one results announcement per finalized event (00333): the announcement id and the top places as entry ids. No player column; the post itself is a club announcement.',
+  event_social_post_sets: 'Slides of an event\'s teams or draw for the club\'s social media (00333), as entry ids and a caption. No player column; names are read from the entries when a slide is drawn.',
   registration_import_receipts:
     'The download state of a file a Google Form response uploaded (00288): a Drive file id, a storage path, a status and a retry count. It holds no player column; it is keyed to the response, which is one join from a member\'s own registration_imports row. A receipt it files reaches that member\'s export as their fee_submissions row, with screenshot_held; one that never filed (too large, the wrong type, no fee to match) is not in the export.',
   managed_registration_forms:

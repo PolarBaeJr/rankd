@@ -4,6 +4,7 @@ import { PageHeader, Badge } from '@badminton/ui';
 import { formatClubEventTime, isDoublesEvent, isUuid } from '@badminton/shared';
 import { createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import { ConfirmImportForm, UndoImportForm } from './confirm-form';
+import { releaseFlagOn } from '@/lib/release-flags';
 
 // CONFIRM A GOOGLE FORM ENTRY (00283).
 //
@@ -126,6 +127,7 @@ export default async function ConfirmRegistrationPage({
               doubles={doubles}
               partnerName={partnerName}
               doneHref={backHref}
+              policyOn={await releaseFlagOn('attendance_policy_ack')}
             />
           </>
         ) : undoable ? (

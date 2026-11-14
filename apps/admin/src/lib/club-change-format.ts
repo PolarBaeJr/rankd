@@ -31,6 +31,7 @@ import { MEMBERSHIP_PAYMENTS_SETTING_KEY } from '@badminton/shared/src/utils/mem
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 import { isCapability } from '@badminton/shared/src/utils/access-level';
 import { SEEDABLE_SETTINGS } from './platform-setting-fields';
+import { SOCIAL_HASHTAGS_SETTING_KEY } from './social-posts/caption';
 import { sectionForSettingKey, type PlatformSettingsSection } from './platform-setting-sections';
 
 export type ClubChangeSource = 'setting' | 'baseline' | 'manual';
@@ -184,6 +185,10 @@ export const CHANGE_PHRASES: Record<string, Record<string, Phrase>> = {
     // Never the address itself: the line is published.
     etransfer_email: { kind: 'private', label: 'E-transfer email' },
     etransfer_payee_name: { kind: 'private', label: 'E-transfer payee name' },
+  },
+  // Said as changed, not quoted: the tags are for Instagram, not this feed.
+  [SOCIAL_HASHTAGS_SETTING_KEY]: {
+    hashtags: { kind: 'private', label: 'Social post hashtags' },
   },
 };
 

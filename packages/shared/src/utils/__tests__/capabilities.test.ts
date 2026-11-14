@@ -125,9 +125,12 @@ describe('the capability vocabulary', () => {
   //
   // 147 BECAME 148 with club event check-in (00293):
   // `events.signups.checkin.write`, admin-only like the rest of events.
-  it('is exactly 148 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(148);
-    expect(new Set(CAPABILITIES).size).toBe(148);
+  //
+  // 148 BECAME 149 with Social posts (00333): `announcements.socialposts.read`,
+  // a read, so every officer holds it through the floor.
+  it('is exactly 149 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(149);
+    expect(new Set(CAPABILITIES).size).toBe(149);
   });
 
   // 16 BECAME 17 with `page`, the keys to switched-off features, and 17
@@ -404,16 +407,18 @@ describe('CAPABILITY_GATES', () => {
   // 211 BECAME 212 with club event check-in (00293): setClubEventCheckIn.
   // 212 BECAME 213 with "Not the same person" (00320): dismissPossibleDuplicate,
   // merged into players.merge.write. No capability added.
-  it('names 213 distinct enforcement points, none of them claimed twice', () => {
+  // 213 BECAME 214 with Social posts (00333): the page and its slide images,
+  // one site because the image route is the page's own content.
+  it('names 214 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(213);
-    expect(new Set(sites).size).toBe(213);
-    expect(ENFORCEMENT_POINTS).toBe(213);
+    expect(sites.length).toBe(214);
+    expect(new Set(sites).size).toBe(214);
+    expect(ENFORCEMENT_POINTS).toBe(214);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -1138,25 +1143,25 @@ describe('permits', () => {
   // and 141 BECAME 142 with the guest waivers switch, and 142 BECAME 144 with
   // the audit export's two, and 144 BECAME 145 with the predictions switch,
   // and 145 BECAME 147 with Club changes, and 147 BECAME 148 with club event
-  // check-in. 00321 moved the top of the ladder to the super admin, and an
-  // admin holds the 143 outside PLATFORM_ONLY.
+  // check-in, and 148 BECAME 149 with Social posts. 00321 moved the top of the
+  // ladder to the super admin, and an admin holds the 144 outside PLATFORM_ONLY.
   // This number
   // tracks CAPABILITIES.length by construction (a super admin is a superuser BY
   // LEVEL, so every capability added is automatically theirs), and it is
   // written as a literal anyway, because a count derived from the list it is
   // checking would pass for an empty list.
-  it('makes a super admin a superuser BY LEVEL, holding all 148', () => {
+  it('makes a super admin a superuser BY LEVEL, holding all 149', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('super_admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('super_admin', UNRESTRICTED).size).toBe(148);
+    expect(effectiveCapabilities('super_admin', UNRESTRICTED).size).toBe(149);
   });
 
-  it('gives an admin all 148 but the 5 PLATFORM_ONLY', () => {
+  it('gives an admin all 149 but the 5 PLATFORM_ONLY', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(!PLATFORM_ONLY.includes(capability));
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(143);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(144);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

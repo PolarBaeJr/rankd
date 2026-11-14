@@ -13,13 +13,22 @@ import {
   undoCheckIn,
   undoNoShow,
   voidOpenMatchesForEntry,
+  confirmEntryForMember,
 } from '@/lib/tournament-actions';
 import { checkInNoShowPath, checkInWindow } from '@/lib/participant-controls';
 import { bulkVoidSummary, openMatchesOfEntry } from '@/lib/stage-controls';
 import { useToast } from '@/components/toast-provider';
 import { CheckCircle, XCircle, Clock, Users, UserCheck, UserPlus, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
-import type { TournamentEventRow, TournamentMatchRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
+import type {
+  ConfirmationRow,
+  PairWithPlayers,
+  ParticipantWithPlayer,
+  PlayerSummary,
+  TournamentEventRow,
+  TournamentMatchRow,
+  WaitlistEntry,
+} from '@/lib/tournament-types';
 import {
   CLUB_TIMEZONE,
   eventIsPlaying,
@@ -30,6 +39,12 @@ import {
   type PairCheckInPerson,
 } from '@badminton/shared';
 import { WaiverState, blocksCheckIn } from './WaiverState';
+import { PlayerLeftDialog } from './PlayerLeftDialog';
+import type { Departure } from '@/lib/departure-reasons';
+import { FillEmptyPlaces } from './FillEmptyPlaces';
+import { LateArrivals } from './LateArrivals';
+import { SubstituteForEntry, type SubstituteSources } from './SubstituteDialog';
+import { CONFIRMATION_BADGE_LABELS, confirmationCounts, entryConfirmationState } from '@/lib/confirmation-badges';
 
 interface Props {
   event: TournamentEventRow;
@@ -48,6 +63,33 @@ interface Props {
   didNotComeOn?: boolean;
   /** Kill switch check_in_after_draw; off, the tab locks at the draw. */
   checkInAfterDraw?: boolean;
+  /** Kill switch attendance_warnings; off, a checked-in entry has no "Left". */
+  markLeftOn?: boolean;
+  /** Who confirmed their place (00325); null when the event does not ask. */
+  confirmations?: ConfirmationRow[] | null;
+  /** checkin.mark.write: the desk may confirm a place for somebody in person. */
+  canConfirmFor?: boolean;
+  /**
+   * Fill the empty places (00326), shown during check-in. Null hides it: the
+   * switch is off, or the event has no waitlist to read.
+   */
+  fill?: {
+    waitlist: WaitlistEntry[];
+    execs: PlayerSummary[];
+    canRelease: boolean;
+    canAdd: boolean;
+    warns: boolean;
+  } | null;
+  /**
+   * Sub (00327): the desk or the day lead, with substitutions on. Null hides
+   * the Sub action.
+   */
+  sub?: SubstituteSources | null;
+  /**
+   * A late arrival whose place check-in close released (00330): the desk with
+   * the no-show key, with late_arrival_reinstate on. Null hides it.
+   */
+  lateArrival?: { releasedIds: string[] } | null;
 }
 
 /** Whose signature this entry needs — one person, or both halves of a pair. */
@@ -59,8 +101,43 @@ function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDouble
     : [(entry as ParticipantWithPlayer).player_id];
 }
 
-export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot, didNotComeOn = true, checkInAfterDraw = true }: Props) {
+export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates, matches = [], canVoidNoShow = false, onAddOnTheSpot, didNotComeOn = true, checkInAfterDraw = true, markLeftOn = true, confirmations = null, canConfirmFor = false, fill = null, sub = null, lateArrival = null }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
+  // LEFT, THEN SUB (00328): the Left dialog hands its reason to the sub
+  // dialog and writes nothing; Back from the sub reopens Left with it.
+  const [leaving, setLeaving] = useState<{ entryId: string; label: string; departure?: Departure | null } | null>(null);
+  const [subbing, setSubbing] = useState<{
+    entryId: string;
+    initialOut: string | null;
+    left?: { label: string; departure: Departure } | null;
+  } | null>(null);
+  const subFor = (entryId: string, initialOut: string | null = null) => setSubbing({ entryId, initialOut });
+  const subButton = (entryId: string, label: string, initialOut: string | null = null) => (sub ? (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => subFor(entryId, initialOut)}
+      aria-label={`Sub for ${label}`}
+      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+    >
+      Sub
+    </Button>
+  ) : null);
+  // "Left" (00324) is for an entry that came and is gone part way through, so
+  // only once the event is playing, and only for the desk that may void.
+  const canMarkLeft = markLeftOn && canVoidNoShow && eventIsPlaying(event.status);
+  const leftButton = (entryId: string, label: string) => (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => setLeaving({ entryId, label })}
+      aria-label={`${label} left`}
+      title="Left part way through"
+      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+    >
+      Left
+    </Button>
+  );
   const [didNotCome, setDidNotCome] = useState<{ id: string; name: string; count: number; live: number } | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const noShowPath = checkInNoShowPath(matches.length > 0 && eventIsPlaying(event.status), canVoidNoShow, didNotComeOn);
@@ -166,6 +243,25 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
     setLoading(null);
   }
 
+  // The desk keeps a place for somebody who said so in person (00325). Their
+  // confirm lands on the pair, so either partner's button keeps the team.
+  async function handleConfirmFor(entryId: string, playerId: string) {
+    setLoading(`confirm-${entryId}`);
+    const res = await confirmEntryForMember(event.id, playerId);
+    setLoading(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast('Place confirmed', 'success');
+  }
+  const confirmButton = (entryId: string, playerId: string | null) => {
+    const state = confirmations ? entryConfirmationState(confirmations, entryId, isDoubles) : null;
+    if (!playerId || !canConfirmFor || (state !== 'waiting' && state !== 'unreached')) return null;
+    return (
+      <Button size="sm" variant="ghost" loading={loading === `confirm-${entryId}`} onClick={() => handleConfirmFor(entryId, playerId)}>
+        Confirm for them
+      </Button>
+    );
+  };
+
   async function handleNoShow(id: string) {
     if (noShowPath === 'void') {
       const entry = entries.find((e) => e.id === id);
@@ -251,6 +347,21 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
   const shownHere = peopleHere.filter((p) => found(p.name, p.partnerName));
   const shownNotCheckedIn = notCheckedIn.filter((e) => found(getName(e, isDoubles)));
   const shownCheckedIn = checkedIn.filter((e) => found(getName(e, isDoubles)));
+  const badge = (entryId: string) => {
+    const state = confirmations ? entryConfirmationState(confirmations, entryId, isDoubles) : null;
+    return state ? CONFIRMATION_BADGE_LABELS[state] : null;
+  };
+  const confirmCounts = confirmations ? confirmationCounts(confirmations, entries.map((e) => e.id), isDoubles) : null;
+  // Free places by the slot rule 00326 uses: a doubles event counts its pairs
+  // and half its unpaired entrants, rounded up.
+  const active = (status: string | null) => status !== 'withdrawn' && status !== 'disqualified';
+  const filled = isDoubles
+    ? pairs.filter((p) => active(p.status)).length + Math.ceil(participants.filter((p) => active(p.status)).length / 2)
+    : participants.filter((p) => active(p.status)).length;
+  const openPlaces = event.max_participants != null ? Math.max(0, event.max_participants - filled) : null;
+  const inEvent = new Set(isDoubles
+    ? pairs.flatMap((p) => [p.player1_id, p.player2_id]).filter((id): id is string => id != null)
+    : participants.map((p) => p.player_id));
 
   return (
     <div className="space-y-6">
@@ -267,6 +378,11 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                 ? `${peopleCounts.peopleHere} / ${peopleCounts.people} players here · ${peopleCounts.teamsIn} / ${peopleCounts.teams} teams checked in`
                 : `${checkedIn.length} / ${entries.length} checked in`}
             </p>
+            {confirmCounts && confirmCounts.asked > 0 && (
+              <p className="text-xs text-[var(--text-muted)] mt-1">
+                Confirmed {confirmCounts.confirmed} of {confirmCounts.asked} · waiting {confirmCounts.waiting} · not reached {confirmCounts.unreached} · released {confirmCounts.released}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             {onAddOnTheSpot && (
@@ -311,6 +427,27 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
         )}
       </div>
 
+      {fill && event.status === 'checkin' && (
+        <FillEmptyPlaces
+          eventId={event.id}
+          unreleased={notCheckedIn.length}
+          openPlaces={openPlaces}
+          waitlist={fill.waitlist}
+          execs={fill.execs.filter((exec) => !inEvent.has(exec.id))}
+          canRelease={fill.canRelease}
+          canAdd={fill.canAdd}
+          warns={fill.warns}
+        />
+      )}
+
+      {lateArrival && event.status === 'checkin' && !event.draw_locked && matches.length === 0 && (
+        <LateArrivals
+          eventId={event.id}
+          isDoubles={isDoubles}
+          entries={entries.filter((e) => e.status === 'withdrawn' && lateArrival.releasedIds.includes(e.id))}
+        />
+      )}
+
       <div className="relative">
         <input
           type="search"
@@ -337,6 +474,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                   person={person}
                   partnerHere={people.some(p => p.pairId === person.pairId && p.slot !== person.slot && p.here)}
                   waiverStates={waiverStates}
+                  badge={badge(person.pairId)}
                   actions={canCheckIn ? (
                     <div className="flex gap-1.5">
                       <Button
@@ -347,6 +485,8 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                       >
                         <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                       </Button>
+                      {confirmButton(person.pairId, person.playerId)}
+                      {person.playerId && subButton(person.pairId, person.name, person.playerId)}
                       {noShowPath && noShowRow.has(`${person.pairId}:${person.slot}`) && (
                         <Button
                           size="sm"
@@ -385,6 +525,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                   person={person}
                   partnerHere
                   waiverStates={waiverStates}
+                  badge={badge(person.pairId)}
                   checked
                   actions={
                     <div className="flex items-center gap-1.5">
@@ -400,6 +541,11 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                           onClick={() => handlePersonUndo(person)}
                         />
                       )}
+                      {person.playerId && person.pairStatus !== 'no_show' && subButton(person.pairId, person.name, person.playerId)}
+                      {canMarkLeft && person.slot === 1 && person.pairStatus === 'checked_in' && (() => {
+                        const pair = pairs.find((p) => p.id === person.pairId);
+                        return pair ? leftButton(pair.id, getName(pair, true)) : null;
+                      })()}
                     </div>
                   }
                 />
@@ -425,6 +571,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                 entry={entry}
                 isDoubles={isDoubles}
                 waiverStates={waiverStates}
+                badge={badge(entry.id)}
                 actions={canCheckIn ? (
                   <div className="flex gap-1.5">
                     <Button
@@ -435,6 +582,8 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                     </Button>
+                    {confirmButton(entry.id, (entry as ParticipantWithPlayer).player_id ?? null)}
+                    {subButton(entry.id, getName(entry, false))}
                     {noShowPath && (
                       <Button
                         size="sm"
@@ -470,6 +619,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                 entry={entry}
                 isDoubles={isDoubles}
                 waiverStates={waiverStates}
+                badge={badge(entry.id)}
                 checked
                 actions={
                   <div className="flex items-center gap-1.5">
@@ -483,6 +633,8 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                     {canUndo && entry.status === 'checked_in' && (
                       <UndoButton label="Undo check-in" loading={loading === `undo-${entry.id}`} onClick={() => handleUndo(entry.id, 'checkin')} />
                     )}
+                    {entry.status === 'checked_in' && subButton(entry.id, getName(entry, false))}
+                    {canMarkLeft && entry.status === 'checked_in' && leftButton(entry.id, getName(entry, false))}
                   </div>
                 }
               />
@@ -505,6 +657,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                 key={entry.id}
                 entry={entry}
                 isDoubles={isDoubles}
+                badge={badge(entry.id)}
                 dimmed
                 actions={canUndo ? (
                   <UndoButton label="Undo no-show" loading={loading === `undo-${entry.id}`} onClick={() => handleUndo(entry.id, 'noshow')} />
@@ -513,6 +666,45 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
             ))}
           </div>
         </div>
+      )}
+
+      {leaving && (
+        <PlayerLeftDialog
+          eventId={event.id}
+          entryId={leaving.entryId}
+          label={leaving.label}
+          initial={leaving.departure ?? null}
+          onClose={() => setLeaving(null)}
+          onSub={sub
+            ? (departure) => {
+              const { entryId, label } = leaving;
+              setLeaving(null);
+              setSubbing({ entryId, initialOut: null, left: { label, departure } });
+            }
+            : undefined}
+        />
+      )}
+
+      {subbing && sub && (
+        <SubstituteForEntry
+          eventId={event.id}
+          entryId={subbing.entryId}
+          initialOut={subbing.initialOut}
+          isDoubles={isDoubles}
+          participants={participants}
+          pairs={pairs}
+          matches={matches}
+          sources={sub}
+          departure={subbing.left?.departure ?? null}
+          onBack={subbing.left
+            ? () => {
+              const left = subbing.left!;
+              setSubbing(null);
+              setLeaving({ entryId: subbing.entryId, label: left.label, departure: left.departure });
+            }
+            : undefined}
+          onClose={() => setSubbing(null)}
+        />
       )}
 
       {didNotCome && (
@@ -568,12 +760,15 @@ function PersonCard({
   checked,
   actions,
   waiverStates,
+  badge = null,
 }: {
   person: PairCheckInPerson;
   partnerHere: boolean;
   checked?: boolean;
   actions?: React.ReactNode;
   waiverStates: Record<string, EventWaiverStatus> | null;
+  /** The team's place, confirmed or not (00325). */
+  badge?: string | null;
 }) {
   const teamState = person.pairStatus === 'checked_in'
     ? 'Team checked in'
@@ -593,6 +788,7 @@ function PersonCard({
         <span className="block text-xs text-[var(--text-muted)]">
           with {person.partnerName}
           {teamState && <> · {teamState}</>}
+          {badge && <> · {badge}</>}
         </span>
         <WaiverState states={waiverStates} playerIds={person.playerId ? [person.playerId] : []} />
       </span>
@@ -608,6 +804,7 @@ function EntryCard({
   dimmed,
   actions,
   waiverStates,
+  badge = null,
 }: {
   entry: ParticipantWithPlayer | PairWithPlayers;
   isDoubles: boolean;
@@ -615,6 +812,8 @@ function EntryCard({
   dimmed?: boolean;
   actions?: React.ReactNode;
   waiverStates?: Record<string, EventWaiverStatus> | null;
+  /** The entry's place, confirmed or not (00325). */
+  badge?: string | null;
 }) {
   const name = getName(entry, isDoubles);
 
@@ -636,6 +835,7 @@ function EntryCard({
         {!isDoubles && <AvatarChip name={name} src={(entry as ParticipantWithPlayer).player?.avatar_url} size="sm" id={(entry as ParticipantWithPlayer).player?.id} />}
         <span className="min-w-0">
           <span className="block text-sm font-medium text-[var(--text-primary)]">{name}</span>
+          {badge && <span className="block text-xs text-[var(--text-muted)]">{badge}</span>}
           {/* Under the name, the way /legal puts the signature line under a
               member's. On a pair this names the half that is holding it up. */}
           <WaiverState states={waiverStates ?? null} playerIds={entryPlayerIds(entry, isDoubles)} />

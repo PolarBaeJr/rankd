@@ -29,6 +29,7 @@ import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings, type TournamentBonusSettings } from '../platform-settings';
 import { closesWithFinalEvent } from '../tournament-close';
 import { releaseFlagOn } from '../release-flags';
+import { postEventResults } from '../event-results-post';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -1616,6 +1617,14 @@ export async function finalizeEvent(eventId: string) {
       { event_id: eventId, tournament_id: event.tournament_id },
       'tournament_event_completed'
     );
+  }
+
+  // The top 4, announced (results_post, 00333). Held like every step above:
+  // the event is finished whatever happens to the post.
+  try {
+    await postEventResults(adminClient, eventId, admin.id);
+  } catch (err) {
+    deferred.push({ label: 'the results post did not go out', err });
   }
 
   revalidateEventPaths(event.tournament_id, eventId);

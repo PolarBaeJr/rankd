@@ -12,6 +12,7 @@ import {
   requireActiveSeasonId,
   resolveEventWaiverText,
   ExpectedError,
+  isUuid,
   isDoublesEvent,
   classifyEventForCompletion,
   selectAllInChunks,
@@ -37,6 +38,7 @@ import type {
 // By SUBPATH — node:crypto, server only.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requireCapability } from './_shared';
+import { releaseFlagOn } from '../release-flags';
 import { runAction, type ActionResult } from '../action-result';
 import { finalizeEvent } from '../tournament-actions/finalize';
 import {
@@ -498,7 +500,40 @@ type TournamentUpdate = TournamentWindowFields & TournamentDetailFields & {
    * them all. Omitted means unchanged.
    */
   placement_bonus_amounts?: Record<string, unknown> | null;
+  /**
+   * The exec who makes the calls on the day (00324). null clears it; omitted
+   * leaves it alone. Refused while the day_lead switch is off.
+   */
+  day_lead_player_id?: string | null;
 };
+
+const DAY_LEAD_MIGRATION_MISSING = 'Run migration 00324 first';
+
+/**
+ * The day lead to write, or {} when the form did not send one. An exec only:
+ * the event standard names an officer to make the calls, and anyone else
+ * holding the title would be making them without the standing to.
+ */
+async function dayLeadColumn(
+  adminClient: ReturnType<typeof createAdminClient>,
+  value: string | null | undefined,
+  old: Record<string, unknown> | null,
+): Promise<{ day_lead_player_id?: string | null }> {
+  if (value === undefined) return {};
+  if (!(await releaseFlagOn('day_lead'))) {
+    throw new ExpectedError('The day lead is switched off for now.');
+  }
+  if (old && !('day_lead_player_id' in old)) {
+    if (value !== null) throw new ExpectedError(DAY_LEAD_MIGRATION_MISSING);
+    return {};
+  }
+  if (value === null) return { day_lead_player_id: null };
+  if (!isUuid(value)) throw new ExpectedError('Choose an exec as the day lead.');
+  const { data: lead, error } = await adminClient.from('players').select('id, is_exec').eq('id', value).maybeSingle();
+  if (error) throw new Error(`Could not read the day lead: ${error.message}`);
+  if (!lead?.is_exec) throw new ExpectedError('The day lead must be an exec.');
+  return { day_lead_player_id: value };
+}
 
 // Public entry point: the refusals below come back as a value, for the reason
 // updateTournamentStatus gives above.
@@ -599,6 +634,7 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
   );
 
   const details = detailColumns(data, old as Record<string, unknown> | null);
+  const dayLead = await dayLeadColumn(adminClient, data.day_lead_player_id, old as Record<string, unknown> | null);
 
   const { error } = await adminClient.from('tournaments').update({
     name: data.name,
@@ -618,9 +654,11 @@ async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate
     ...(bonusAmounts ? { placement_bonus_amounts: bonusAmounts.value } : {}),
     ...windows,
     ...details,
+    ...dayLead,
   }).eq('id', tournamentId);
 
   if (error) {
+    if (isColumnMissing(error) && 'day_lead_player_id' in dayLead) throw new ExpectedError(DAY_LEAD_MIGRATION_MISSING);
     if (bonusAmounts && ['42703', 'PGRST204'].includes(error.code ?? '')) {
       throw new ExpectedError('Run migration 00275 first');
     }

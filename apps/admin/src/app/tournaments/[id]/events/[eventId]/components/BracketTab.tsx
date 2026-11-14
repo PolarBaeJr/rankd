@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   getRoundName, eventIsPlaying, computeDrawLayout, fitScale, splitPairLabel, courtLabel,
-  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL, groupDrawRounds, focusRoundIndex, ALL_OPEN_MAX_ROUNDS,
+  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL, groupDrawRounds, focusRoundIndex, ALL_OPEN_MAX_ROUNDS, matchResultLabel,
 } from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
-import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { ScoreEntryDialog, type DecidedOptions } from './ScoreEntryDialog';
 import { RoundLadder } from './RoundLadder';
 import { Trophy, ChevronDown } from 'lucide-react';
 import { getName } from './entry-name';
@@ -103,6 +103,8 @@ const ZOOM_USABLE_FLOOR = 0.5;
 const VIEWPORT_H_SHARE = 0.88;
 
 interface Props {
+  /** Decided off court and Retired in the score dialog (00329). */
+  decided?: DecidedOptions;
   event: TournamentEventRow;
   matches: TournamentMatchRow[];
   participants: ParticipantWithPlayer[];
@@ -160,7 +162,7 @@ function ZoomBar({
   );
 }
 
-export function BracketTab({ event, matches, participants, pairs, isDoubles, phase = null }: Props) {
+export function BracketTab({ event, matches, participants, pairs, isDoubles, phase = null, decided }: Props) {
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewportW, setViewportW] = useState(0);
@@ -515,6 +517,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
           isDoubles={isDoubles}
           entries={placeableEntries}
           onClose={() => setScoreMatch(null)}
+          decided={decided}
         />
       )}
     </>
@@ -630,7 +633,10 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
   //
   // SPACE-SEPARATED PAIRS rather than the player card's ", ": 17 mono characters
   // instead of 19, on a strip that also has to carry a status word.
-  const scoreLine = scores?.length ? scores.map((g) => `${g.a}–${g.b}`).join(' ') : null;
+  // Decided off court or by retirement (00329) reads as what it was.
+  const scoreLine = m.result_kind
+    ? matchResultLabel(m)
+    : scores?.length ? scores.map((g) => `${g.a}–${g.b}`).join(' ') : null;
 
   // THE SCORE IS IN HERE BECAUSE THE STRIP CANNOT ALWAYS SHOW IT. The note on
   // the scoreline below has always said the full thing was "spelled out in the

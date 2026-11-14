@@ -22,10 +22,15 @@ import {
   courtLabelOrTbc,
   SKIP_SLOT_LABEL,
   membershipUnpaidMessage,
-  eventRecordFor,
   eventRatingLine,
+  parseLineup,
+  type MatchLineup,
+  viewerEventRecord,
+  viewerSideOf,
   registrationWindowNotice,
   checkinWindowNotice,
+  formatClubEventTime,
+  matchResultLabel,
 } from '@badminton/shared';
 import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
 import { getMyWaitlistState, type MyWaitlistState } from '@/lib/event-waitlist';
@@ -48,6 +53,10 @@ import { loadMyMembershipScreen } from '@/lib/membership-screen';
 import { getFeatureFlags } from '@/lib/feature-gate';
 import { refuseClosedTournament } from '@/lib/tournament-closed';
 import { YourEventSoFar } from './YourEventSoFar';
+import { getReleaseFlags } from '@/lib/release-flags';
+import { loadMyPendingConfirmations } from '@/lib/event-confirmations';
+import { loadMySubstitutions } from '@/lib/event-substitutions';
+import { loadEventLineups, loadLineupNames } from '@/lib/match-lineups';
 
 /**
  * The match's own state, said to a member rather than to a database.
@@ -214,6 +223,17 @@ export default async function EventDetailPage({
   );
 
   const allMatches = matches as Array<Record<string, unknown>>;
+
+  // Decided off court or by retirement (00329), read on its own so a database
+  // without the columns still renders every match as played rather than 500ing.
+  const decidedRes = await supabase
+    .from('tournament_matches')
+    .select('id, scores, result_kind, retired_side')
+    .eq('event_id', eventId)
+    .not('result_kind', 'is', null);
+  const decidedLabels: Record<string, string> = Object.fromEntries(
+    (decidedRes.error ? [] : decidedRes.data ?? []).map((m) => [m.id, matchResultLabel(m)]),
+  );
 
   const { player: currentPlayer } = await getViewer();
   // `paired` is the discriminator; `partnerName` is display only and may be
@@ -529,19 +549,48 @@ export default async function EventDetailPage({
     : [];
   const drawThirdPlace = thirdPlaceMatch ? toDrawMatch(thirdPlaceMatch) : null;
 
+  // THE VIEWER'S OWN MATCHES, BY WHO PLAYED THEM (00327). A substitution
+  // keeps the entry and changes its people, and writes who played each match
+  // already decided into its lineup. So a match is the viewer's when its
+  // lineup names them (a member subbed out keeps what they played), is NOT
+  // theirs when it has a lineup for their entry's side that does not name them
+  // (a member subbed in is not credited with it), and otherwise is theirs when
+  // their entry is on it.
+  const lineups = currentPlayer ? await loadEventLineups(supabase, eventId) : new Map<string, MatchLineup>();
+  const viewer = currentPlayer ? { playerId: currentPlayer.id as string, entryId: playerEntryId } : null;
+  const mySideOf = (m: Record<string, unknown>): 'a' | 'b' | null => (viewer
+    ? viewerSideOf({ ...toDrawMatch(m), lineup: lineups.get(m.id as string) ?? null }, viewer)
+    : null);
+  const myMatches = allMatches.filter((m) => mySideOf(m) != null);
+  // The other side by who played it too: an opponent subbed out since is not
+  // the name now on their entry.
+  const lineupNames = await loadLineupNames(supabase, [...new Set(myMatches.flatMap((m) => {
+    const lineup = lineups.get(m.id as string);
+    return (mySideOf(m) === 'a' ? lineup?.b : lineup?.a) ?? [];
+  }))]);
+  const opponentNameOf = (m: Record<string, unknown>, mySide: 'a' | 'b'): string => {
+    const named = parseLineup(lineups.get(m.id as string))?.[mySide === 'a' ? 'b' : 'a'];
+    if (named && named.length > 0) return named.map((id) => lineupNames.get(id) ?? 'a former entrant').join(' / ');
+    return getEntryName(m, mySide === 'a' ? 'b' : 'a');
+  };
+
   // THE VIEWER'S OWN RECORD, over EVERY match in the event (pool, knockout and
   // the third-place playoff), since each of those is a match they played. phase
   // rides along so the last match is the knockout one on a pool_to_bracket
   // event, where round_number restarts.
-  const myRecord = playerEntryId
-    ? eventRecordFor(
-        allMatches.map((m) => ({ ...toDrawMatch(m), phase: (m.phase as string | null) ?? null })),
-        playerEntryId,
+  const myRecord = viewer && myMatches.length > 0
+    ? viewerEventRecord(
+        allMatches.map((m) => ({
+          ...toDrawMatch(m),
+          phase: (m.phase as string | null) ?? null,
+          lineup: lineups.get(m.id as string) ?? null,
+        })),
+        viewer,
       )
     : null;
-  const myLastOpponent = myRecord?.last?.opponentId
-    ? participantNameMap[myRecord.last.opponentId] || 'TBD'
-    : 'TBD';
+  const lastMatchRow = myRecord?.last ? allMatches.find((m) => m.id === myRecord.last!.matchId) : undefined;
+  const lastMatchSide = lastMatchRow ? mySideOf(lastMatchRow) : null;
+  const myLastOpponent = lastMatchRow && lastMatchSide ? opponentNameOf(lastMatchRow, lastMatchSide) || 'TBD' : 'TBD';
 
   // THE VIEWER'S OWN RATING LINE, singles only (a pair has no rating row), read
   // on its own rather than by widening either participant read above. Adding
@@ -561,6 +610,16 @@ export default async function EventDetailPage({
     const mine = ratingRes.data;
     if (mine) myRating = eventRatingLine(mine.elo_before, mine.elo_after, mine.elo_change);
   }
+
+  const releaseFlags = await getReleaseFlags();
+  // Asked to confirm their place (00325), and not yet: the link and the deadline.
+  const pendingConfirmation = releaseFlags.entry_confirmation && currentPlayer && playerRegistration
+    ? (await loadMyPendingConfirmations(currentPlayer.id, eventId))[0] ?? null
+    : null;
+  // Subbed in or out (00327). Read with the switch off too: a sub made while
+  // it was on is still what happened.
+  const mySubs = currentPlayer ? await loadMySubstitutions(currentPlayer.id, eventId) : null;
+  const subbedOut = !playerEntryId && (mySubs?.outFor.length ?? 0) > 0;
 
   return (
     <div className="space-y-5 pb-28 px-4 sm:px-0">
@@ -642,6 +701,12 @@ export default async function EventDetailPage({
               </p>
             )}
 
+            {subbedOut && (
+              <p className="text-sm text-[var(--text-secondary)] mb-4" role="status">
+                You were subbed out: {mySubs!.outFor.join(' and ')} took your place. The matches you played stay on your record.
+              </p>
+            )}
+
             <EventActions
               eventId={eventId}
               eventStatus={eventStatus}
@@ -654,6 +719,13 @@ export default async function EventDetailPage({
               checkinNotice={checkinNotice}
               waitlist={waitlist}
               clubEvent={clubEvent}
+              policyOn={releaseFlags.attendance_policy_ack}
+              confirmation={pendingConfirmation
+                ? {
+                  href: `/tournaments/${tournamentId}/events/${eventId}/confirm`,
+                  by: pendingConfirmation.deadlineAt ? formatClubEventTime(pendingConfirmation.deadlineAt) : '',
+                }
+                : null}
             />
           </div>
         </div>
@@ -673,7 +745,7 @@ export default async function EventDetailPage({
           It also owns the YOU'RE READY control, which is the only thing on the
           page a member ACTS on rather than reads, and an action buried under a
           wall chart is an action the desk does not hear about. */}
-      {playerEntryId && allMatches.length > 0 && (
+      {(playerEntryId || myMatches.length > 0) && allMatches.length > 0 && (
         <FadeIn delay={0.05}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="p-4 pb-0 mb-3">
@@ -691,6 +763,11 @@ export default async function EventDetailPage({
                 You are no longer in this event. Any unplayed match here is forfeited to your opponent.
               </p>
             )}
+            {(mySubs?.inFor.length ?? 0) > 0 && (
+              <p className="px-4 pb-2 text-xs text-[var(--text-secondary)]" role="status">
+                Subbed in for {mySubs!.inFor.join(' and ')}. A match played before you came in stays with whoever played it.
+              </p>
+            )}
             <div className="px-4 pb-4 space-y-2">
               {myRecord && myRecord.played > 0 && (
                 <YourEventSoFar
@@ -700,20 +777,14 @@ export default async function EventDetailPage({
                   rating={myRating}
                 />
               )}
-              {allMatches
-                .filter((m) => {
-                  const aId = doubles ? m.pair_a_id : m.participant_a_id;
-                  const bId = doubles ? m.pair_b_id : m.participant_b_id;
-                  return aId === playerEntryId || bId === playerEntryId;
-                })
+              {myMatches
                 .map((m) => {
                   const matchStatus  = m.status as TournamentMatchStatus;
                   const scores       = m.scores as Array<{ a: number; b: number }> | null;
-                  const scoreStr     = formatScores(scores);
-                  const playerSide   = (doubles ? m.pair_a_id : m.participant_a_id) === playerEntryId ? 'a' : 'b';
-                  const opponentSide = playerSide === 'a' ? 'b' : 'a';
-                  const won          = isWinner(m, playerSide as 'a' | 'b');
-                  const opponentName = getEntryName(m, opponentSide as 'a' | 'b');
+                  const scoreStr     = decidedLabels[m.id as string] ?? formatScores(scores);
+                  const playerSide   = mySideOf(m)!;
+                  const won          = isWinner(m, playerSide);
+                  const opponentName = opponentNameOf(m, playerSide);
                   const done         = matchStatus === 'completed' || matchStatus === 'walkover';
 
                   // WHERE TO GO. `court` is free text an exec typed, so it is
@@ -889,6 +960,7 @@ export default async function EventDetailPage({
               matches={stagedMatches}
               nameOf={participantNameMap}
               seedOf={participantSeedMap}
+              decidedLabels={decidedLabels}
               title={TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
               subtitle={tournament.name}
             />
@@ -914,7 +986,7 @@ export default async function EventDetailPage({
                   <div className="space-y-2">
                     {roundMatches.map((m) => {
                       const scores      = m.scores as Array<{ a: number; b: number }> | null;
-                      const scoreStr    = formatScores(scores);
+                      const scoreStr    = decidedLabels[m.id as string] ?? formatScores(scores);
                       const matchStatus = m.status as TournamentMatchStatus;
                       const winA        = isWinner(m, 'a');
                       const winB        = isWinner(m, 'b');
