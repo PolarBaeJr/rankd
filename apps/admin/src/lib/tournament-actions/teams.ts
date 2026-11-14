@@ -20,6 +20,8 @@ import { assertReleaseFlag, releaseFlagOn } from '../release-flags';
 import { loadRestrictedPlayerIds } from '../entry-restriction';
 import { loadAvoidPartnerCheck } from '../teams/avoid-partners';
 import { candidatesOf, loadTeamsBoard, type TeamsBoard } from '../teams/load-teams-board';
+import { loadTeamsNotes, type TeamsScreen } from '../teams/teams-notes';
+import { accessLevelFor, permissionsOf, permits, type Capability } from '../permissions';
 import { EDIT_AFTER_DRAW_REFUSAL, refreshTeamSocialPosts, relinkConfirmations, sendTeamNotices, type TeamNotice } from '../teams/publish';
 import { addPairCore, EXTERNAL_EVENT_REFUSAL, playersAlreadyPaired } from './entry-core';
 import { assertTournamentNotSuspended } from './_internal';
@@ -72,12 +74,25 @@ function pairRule(eventType: string) {
     : undefined;
 }
 
-/** The board for the console, or null while the switch is off (the panel then hides). */
-export async function getTeamsBoard(eventId: string): Promise<ActionResult<TeamsBoard | null>> {
+/**
+ * The board for the console, or null while the switch is off (the panel then
+ * hides). The partner notes carry the members' Form answers, so they come only
+ * to a viewer who may read the club event's sign-ups, as on the event page.
+ */
+export async function getTeamsBoard(eventId: string): Promise<ActionResult<TeamsScreen | null>> {
   return runAction(async () => {
-    await requireCapability('tournaments.draw.pairs.add.write');
+    const viewer = await requireCapability('tournaments.draw.pairs.add.write');
     if (!(await releaseFlagOn('generate_teams'))) return null;
-    return loadTeamsBoard(createAdminClient(), parseOrThrow(uuid, eventId));
+    const id = parseOrThrow(uuid, eventId);
+    const adminClient = createAdminClient();
+    const board = await loadTeamsBoard(adminClient, id);
+    if (!board) return null;
+    const level = accessLevelFor(viewer);
+    const may = (capability: Capability) => permits(level, permissionsOf(level, viewer), capability);
+    const notes = may('events.signups.read')
+      ? await loadTeamsNotes(adminClient, id, may('events.signups.checkin.write'))
+      : ({ state: 'hidden' } as const);
+    return { ...board, notes };
   });
 }
 

@@ -4,6 +4,8 @@ import { notifyPlayers } from '../notify';
 import { eventUrl } from '../event-confirmations';
 import { queueTeamSocialPosts } from '../social-posts/queue';
 
+export { relinkConfirmations } from './relink';
+
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 // WHAT FOLLOWS A TEAM CHANGE (generate_teams, 00334), after the pairing itself
@@ -29,14 +31,6 @@ export function teamNoticeText(kind: TeamNoticeKind, eventName: string, partnerN
   if (kind === 'paired') return { title: 'Your team', body: `You are paired with ${partnerName} for ${eventName}.` };
   if (kind === 'partner_changed') return { title: 'Your team changed', body: `Your partner for ${eventName} is now ${partnerName}.` };
   return { title: 'Your team changed', body: `You are no longer in a team for ${eventName}. The organizers will pair you again.` };
-}
-
-/** Repoint the members' confirmation rows to their current entries (00334). */
-export async function relinkConfirmations(adminClient: AdminClient, eventId: string, playerIds: readonly string[]): Promise<void> {
-  const ids = [...new Set(playerIds.filter(Boolean))];
-  if (ids.length === 0) return;
-  const { error } = await adminClient.rpc('relink_event_confirmations', { p_event_id: eventId, p_player_ids: ids });
-  if (error) Sentry.captureException(error, { tags: { action: 'relinkConfirmations' } });
 }
 
 /** One in-app notice and push per member; guests are skipped by the notifications trigger. */

@@ -65,6 +65,12 @@ vi.mock('../tournament-actions/participants', () => ({
   unpairEntry: vi.fn(async (pairId: string) => { splits.push(pairId); return { ok: true, data: { returned: 2, withdrawnName: null } }; }),
 }));
 
+let readsSignups = false;
+vi.mock('../permissions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../permissions')>()),
+  permits: vi.fn(() => readsSignups),
+}));
+
 const { confirmTeams, addTeamByHand, editTeam, splitTeam, getTeamsBoard } = await import('../tournament-actions/teams');
 
 const EVENT = 'bbbbbbbb-0000-4000-8000-000000000001';
@@ -92,6 +98,7 @@ function seed(extra: Record<string, unknown[]> = {}) {
 
 beforeEach(() => {
   flagOn = true;
+  readsSignups = false;
   full = false;
   notices.length = 0;
   audits.length = 0;
@@ -140,6 +147,16 @@ describe('confirmTeams', () => {
     expect(twice.ok).toBe(false);
   });
 
+  it('re-checks a mutual pair on Confirm: one of them left the pool, so it is refused and named', async () => {
+    // The preview locked Member 1 and Member 2 as a mutual request; Member 2
+    // was paired elsewhere before the desk pressed Confirm.
+    seed({ tournament_participants: [solo(1), solo(3), solo(4)], tournament_pairs: [{ id: 'pair-y', event_id: EVENT, player1_id: P(2), player2_id: P(5), status: 'registered' }] });
+    const result = await confirmTeams(EVENT, { pairs: [[P(1), P(2)], [P(3), P(4)]], mode: 'balanced' });
+    expect(result).toMatchObject({ ok: true, data: { pairsMade: 1, refused: 1 } });
+    if (result.ok) expect(result.data.reasons[0]).toBe('Member 1 Placeholder and This player were not paired: one of them is no longer waiting for a partner.');
+    expect(paired).toEqual([[P(3), P(4)]]);
+  });
+
   it('writes nothing when nothing pairs', async () => {
     const result = await confirmTeams(EVENT, { pairs: [[P(5), P(1)]], mode: 'balanced' });
     expect(result).toMatchObject({ ok: true, data: { pairsMade: 0, refused: 1 } });
@@ -160,6 +177,17 @@ describe('confirmTeams', () => {
   it('refuses a bad mode or a malformed id', async () => {
     expect((await confirmTeams(EVENT, { pairs: [[P(1), P(4)]], mode: 'cosmic' })).ok).toBe(false);
     expect((await confirmTeams('nope', { pairs: [[P(1), P(4)]], mode: 'balanced' })).ok).toBe(false);
+  });
+});
+
+describe('getTeamsBoard', () => {
+  it('carries the partner notes only for a viewer who may read the sign-ups', async () => {
+    const hidden = await getTeamsBoard(EVENT);
+    expect(hidden.ok && hidden.data?.notes).toEqual({ state: 'hidden' });
+    readsSignups = true;
+    const unlinked = await getTeamsBoard(EVENT);
+    expect(unlinked.ok && unlinked.data?.notes).toEqual({ state: 'unlinked' });
+    expect(unlinked.ok && unlinked.data?.pool).toHaveLength(4);
   });
 });
 

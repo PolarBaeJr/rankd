@@ -18,6 +18,8 @@ export interface TableFake {
   writes: Write[];
   rpcs: { name: string; args: Record<string, unknown> }[];
   rpcResult: (name: string, args: Record<string, unknown>) => unknown;
+  /** An error for this call, returned in place of the result. */
+  rpcError: (name: string, args: Record<string, unknown>) => { code?: string; message: string } | null;
   failRead: Set<string>;
   client: unknown;
 }
@@ -31,6 +33,7 @@ export function tableFake(seed: Record<string, Row[]> = {}): TableFake {
     writes: [],
     rpcs: [],
     rpcResult: () => ({ ok: true }),
+    rpcError: () => null,
     failRead: new Set(),
     client: null,
   };
@@ -127,6 +130,8 @@ export function tableFake(seed: Record<string, Row[]> = {}): TableFake {
     from: (table: string) => query(table),
     rpc: async (name: string, args: Record<string, unknown>) => {
       fake.rpcs.push({ name, args });
+      const error = fake.rpcError(name, args);
+      if (error) return { data: null, error };
       return { data: fake.rpcResult(name, args), error: null };
     },
   };

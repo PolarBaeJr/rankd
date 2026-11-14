@@ -18,11 +18,17 @@ import {
 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { candidatesOf, type TeamsBoard } from '@/lib/teams/load-teams-board';
+import type { TeamsNote, TeamsNoteKind, TeamsScreen } from '@/lib/teams/teams-notes';
 import { addTeamByHand, confirmTeams, editTeam, getTeamsBoard, splitTeam } from '@/lib/tournament-actions/teams';
+import { setClubEventPartnerChoice } from '@/lib/actions/club-event-partners';
 
 // GENERATE TEAMS (generate_teams, 00334), one panel on the doubles Participants
 // tab. The plan is made here in the browser and nothing is written until
 // Confirm; the server re-checks every pair. Hidden while the switch is off.
+//
+// For an event a club event runs, the sign-ups' partner notes come first:
+// mutual requests are planned first and start locked, and an ambiguous note is
+// settled with the desk's pick (00311), which the notes then re-read.
 
 const MODE_OPTIONS = [
   { value: 'balanced', label: 'Balanced teams' },
@@ -32,6 +38,16 @@ const MODE_OPTIONS = [
 
 const SECTION = 'text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-secondary)]';
 
+const NOTE_GROUPS: Array<{ kind: TeamsNoteKind; label: string }> = [
+  { kind: 'ambiguous', label: 'Ambiguous: pick one' },
+  { kind: 'resolved', label: 'Resolved' },
+  { kind: 'one_sided', label: 'One-sided' },
+  { kind: 'not_entered', label: 'Named somebody not entered' },
+  { kind: 'no_match', label: 'No match' },
+];
+
+const NO_MUTUAL: Array<[string, string]> = [];
+
 function randomRng(): () => number {
   return Math.random;
 }
@@ -39,7 +55,8 @@ function randomRng(): () => number {
 export function TeamsBuilder({ eventId, players }: { eventId: string; players: Array<{ id: string; full_name: string }> }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [board, setBoard] = useState<TeamsBoard | null>(null);
+  const [board, setBoard] = useState<TeamsScreen | null>(null);
+  const [picks, setPicks] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<TeamMode>('balanced');
   const [preview, setPreview] = useState<TeamPreview | null>(null);
   const [previewPool, setPreviewPool] = useState<TeamCandidate[]>([]);
@@ -76,13 +93,15 @@ export function TeamsBuilder({ eventId, players }: { eventId: string; players: A
       ? (a: TeamCandidate, b: TeamCandidate) => canPairForEvent(eventType, a.category ?? null, b.category ?? null)
       : undefined;
   const open = board.event.status === 'registration' || board.event.status === 'checkin';
+  const notes = board.notes;
+  const mutual = notes.state === 'ready' ? notes.mutual : NO_MUTUAL;
 
   function generate(onlyOrphans: boolean) {
     const orphanSet = new Set(board!.orphanIds);
     const pool = candidatesOf(board!.pool).filter((candidate) => !onlyOrphans || orphanSet.has(candidate.playerId));
     setPreviewPool(pool);
     setPicked(null);
-    setPreview(previewFromPlan(planTeams({ candidates: pool, mode, eligible, rng: randomRng() })));
+    setPreview(previewFromPlan(planTeams({ candidates: pool, mode, mutual, eligible, rng: randomRng() }), { locked: mutual }));
   }
 
   function pick(id: string) {
@@ -117,6 +136,22 @@ export function TeamsBuilder({ eventId, players }: { eventId: string; players: A
     );
   }
 
+  async function handlePick(note: TeamsNote) {
+    if (notes.state !== 'ready') return;
+    const choice = note.candidates.find((candidate) => `${candidate.kind}:${candidate.id}` === picks[note.playerId]);
+    if (!choice) return;
+    await run(
+      () => setClubEventPartnerChoice(notes.clubEventId, { kind: 'member', id: note.playerId }, { kind: choice.kind, id: choice.id }),
+      (data) =>
+        toast(
+          data.paired
+            ? `${note.name} and ${choice.name} are now a team. Picking a partner pairs them at once, as on the event page.`
+            : `${note.name}'s partner is ${choice.name}.`,
+          'success',
+        ),
+    );
+  }
+
   async function handleAdd() {
     if (!handFirst) return;
     await run(
@@ -148,6 +183,64 @@ export function TeamsBuilder({ eventId, players }: { eventId: string; players: A
           (P) marks a provisional rating, planned at the pool&apos;s median.
         </p>
       </div>
+
+      {notes.state === 'unreadable' && (
+        <p className="text-xs text-[var(--color-warning)]">The sign-up partner notes could not be read, so mutual requests are not planned first. Reload to try again.</p>
+      )}
+
+      {notes.state === 'ready' && notes.notes.length > 0 && (
+        <div className="space-y-3">
+          <div className={SECTION}>Partner notes</div>
+          {NOTE_GROUPS.map(({ kind, label: groupLabel }) => {
+            const group = notes.notes.filter((note) => note.kind === kind);
+            if (group.length === 0) return null;
+            return (
+              <div key={kind} className="space-y-1">
+                <div className="text-xs font-medium text-[var(--text-primary)]">{groupLabel} ({group.length})</div>
+                <ul className="space-y-1">
+                  {group.map((note) => (
+                    <li key={note.playerId} className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-[var(--text-primary)]">{note.name}</span>
+                      <span className="text-xs text-[var(--text-muted)]">
+                        {note.source === 'desk' ? 'desk pick' : note.wrote ? `wrote "${note.wrote}"` : ''}: {note.detail}
+                      </span>
+                      {kind === 'ambiguous' && open && notes.canPick && (
+                        <>
+                          <div className="w-48">
+                            <Select
+                              aria-label={`Partner for ${note.name}`}
+                              placeholder="Pick one"
+                              options={note.candidates.map((candidate) => ({ value: `${candidate.kind}:${candidate.id}`, label: candidate.name }))}
+                              value={picks[note.playerId] ?? ''}
+                              onValueChange={(value) => setPicks({ ...picks, [note.playerId]: value })}
+                            />
+                          </div>
+                          <Button size="sm" variant="secondary" disabled={!picks[note.playerId] || busy} onClick={() => handlePick(note)}>
+                            Save pick
+                          </Button>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {mutual.length > 0 && (
+        <div className="space-y-1">
+          <div className={SECTION}>Mutual pairs: planned first, locked in the preview</div>
+          <ul className="text-sm text-[var(--text-primary)]">
+            {mutual.map(([first, second]) => (
+              <li key={`${first}-${second}`}>
+                {label(first)} &amp; {label(second)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {open && (
         <div className="flex flex-wrap items-end gap-2">

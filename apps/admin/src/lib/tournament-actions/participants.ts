@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { relinkConfirmations } from '../teams/relink';
 // The withdrawal/DQ reason is exec-only free text and no longer lives on the
 // entry row — 00118. See lib/private-notes.ts.
 import { PAIR_NOTES, PARTICIPANT_NOTES, writePrivateNote } from '../private-notes';
@@ -1020,6 +1021,9 @@ async function splitPairImpl(
     throw new Error(error.message);
   }
 
+  // The pair's confirmation rows go back to the members' solo entries.
+  await relinkConfirmations(adminClient, event.id, [pair.player1_id, pair.player2_id]);
+
   const nameOfHalf = (id: string) =>
     pickName(id === pair.player1_id ? pair.player1 : pair.player2) ?? 'This player';
 
@@ -1194,6 +1198,10 @@ async function swapPairMemberImpl(
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  // The incoming member's row moves to the pair, the outgoing one's back to
+  // their solo entry.
+  await relinkConfirmations(adminClient, event.id, [outgoingPlayerId, incomingPlayerId, partnerId]);
 
   // NOTHING IS INVOICED AND NOTHING IS REFUNDED. Both members already have their
   // one club_fees row for this tournament — the incoming one because they had to

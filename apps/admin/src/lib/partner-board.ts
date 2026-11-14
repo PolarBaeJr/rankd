@@ -4,11 +4,12 @@
 //
 // A failed PostgREST read arrives as an empty list, which here would say
 // nobody signed up. So a read that fails is retried with fewer columns (the
-// desk's choice is 00311's, the note 00299's), and only the last failure of the
-// members' read throws.
+// desk's choice is 00311's, the note 00299's, the display name and handle are
+// only for matching), and only the last failure of the members' read throws.
 
 import { isDoublesEvent, isOutOfEvent } from '@badminton/shared';
 import { checkPartners, type PartnerCheckResult, type PartnerPerson } from './partner-check';
+import { releaseFlagOn } from './release-flags';
 import type { createAdminClient } from './supabase-server';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -28,7 +29,8 @@ export interface PartnerBoard {
 }
 
 const CHOICE = 'preferred_partner_player_id, preferred_partner_external_id, preferred_partner_set_at';
-const MEMBER_NAME = 'players!club_event_signups_player_id_fkey(full_name)';
+const MEMBER_NAME = 'players!club_event_signups_player_id_fkey(full_name, display_name, handle)';
+const MEMBER_FULL_NAME = 'players!club_event_signups_player_id_fkey(full_name)';
 
 type ChoiceColumns = {
   preferred_partner?: string | null;
@@ -37,9 +39,11 @@ type ChoiceColumns = {
   preferred_partner_set_at?: string | null;
 };
 
+type MemberName = { full_name: string | null; display_name?: string | null; handle?: string | null };
+
 type MemberRow = ChoiceColumns & {
   player_id: string;
-  players: { full_name: string | null } | { full_name: string | null }[] | null;
+  players: MemberName | MemberName[] | null;
 };
 
 type GuestRow = ChoiceColumns & { id: string; full_name: string };
@@ -77,6 +81,7 @@ export async function loadPartnerBoard(adminClient: AdminClient, clubEventId: st
         `player_id, preferred_partner, ${CHOICE}, ${MEMBER_NAME}`,
         `player_id, preferred_partner, ${MEMBER_NAME}`,
         `player_id, ${MEMBER_NAME}`,
+        `player_id, ${MEMBER_FULL_NAME}`,
       ],
     ),
     readWithFallback<GuestRow>(
@@ -98,10 +103,12 @@ export async function loadPartnerBoard(adminClient: AdminClient, clubEventId: st
   const people: PartnerPerson[] = [
     ...members.rows.map((row) => {
       const player = Array.isArray(row.players) ? row.players[0] : row.players;
+      const aliases = [player?.display_name, player?.handle].filter((alias): alias is string => !!alias);
       return {
         key: `member:${row.player_id}`,
         playerId: row.player_id,
-        name: player?.full_name ?? 'A member',
+        name: player?.full_name ?? player?.display_name ?? 'A member',
+        aliases,
         wrote: row.preferred_partner ?? null,
         desk: deskOf(row),
       };
@@ -148,6 +155,11 @@ export async function loadPartnerBoard(adminClient: AdminClient, clubEventId: st
     }
   }
 
+  // The near-spelling tiers ride on Generate teams, and every caller of this
+  // board (the sign-up list, the tournament page, the desk's actions) reads the
+  // same switch here, so they always agree on who matched.
+  const fuzzy = await releaseFlagOn('generate_teams');
+
   return {
     people,
     teams,
@@ -156,6 +168,6 @@ export async function loadPartnerBoard(adminClient: AdminClient, clubEventId: st
     linkedTournamentId,
     doubles,
     choiceReady,
-    result: checkPartners({ people, teams, pool }),
+    result: checkPartners({ people, teams, pool, fuzzy }),
   };
 }

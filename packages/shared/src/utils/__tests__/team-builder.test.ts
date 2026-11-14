@@ -100,6 +100,17 @@ describe('the preview', () => {
     expect(swapMembers(locked, 'a', 'c')).toBe(locked);
   });
 
+  it('mutual requests start locked, and a swap or re-roll leaves them be', () => {
+    const mutual: Array<[string, string]> = [['d', 'a']];
+    const preview = previewFromPlan(planTeams({ candidates: pool, mode: 'similar', mutual }), { locked: mutual });
+    expect(preview.teams[0]).toEqual({ a: 'd', b: 'a', locked: true });
+    expect(preview.teams.slice(1).every((team) => !team.locked)).toBe(true);
+    expect(swapMembers(preview, 'a', 'b')).toBe(preview);
+    const rolled = rerollUnlocked(preview, pool, { mode: 'random', rng: seeded(5) });
+    expect(rolled.teams[0]).toEqual({ a: 'd', b: 'a', locked: true });
+    expect(rolled.teams.slice(1).flatMap((team) => [team.a, team.b]).sort()).toEqual(['b', 'c', 'e', 'f']);
+  });
+
   it('a re-roll keeps locked teams exactly', () => {
     const locked = toggleLock(base, 1);
     const rolled = rerollUnlocked(locked, pool.slice(0, 5), { mode: 'random', rng: seeded(11) });

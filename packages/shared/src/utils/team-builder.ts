@@ -149,9 +149,11 @@ export interface TeamPreview {
   leftOver: string[];
 }
 
-export function previewFromPlan(plan: TeamPlan): TeamPreview {
+/** The plan as a preview. A team in `locked` (the mutual requests) starts locked, so a swap or re-roll keeps it. */
+export function previewFromPlan(plan: TeamPlan, options: { locked?: ReadonlyArray<readonly [string, string]> } = {}): TeamPreview {
+  const lockedKeys = new Set((options.locked ?? []).map(([a, b]) => [a, b].sort().join('|')));
   return {
-    teams: plan.pairs.map(([a, b]) => ({ a, b, locked: false })),
+    teams: plan.pairs.map(([a, b]) => ({ a, b, locked: lockedKeys.has([a, b].sort().join('|')) })),
     leftOver: [...(plan.leftOver ? [plan.leftOver] : []), ...plan.unpairable],
   };
 }
