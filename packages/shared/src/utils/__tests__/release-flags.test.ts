@@ -65,6 +65,7 @@ describe('the registry', () => {
       'results_post',
       'social_posts',
       'generate_teams',
+      'form_signup_answers',
     ]);
   });
 

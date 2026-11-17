@@ -254,6 +254,14 @@ export const RELEASE_FLAGS = [
     off: 'Off: the Teams screen is hidden and its actions refuse; pairing is the existing buttons.',
     since: '1.2.0',
   },
+  // Console-only: no database function asks it.
+  {
+    id: 'form_signup_answers',
+    label: 'Resubmission and SFU student answers',
+    description: "The console reads a club event Form's resubmission and SFU student questions onto each sign-up, and flags a resubmission that replaced no earlier response from the same email.",
+    off: 'Off: the reader records neither answer, the sign-up list shows neither, and the mapping editor hides both questions. Saved question titles are kept; after switching back on, save the mapping again to fill in responses read while off.',
+    since: '1.2.0',
+  },
 ] as const satisfies readonly ReleaseFlagDefinition[];
 
 export type ReleaseFlagId = (typeof RELEASE_FLAGS)[number]['id'];

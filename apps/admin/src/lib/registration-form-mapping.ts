@@ -59,6 +59,11 @@ export const formMappingSchema = z
     // Console-only like the receipt: shown on the sign-up, never matched to a
     // member, never in the payload. Empty: no note is read.
     PARTNER_NOTE_QUESTION: title.default(''),
+    // A club event's yes/no questions (00336): the resubmission question and
+    // the SFU student question. Console-only like the partner note: written
+    // onto the sign-up, never in the payload. Empty: the answer is not read.
+    RESUBMIT_QUESTION: title.default(''),
+    SFU_STUDENT_QUESTION: title.default(''),
   })
   .strict();
 
@@ -331,12 +336,38 @@ const straightQuotes = (s: string) => s.replace(/[\u2018\u2019\u02bc]/g, "'").tr
  */
 export function partnerNoteFor(mapping: FormMapping, answers: Record<string, string[]>): string | null | undefined {
   if (!mapping.PARTNER_NOTE_QUESTION) return undefined;
+  const note = answerFor(answers, mapping.PARTNER_NOTE_QUESTION).replace(/\s+/g, ' ').slice(0, PARTNER_NOTE_MAX).trim();
+  return note === '' ? null : note;
+}
+
+/** The answer to a question named in the console, '' when the response has none. */
+function answerFor(answers: Record<string, string[]>, question: string): string {
   // The title is typed (or defaulted) in the console, and Google Forms often
   // turns a typed ' into a curly one, so the apostrophe style is not compared.
-  const wanted = straightQuotes(mapping.PARTNER_NOTE_QUESTION);
+  const wanted = straightQuotes(question);
   const title = Object.keys(answers).find((key) => straightQuotes(key) === wanted);
-  const note = single(title === undefined ? undefined : answers[title]).replace(/\s+/g, ' ').slice(0, PARTNER_NOTE_MAX).trim();
-  return note === '' ? null : note;
+  return single(title === undefined ? undefined : answers[title]);
+}
+
+/**
+ * A yes/no answer by its first word: true for yes, false for no, null when
+ * the response left it empty or said something else. Undefined when no
+ * question is named, so nothing is written.
+ */
+export function yesNoFor(question: string, answers: Record<string, string[]>): boolean | null | undefined {
+  if (!question) return undefined;
+  const word = /^[^a-z]*([a-z]+)/.exec(answerFor(answers, question).toLowerCase())?.[1];
+  if (word === 'yes') return true;
+  if (word === 'no') return false;
+  return null;
+}
+
+export function resubmissionFor(mapping: FormMapping, answers: Record<string, string[]>): boolean | null | undefined {
+  return yesNoFor(mapping.RESUBMIT_QUESTION, answers);
+}
+
+export function sfuStudentFor(mapping: FormMapping, answers: Record<string, string[]>): boolean | null | undefined {
+  return yesNoFor(mapping.SFU_STUDENT_QUESTION, answers);
 }
 
 /** The questions a mapping needs to find on the form for any response to import. */
@@ -375,6 +406,10 @@ export const DEFAULT_MEDIA_QUESTION =
 export const DEFAULT_MEDIA_ALLOW_ANSWER = 'Allow';
 /** The Chaos Cards form's preferred partner question, offered the same way. */
 export const DEFAULT_PARTNER_NOTE_QUESTION = "Doubles: preferred partner's name (Optional)";
+/** The club event form's yes/no questions (00336), offered the same way. */
+export const DEFAULT_RESUBMIT_QUESTION =
+  'Are you resubmitting the registration form for this event? please click yes if you had submitted an incorrect form and trying to resubmit again.';
+export const DEFAULT_SFU_STUDENT_QUESTION = 'Are you an SFU student?';
 
 export function defaultPartnerQuestions(choice: string) {
   return {

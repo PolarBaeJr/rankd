@@ -20,7 +20,12 @@ import {
   partnerNoteFor,
   mappedQuestionTitles,
   receiptFileFor,
+  resubmissionFor,
   scriptTimestamp,
+  sfuStudentFor,
+  yesNoFor,
+  DEFAULT_RESUBMIT_QUESTION,
+  DEFAULT_SFU_STUDENT_QUESTION,
   type FormMapping,
 } from '../registration-form-mapping';
 
@@ -55,6 +60,8 @@ const TOURNAMENT_MAPPING: FormMapping = {
   MEDIA_QUESTION: '',
   MEDIA_ALLOW_ANSWER: '',
   PARTNER_NOTE_QUESTION: '',
+  RESUBMIT_QUESTION: '',
+  SFU_STUDENT_QUESTION: '',
 };
 
 const CLUB_MAPPING: FormMapping = {
@@ -71,6 +78,8 @@ const CLUB_MAPPING: FormMapping = {
   MEDIA_QUESTION: '',
   MEDIA_ALLOW_ANSWER: '',
   PARTNER_NOTE_QUESTION: '',
+  RESUBMIT_QUESTION: '',
+  SFU_STUDENT_QUESTION: '',
 };
 
 /** What the card builds for a season's dues form (00290): no event, a screenshot. */
@@ -88,6 +97,8 @@ const SEASON_MAPPING: FormMapping = {
   MEDIA_QUESTION: '',
   MEDIA_ALLOW_ANSWER: '',
   PARTNER_NOTE_QUESTION: '',
+  RESUBMIT_QUESTION: '',
+  SFU_STUDENT_QUESTION: '',
 };
 
 /** A response as the two roads see it: titles with Apps Script values, and API answers by question id. */
@@ -412,5 +423,77 @@ describe('the preferred partner question (00299)', () => {
     const withNote = buildRegistrationPayload(mapping, 'form-1', response, answers);
     expect(withNote).toEqual(buildRegistrationPayload(CLUB_MAPPING, 'form-1', response, answers));
     expect(JSON.stringify(withNote)).not.toContain('Hitansh');
+  });
+});
+
+describe('the resubmission and student questions (00336)', () => {
+  const RESUBMIT = DEFAULT_RESUBMIT_QUESTION;
+  const STUDENT = DEFAULT_SFU_STUDENT_QUESTION;
+  const mapping = { ...CLUB_MAPPING, RESUBMIT_QUESTION: RESUBMIT, SFU_STUDENT_QUESTION: STUDENT };
+
+  it('parses a mapping saved before they existed, as no questions', () => {
+    const { RESUBMIT_QUESTION: _r, SFU_STUDENT_QUESTION: _s, ...stored } = CLUB_MAPPING;
+    const parsed = formMappingSchema.safeParse(stored);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.RESUBMIT_QUESTION).toBe('');
+      expect(parsed.data.SFU_STUDENT_QUESTION).toBe('');
+    }
+  });
+
+  it('reads yes and no by the first word, whatever the case and padding', () => {
+    for (const answer of ['yes', 'Yes', ' YES ', 'Yes, I am']) {
+      expect(yesNoFor(STUDENT, { [STUDENT]: [answer] })).toBe(true);
+    }
+    for (const answer of ['no', 'No thanks']) {
+      expect(yesNoFor(STUDENT, { [STUDENT]: [answer] })).toBe(false);
+    }
+  });
+
+  it('reads anything else, an empty answer or a missing one as null', () => {
+    expect(yesNoFor(STUDENT, { [STUDENT]: ['maybe'] })).toBeNull();
+    expect(yesNoFor(STUDENT, { [STUDENT]: ['   '] })).toBeNull();
+    expect(yesNoFor(STUDENT, {})).toBeNull();
+  });
+
+  it('reads nothing when no question is named', () => {
+    expect(yesNoFor('', { [STUDENT]: ['Yes'] })).toBeUndefined();
+    expect(resubmissionFor(CLUB_MAPPING, { [RESUBMIT]: ['Yes'] })).toBeUndefined();
+    expect(sfuStudentFor(CLUB_MAPPING, { [STUDENT]: ['Yes'] })).toBeUndefined();
+  });
+
+  it('finds each question through the mapping', () => {
+    const answers = { [RESUBMIT]: ['Yes'], [STUDENT]: ['No'] };
+    expect(resubmissionFor(mapping, answers)).toBe(true);
+    expect(sfuStudentFor(mapping, answers)).toBe(false);
+  });
+
+  it('matches the question whichever apostrophe the form uses', () => {
+    const typed = { ...CLUB_MAPPING, SFU_STUDENT_QUESTION: "Are you a member's guest?" };
+    expect(sfuStudentFor(typed, { 'Are you a member\u2019s guest?': ['Yes'] })).toBe(true);
+  });
+
+  it('is not a question the form must have', () => {
+    expect(mappedQuestionTitles(mapping)).not.toContain(RESUBMIT);
+    expect(mappedQuestionTitles(mapping)).not.toContain(STUDENT);
+  });
+
+  it('leaves the payload, and so its hash, as it was', () => {
+    const questions = [
+      { questionId: 'qe', title: 'Email address' },
+      { questionId: 'qn', title: 'Full name' },
+      { questionId: 'qr', title: RESUBMIT },
+      { questionId: 'qs', title: STUDENT },
+    ];
+    const answers = answersByTitle(questions, {
+      qe: ['pat@example.org'],
+      qn: ['Pat Player'],
+      qr: ['Yes'],
+      qs: ['No'],
+    });
+    const response = { responseId: 'r1', lastSubmittedTime: '2026-10-09T11:00:00Z' };
+    expect(buildRegistrationPayload(mapping, 'form-1', response, answers)).toEqual(
+      buildRegistrationPayload(CLUB_MAPPING, 'form-1', response, answers),
+    );
   });
 });

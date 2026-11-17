@@ -131,6 +131,7 @@ export function FormImportCard({
   reader,
   events = [],
   enteredListedElsewhere = false,
+  signupAnswersOn = true,
 }: {
   targetKind: ImportTargetKind;
   targetId: string;
@@ -151,6 +152,8 @@ export function FormImportCard({
   events?: MappableEvent[];
   /** The page lists entered people itself (a club event's Signed up), so only the rest are listed here. */
   enteredListedElsewhere?: boolean;
+  /** The form_signup_answers kill switch: a club event's resubmission and student questions. */
+  signupAnswersOn?: boolean;
 }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -233,6 +236,7 @@ export function FormImportCard({
                   events={events}
                   canEdit={canBind}
                   pending={pending}
+                  signupAnswersOn={signupAnswersOn}
                   onSave={(mapping, after) => run(() => saveRegistrationFormMapping(b.id, mapping), after)}
                 />
               )}

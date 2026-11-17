@@ -105,8 +105,8 @@ describe('00311: a non-member who enters the tournament keeps their partner', ()
   const latest = latestBody('club_event_link_admit_external');
   const code = stripComments(latest?.body ?? '');
 
-  it('is defined in 00311', () => {
-    expect(latest?.file).toMatch(/^00311_/);
+  it('is defined in 00336, which restated 00311\'s body', () => {
+    expect(latest?.file).toMatch(/^00336_/);
   });
 
   it('keeps the no-email guard', () => {

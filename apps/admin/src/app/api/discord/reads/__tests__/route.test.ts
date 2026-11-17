@@ -428,13 +428,13 @@ describe('GET /api/discord/reads/[name]: event-signups', () => {
     expect(state.filters).toContainEqual({ table: 'club_event_waitlist', method: 'eq', column: 'status', value: 'waiting' });
   });
 
-  it('never selects or returns an email or a preferred partner', async () => {
+  it('never selects or returns an email, a preferred partner or a Form answer', async () => {
     seed();
     const text = await (await call('event-signups', `?id=${EVENT}`)).text();
     expect(text).not.toContain('never-shown@example.invalid');
     expect(state.selects.length).toBeGreaterThan(0);
     for (const { columns } of state.selects) {
-      expect(columns).not.toMatch(/email|preferred_partner/);
+      expect(columns).not.toMatch(/email|preferred_partner|sfu_student|resubmission/);
     }
   });
 

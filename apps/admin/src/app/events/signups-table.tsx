@@ -9,6 +9,7 @@ import { removeClubEventSignup } from '@/lib/actions/club-events';
 import { undoImportedEntry } from '@/lib/actions/registration-imports';
 import { pairMutualPartners } from '@/lib/actions/club-event-partners';
 import type { PartnerAdvice } from '@/lib/partner-check';
+import { signupAnswerLines, type SignupFormAnswers } from '@/lib/signup-form-answers';
 import { PartnerCheckLine } from '@/components/partner-notes/PartnerCheckLine';
 import { PartnerChoiceDialog, type PartnerOption } from '@/components/partner-notes/PartnerChoiceDialog';
 import { ContestedPartnerDialog } from '@/components/partner-notes/ContestedPartnerDialog';
@@ -23,7 +24,8 @@ import { SIGNUP_SORT_KEY, SIGNUP_SORT_OPTIONS, parseSignupSort, sortEntries, typ
  * The partner check (00311) comes alongside, keyed by `key`: what the Form's
  * answer named (00299) as typed, the desk's choice, and what is wrong with it.
  * A member row can be a guest record (00292), such as somebody an officer added
- * by hand (00306) with the answers they gave.
+ * by hand (00306) with the answers they gave. Either kind can carry the
+ * Form's resubmission and student answers (00336).
  */
 export type ClubEventSignupRow =
   | {
@@ -35,6 +37,7 @@ export type ClubEventSignupRow =
       fee?: { amountCents: number | null; paid: boolean } | null;
       guest?: boolean;
       answers?: Record<string, string> | null;
+      formAnswers?: SignupFormAnswers | null;
     }
   | {
       kind: 'guest';
@@ -46,6 +49,7 @@ export type ClubEventSignupRow =
       entryId: string | null;
       waiverSigned: boolean | null;
       fee: { amountCents: number | null; paid: boolean } | null;
+      formAnswers?: SignupFormAnswers | null;
     };
 
 function money(cents: number | null): string {
@@ -142,6 +146,8 @@ export function ClubEventSignupsTable({
     }
   }
 
+  const answerLines = new Map(rows.map((row) => [row.key, row.formAnswers ? signupAnswerLines(row.formAnswers) : null]));
+
   if (rows.length === 0) {
     return <p className="px-5 pb-5 text-sm text-[var(--mute)]">Nobody has signed up yet.</p>;
   }
@@ -174,6 +180,7 @@ export function ClubEventSignupsTable({
                   <Badge variant="neutral">{row.walkIn ? 'Walk-in' : 'Non-member'}</Badge>
                 )}
                 {row.kind === 'member' && row.guest && <Badge variant="neutral">Guest</Badge>}
+                {answerLines.get(row.key)?.flag && <Badge variant="warning">Resubmission</Badge>}
               </div>
               {row.kind === 'guest' && row.email && (
                 <div className="truncate text-xs text-[var(--ink-2)]">{row.email}</div>
@@ -185,6 +192,9 @@ export function ClubEventSignupsTable({
                     {question}: <span className="text-[var(--ink-2)]">{answer}</span>
                   </div>
                 ))}
+              {answerLines.get(row.key)?.flag && (
+                <div className="text-xs text-[var(--color-warning)]">{answerLines.get(row.key)!.flag}</div>
+              )}
               <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--mute)]">
                 {row.kind === 'guest' && !row.walkIn ? 'Google Form' : 'Signed up'} {formatDateTime(row.created_at)}
                 {row.kind === 'guest' && row.waiverSigned !== null && (
@@ -196,6 +206,9 @@ export function ClubEventSignupsTable({
                     · {money(row.fee.amountCents)} {row.fee.paid ? 'paid' : 'unpaid'}
                   </>
                 )}
+                {answerLines.get(row.key)?.notes.map((note) => (
+                  <span key={note}> · {note}</span>
+                ))}
               </div>
             </div>
             <div className="min-w-0 max-md:empty:hidden">

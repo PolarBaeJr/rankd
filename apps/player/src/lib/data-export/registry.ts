@@ -303,7 +303,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // member or a non-member, so both references are dropped; the partner as
     // the member typed it stays.
     withheldColumns: ['preferred_partner_player_id', 'preferred_partner_external_id'],
-    why: 'Every club event you signed up for, and when, with the partner you named on its Google Form if you named one, and when the desk set your partner. Who the desk picked is withheld: it names somebody else.',
+    why: 'Every club event you signed up for, and when, with the partner you named on its Google Form if you named one, whether you said on its Google Form that you were resubmitting, your answer to its SFU student question, and when the desk set your partner. Who the desk picked is withheld: it names somebody else.',
   },
   waiver_acceptances: {
     playerColumns: ['player_id'],

@@ -30,6 +30,7 @@
     {"from": "Lorne Davies Complex", "to": "Example Sports Centre", "note": "venue"},
     {"from": "SFU Burnaby", "to": "Example Campus", "note": "venue"},
     {"from": "SFU Open", "to": "Club Open", "note": "tournament name"},
+    {"from": "an SFU student", "to": "a student", "note": "prose; the Form's SFU student question"},
     {"from": "SFU student", "to": "student", "note": "membership label"},
     {"from": "x-sfu-viewer", "to": "x-club-viewer", "note": "header name"},
     {"from": "sfu-viewer-v1", "to": "club-viewer-v1", "note": "HMAC context"},

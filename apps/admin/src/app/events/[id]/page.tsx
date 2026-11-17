@@ -22,6 +22,7 @@ import { FormImportCard } from '@/components/registration-import/FormImportCard'
 import { ManagedFormPanel } from '@/components/registration-import/ManagedFormPanel';
 import { ClubEventTournamentCard } from '../tournament-link';
 import { getReleaseFlags } from '@/lib/release-flags';
+import type { SignupFormAnswers } from '@/lib/signup-form-answers';
 import { LiveEvent } from '../live-event';
 import { loadPartnerBoard } from '@/lib/partner-board';
 import { partnerAdvice } from '@/lib/partner-check';
@@ -202,6 +203,54 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       row.answers,
     ]),
   );
+  // The Form's resubmission and student answers (00336), read on their own
+  // like the typed answers: a failed read shows no answers, never no list.
+  const answersOn = canSeeSignups && (await getReleaseFlags()).form_signup_answers;
+  const formAnswersOf = (row: {
+    resubmission: boolean | null;
+    resubmission_replaced: boolean | null;
+    sfu_student: boolean | null;
+  }): SignupFormAnswers => ({
+    resubmission: row.resubmission,
+    replaced: row.resubmission_replaced,
+    sfuStudent: row.sfu_student,
+  });
+  const { data: memberFormAnswerData, error: memberFormAnswerError } =
+    answersOn && signups.length > 0
+      ? await adminClient
+          .from('club_event_signups')
+          .select('player_id, resubmission, resubmission_replaced, sfu_student' as never)
+          .eq('event_id', id)
+      : { data: [], error: null };
+  const memberFormAnswers = new Map(
+    (memberFormAnswerError
+      ? []
+      : ((memberFormAnswerData ?? []) as unknown as {
+          player_id: string;
+          resubmission: boolean | null;
+          resubmission_replaced: boolean | null;
+          sfu_student: boolean | null;
+        }[])
+    ).map((row) => [row.player_id, formAnswersOf(row)]),
+  );
+  const { data: guestFormAnswerData, error: guestFormAnswerError } =
+    answersOn && externals > 0
+      ? await adminClient
+          .from('club_event_external_signups')
+          .select('id, resubmission, resubmission_replaced, sfu_student' as never)
+          .eq('event_id', id)
+      : { data: [], error: null };
+  const guestFormAnswers = new Map(
+    (guestFormAnswerError
+      ? []
+      : ((guestFormAnswerData ?? []) as unknown as {
+          id: string;
+          resubmission: boolean | null;
+          resubmission_replaced: boolean | null;
+          sfu_student: boolean | null;
+        }[])
+    ).map((row) => [row.id, formAnswersOf(row)]),
+  );
   // Who can be added by hand: anybody who could sign up and has not.
   let addable: PlayerOption[] = [];
   if (canCheckIn && event.status !== 'cancelled') {
@@ -240,6 +289,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
       entryId: entry && entry.status === 'entered' ? entry.id : null,
       waiverSigned: row.walk_in ? false : entry ? !!entry.waiver?.signed : null,
       fee: entry?.fee ?? null,
+      formAnswers: guestFormAnswers.get(row.id) ?? null,
     };
   });
   const signedUp: ClubEventSignupRow[] = [
@@ -250,6 +300,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
         ...row,
         fee: memberFee.get(row.player_id) ?? null,
         answers: memberAnswers.get(row.player_id) ?? null,
+        formAnswers: memberFormAnswers.get(row.player_id) ?? null,
       }),
     ),
     ...guests,
@@ -512,6 +563,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               migrationMissing="Form registrations need migration 00283."
               reader={readerStatus()}
               enteredListedElsewhere
+              signupAnswersOn={(await getReleaseFlags()).form_signup_answers}
             />
           </Card>
         )}

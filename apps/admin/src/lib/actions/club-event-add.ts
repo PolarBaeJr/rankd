@@ -10,6 +10,7 @@ import { logAdminAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import { ReadBudget, defaultGoogleDeps, getFormQuestions, readServiceAccount } from '../google-forms';
 import { formMappingSchema } from '../registration-form-mapping';
+import { releaseFlagOn } from '../release-flags';
 import { scheduleManagedFormSync } from '../managed-forms';
 import { existingPeopleLike, type ExistingMatch } from '../possible-matches';
 
@@ -155,7 +156,9 @@ export interface HandQuestions {
 /**
  * The event Form's questions an officer can answer for somebody: every one
  * except those the dialog already asks or that are not answers (name, email,
- * the receipt, the waiver and its signature, photos, the partner note).
+ * the receipt, the waiver and its signature, photos, the partner note, and
+ * the resubmission question while form_signup_answers is on). The student
+ * question stays askable.
  */
 export async function loadClubEventHandQuestions(eventId: string): Promise<ActionResult<HandQuestions>> {
   return runAction(async () => {
@@ -174,6 +177,7 @@ export async function loadClubEventHandQuestions(eventId: string): Promise<Actio
     const reader = readServiceAccount();
     if (reader.state !== 'ready') return { questions: [], note: 'The Form reader is not set up, so its questions cannot be listed.' };
     const parsed = formMappingSchema.safeParse(binding.read_mapping);
+    const answersOn = await releaseFlagOn('form_signup_answers');
     const mapped = new Set(
       parsed.success
         ? [
@@ -185,6 +189,7 @@ export async function loadClubEventHandQuestions(eventId: string): Promise<Actio
             parsed.data.SIGNATURE_QUESTION,
             parsed.data.MEDIA_QUESTION,
             parsed.data.PARTNER_NOTE_QUESTION,
+            answersOn ? parsed.data.RESUBMIT_QUESTION : '',
           ].filter(Boolean)
         : [],
     );

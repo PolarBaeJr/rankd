@@ -44,6 +44,9 @@ export interface FormBinding {
     waiverNeverSet: boolean;
     /** The same for the preferred partner question (00299). */
     partnerNoteNeverSet: boolean;
+    /** The same for the resubmission and student questions (00336). */
+    resubmitNeverSet: boolean;
+    sfuStudentNeverSet: boolean;
     readAt: string | null;
     attemptedAt: string | null;
     importedCount: number;
@@ -117,6 +120,10 @@ function readerOf(row: Record<string, unknown>): FormBinding['reader'] {
       !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'WAIVER_QUESTION'),
     partnerNoteNeverSet:
       !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'PARTNER_NOTE_QUESTION'),
+    resubmitNeverSet:
+      !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'RESUBMIT_QUESTION'),
+    sfuStudentNeverSet:
+      !!stored && typeof stored === 'object' && !Object.prototype.hasOwnProperty.call(stored, 'SFU_STUDENT_QUESTION'),
     readAt: (row.poll_read_at as string | null) ?? null,
     attemptedAt: (row.poll_attempted_at as string | null) ?? null,
     importedCount: (row.poll_imported_count as number | null) ?? 0,

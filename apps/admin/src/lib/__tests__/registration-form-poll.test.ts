@@ -83,6 +83,8 @@ let google: (url: URL) => Response;
 let rpcReplies: Record<string, (args: Record<string, unknown>) => { data: unknown; error: { message: string } | null }>;
 let uploads: { path: string; contentType: string; size: number }[];
 let removed: string[];
+/** The platform_settings release_flags row's value; null reads as every switch on. */
+let flagsRow: Record<string, unknown> | null;
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers });
@@ -90,6 +92,18 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 
 function admin() {
   return {
+    // readReleaseFlags: platform_settings, select value, eq key, maybeSingle.
+    from: vi.fn((table: string) => {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        maybeSingle: async () =>
+          table === 'platform_settings'
+            ? { data: flagsRow === null ? null : { value: flagsRow }, error: null }
+            : { data: null, error: null },
+      };
+      return query;
+    }),
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
       rpcs.push({ fn, args });
       if (fn === 'claim_registration_form_polls') return { data: claimed, error: null };
@@ -137,6 +151,7 @@ beforeEach(() => {
   rpcReplies = {};
   uploads = [];
   removed = [];
+  flagsRow = null;
   captured.length = 0;
   importResult = () => ({
     data: [{ item: 1, event_id: EVENT, status: 'pending', reason: null, replayed: false }],
@@ -670,5 +685,106 @@ describe('the preferred partner question (00299)', () => {
     rpcReplies.record_form_partner_note = () => ({ data: null, error: { message: 'boom' } });
     await runRegistrationFormPoll(admin(), deps());
     expect(receipts().at(-1)).toMatchObject({ p_read: false, p_watermark: null, p_error: 'import_failed' });
+  });
+});
+
+describe('the resubmission and student questions (00336)', () => {
+  const ANSWERS_MAPPING = { ...MAPPING, RESUBMIT_QUESTION: 'Resubmitting?', SFU_STUDENT_QUESTION: 'Student?' };
+  const ITEMS_WITH_ANSWERS = {
+    items: [
+      ...FORM_ITEMS.items,
+      { title: 'Resubmitting?', questionItem: { question: { questionId: 'qr' } } },
+      { title: 'Student?', questionItem: { question: { questionId: 'qs' } } },
+      { title: 'Preferred partner', questionItem: { question: { questionId: 'qp' } } },
+    ],
+  };
+  const recorded = () => rpcs.filter((r) => r.fn === 'record_form_signup_answers').map((r) => r.args);
+
+  function readsOne(mapping: unknown, resubmit: string | null, student: string | null, email = 'p@example.org') {
+    const base = response('r1', '2026-10-09T11:10:00Z', email);
+    const answers: Record<string, unknown> = { ...base.answers };
+    if (resubmit !== null) answers.qr = { questionId: 'qr', textAnswers: { answers: [{ value: resubmit }] } };
+    if (student !== null) answers.qs = { questionId: 'qs', textAnswers: { answers: [{ value: student }] } };
+    answers.qp = { questionId: 'qp', textAnswers: { answers: [{ value: 'Hitansh' }] } };
+    claimed = [{ ...form('b1', 'form-1'), read_mapping: mapping as typeof MAPPING }];
+    google = (url) =>
+      url.pathname.endsWith('/responses')
+        ? json(200, { responses: [{ ...base, answers }] })
+        : json(200, ITEMS_WITH_ANSWERS);
+  }
+
+  it('records both answers, on a replay too, and never in the payload', async () => {
+    readsOne(ANSWERS_MAPPING, 'Yes', 'No');
+    importResult = () => ({ data: [{ item: 1, event_id: EVENT, status: 'entered', reason: null, replayed: true }], error: null });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(recorded()).toEqual([
+      {
+        p_binding_id: 'b1',
+        p_response_id: 'r1',
+        p_set_resubmission: true,
+        p_resubmission: true,
+        p_set_sfu_student: true,
+        p_sfu_student: false,
+      },
+    ]);
+    expect(JSON.stringify(imports())).not.toContain('Resubmitting?');
+  });
+
+  it('leaves a question the mapping does not name alone', async () => {
+    readsOne({ ...MAPPING, SFU_STUDENT_QUESTION: 'Student?' }, 'Yes', 'Yes');
+    await runRegistrationFormPoll(admin(), deps());
+    expect(recorded()).toEqual([
+      {
+        p_binding_id: 'b1',
+        p_response_id: 'r1',
+        p_set_resubmission: false,
+        p_resubmission: null,
+        p_set_sfu_student: true,
+        p_sfu_student: true,
+      },
+    ]);
+  });
+
+  it('makes no call when the mapping names neither question', async () => {
+    readsOne(MAPPING, 'Yes', 'Yes');
+    await runRegistrationFormPoll(admin(), deps());
+    expect(recorded()).toEqual([]);
+  });
+
+  it('sends null for an answer that is neither yes nor no, or empty', async () => {
+    readsOne(ANSWERS_MAPPING, 'Maybe', null);
+    await runRegistrationFormPoll(admin(), deps());
+    expect(recorded()).toEqual([
+      {
+        p_binding_id: 'b1',
+        p_response_id: 'r1',
+        p_set_resubmission: true,
+        p_resubmission: null,
+        p_set_sfu_student: true,
+        p_sfu_student: null,
+      },
+    ]);
+  });
+
+  it('records nothing while form_signup_answers is off, and still imports and notes the partner', async () => {
+    readsOne({ ...ANSWERS_MAPPING, PARTNER_NOTE_QUESTION: 'Preferred partner' }, 'Yes', 'Yes');
+    flagsRow = { form_signup_answers: false };
+    await runRegistrationFormPoll(admin(), deps());
+    expect(recorded()).toEqual([]);
+    expect(imports()).toHaveLength(1);
+    expect(rpcs.filter((r) => r.fn === 'record_form_partner_note')).toHaveLength(1);
+    expect(receipts().at(-1)).toMatchObject({ p_read: true, p_error: null });
+  });
+
+  it('holds the watermark when the answers fail to record, telling Sentry only the job and binding', async () => {
+    readsOne(ANSWERS_MAPPING, 'Yes', 'Yes', 'hidden@example.org');
+    rpcReplies.record_form_signup_answers = () => ({ data: null, error: { message: 'boom' } });
+    await runRegistrationFormPoll(admin(), deps());
+    expect(receipts().at(-1)).toMatchObject({ p_read: false, p_watermark: null, p_error: 'import_failed' });
+    const sentry = captured as { err: Error; extra: { extra: Record<string, unknown> } }[];
+    const failure = sentry.find((c) => c.err.message.startsWith('Form sign-up answers record failed'));
+    expect(failure?.extra.extra).toEqual({ job: 'registration-form-poll', binding: 'b1' });
+    expect(JSON.stringify(captured.map((c) => (c as { err: Error }).err.message))).not.toContain('hidden@example.org');
+    expect(JSON.stringify(captured)).not.toContain('hidden@example.org');
   });
 });

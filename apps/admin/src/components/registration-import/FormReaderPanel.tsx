@@ -12,6 +12,8 @@ import {
   DEFAULT_MEDIA_QUESTION,
   DEFAULT_MEDIA_ALLOW_ANSWER,
   DEFAULT_PARTNER_NOTE_QUESTION,
+  DEFAULT_RESUBMIT_QUESTION,
+  DEFAULT_SFU_STUDENT_QUESTION,
   defaultPartnerQuestions,
   type FormMapping,
 } from '@/lib/registration-form-mapping';
@@ -106,6 +108,7 @@ export function FormReaderPanel({
   events,
   canEdit,
   pending,
+  signupAnswersOn,
   onSave,
 }: {
   binding: FormBinding;
@@ -114,6 +117,7 @@ export function FormReaderPanel({
   events: MappableEvent[];
   canEdit: boolean;
   pending: boolean;
+  signupAnswersOn: boolean;
   onSave: (mapping: FormMapping | null, after: () => void) => void;
 }) {
   const reader = binding.reader;
@@ -142,6 +146,12 @@ export function FormReaderPanel({
         <p className="text-[var(--text-muted)]">
           Preferred partner question: &quot;{mapping.PARTNER_NOTE_QUESTION}&quot;
         </p>
+      )}
+      {signupAnswersOn && mapping?.RESUBMIT_QUESTION && (
+        <p className="text-[var(--text-muted)]">Resubmission question: &quot;{mapping.RESUBMIT_QUESTION}&quot;</p>
+      )}
+      {signupAnswersOn && mapping?.SFU_STUDENT_QUESTION && (
+        <p className="text-[var(--text-muted)]">SFU student question: &quot;{mapping.SFU_STUDENT_QUESTION}&quot;</p>
       )}
       {mapping && reader.error && (
         <p role="status" className="text-[var(--color-danger)]">
@@ -180,6 +190,7 @@ export function FormReaderPanel({
           targetId={targetId}
           events={events}
           pending={pending}
+          signupAnswersOn={signupAnswersOn}
           onSave={onSave}
           onCancel={() => setEditing(false)}
         />
@@ -198,6 +209,7 @@ function FormMappingEditor({
   targetId,
   events,
   pending,
+  signupAnswersOn,
   onSave,
   onCancel,
 }: {
@@ -206,6 +218,7 @@ function FormMappingEditor({
   targetId: string;
   events: MappableEvent[];
   pending: boolean;
+  signupAnswersOn: boolean;
   onSave: (mapping: FormMapping | null, after: () => void) => void;
   onCancel: () => void;
 }) {
@@ -233,6 +246,13 @@ function FormMappingEditor({
   const [partnerNoteQuestion, setPartnerNoteQuestion] = useState(
     mapping && !reader?.partnerNoteNeverSet ? mapping.PARTNER_NOTE_QUESTION : DEFAULT_PARTNER_NOTE_QUESTION,
   );
+  // The resubmission and student questions (00336), offered the same way.
+  const [resubmitQuestion, setResubmitQuestion] = useState(
+    mapping && !reader?.resubmitNeverSet ? mapping.RESUBMIT_QUESTION : DEFAULT_RESUBMIT_QUESTION,
+  );
+  const [sfuStudentQuestion, setSfuStudentQuestion] = useState(
+    mapping && !reader?.sfuStudentNeverSet ? mapping.SFU_STUDENT_QUESTION : DEFAULT_SFU_STUDENT_QUESTION,
+  );
   const [rows, setRows] = useState<Record<string, EventRow>>(() => rowsFrom(mapping, events));
 
   const waiverFields = () =>
@@ -259,6 +279,19 @@ function FormMappingEditor({
         RECEIPT_QUESTION: receiptQuestion.trim(),
         ...waiverFields(),
         PARTNER_NOTE_QUESTION: targetKind === 'club_event' ? partnerNoteQuestion.trim() : '',
+        // Switched off, the editor hides them and a save keeps what was saved.
+        RESUBMIT_QUESTION:
+          targetKind === 'club_event'
+            ? signupAnswersOn
+              ? resubmitQuestion.trim()
+              : (mapping?.RESUBMIT_QUESTION ?? '')
+            : '',
+        SFU_STUDENT_QUESTION:
+          targetKind === 'club_event'
+            ? signupAnswersOn
+              ? sfuStudentQuestion.trim()
+              : (mapping?.SFU_STUDENT_QUESTION ?? '')
+            : '',
       };
     }
     const eventsMap: Record<string, string> = {};
@@ -286,6 +319,8 @@ function FormMappingEditor({
       RECEIPT_QUESTION: receiptQuestion.trim(),
       ...waiverFields(),
       PARTNER_NOTE_QUESTION: '',
+      RESUBMIT_QUESTION: '',
+      SFU_STUDENT_QUESTION: '',
     };
   }
 
@@ -326,6 +361,27 @@ function FormMappingEditor({
             onChange={(e) => setPartnerNoteQuestion(e.target.value)}
           />
         </label>
+      )}
+      {targetKind === 'club_event' && signupAnswersOn && (
+        <>
+          <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+            Resubmission question, a yes/no choice (flags a resubmission under a new email; leave empty if the form
+            has none)
+            <input
+              className={inputClass}
+              value={resubmitQuestion}
+              onChange={(e) => setResubmitQuestion(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[var(--text-secondary)]">
+            SFU student question, a yes/no choice (shown on the sign-up list; leave empty if the form has none)
+            <input
+              className={inputClass}
+              value={sfuStudentQuestion}
+              onChange={(e) => setSfuStudentQuestion(e.target.value)}
+            />
+          </label>
+        </>
       )}
       {targetKind !== 'season' && (
         <fieldset className="space-y-2 border-t border-[var(--border)] pt-2">

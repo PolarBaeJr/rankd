@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/nextjs';
+import { readReleaseFlags } from '@badminton/shared';
 import type { createAdminClient } from './supabase-server';
 import {
   BudgetExhausted,
@@ -20,6 +21,8 @@ import {
   partnerNoteFor,
   receiptFileFor,
   requiredQuestions,
+  resubmissionFor,
+  sfuStudentFor,
 } from './registration-form-mapping';
 import { drainFormReceipts, type ReceiptDrainOutcome } from './form-receipts';
 
@@ -53,6 +56,12 @@ import { drainFormReceipts, type ReceiptDrainOutcome } from './form-receipts';
 // it. The files themselves are downloaded after the forms are read, with what
 // is left of the budget and time, by lib/form-receipts.ts, which then files
 // them as receipts for review. That runs even when no form is due.
+//
+// A CLUB EVENT'S YES/NO ANSWERS (00336), resubmission and student, are
+// written onto the sign-ups the same way as the partner note, replays
+// included, while the form_signup_answers kill switch is on. A question the
+// mapping does not name leaves its column alone; a failure to record holds
+// the watermark.
 //
 // Unconfigured, nothing runs: no claim, no Google call, no log line.
 //
@@ -160,6 +169,7 @@ async function pollForm(
   account: ServiceAccount,
   deps: PollDeps,
   budget: ReadBudget,
+  signupAnswersOn: boolean,
 ): Promise<FormPollOutcome> {
   const outcome: FormPollOutcome = {
     bindingId: form.id,
@@ -265,6 +275,27 @@ async function pollForm(
           });
         }
       }
+      // Resubmission and student answers (00336), the same way as the note.
+      if (signupAnswersOn) {
+        const resubmission = resubmissionFor(mapping.data, byTitle);
+        const sfuStudent = sfuStudentFor(mapping.data, byTitle);
+        if (resubmission !== undefined || sfuStudent !== undefined) {
+          const answered = await admin.rpc('record_form_signup_answers' as never, {
+            p_binding_id: form.id,
+            p_response_id: built.payload.response_id,
+            p_set_resubmission: resubmission !== undefined,
+            p_resubmission: resubmission ?? null,
+            p_set_sfu_student: sfuStudent !== undefined,
+            p_sfu_student: sfuStudent ?? null,
+          } as never);
+          if (answered.error) {
+            failed = true;
+            Sentry.captureException(new Error(`Form sign-up answers record failed: ${answered.error.message}`), {
+              extra: { job: 'registration-form-poll', binding: form.id },
+            });
+          }
+        }
+      }
       const file = receiptFileFor(mapping.data, questions, response.fileAnswers);
       if (file) {
         const recorded = await admin.rpc('record_registration_import_receipt', {
@@ -337,7 +368,10 @@ export async function runRegistrationFormPoll(admin: Admin, deps: PollDeps = def
 
   const started = deps.now();
   const budget = new ReadBudget(POLL_READ_BUDGET);
-  if (queue.length > 0) await readForms(admin, queue, account, deps, budget, started, run);
+  if (queue.length > 0) {
+    const signupAnswersOn = (await readReleaseFlags(admin)).form_signup_answers;
+    await readForms(admin, queue, account, deps, budget, started, run, signupAnswersOn);
+  }
 
   // The uploaded receipts, with what is left. Downloads are skipped once
   // Google has stopped the round; filing needs no Google and always runs.
@@ -356,6 +390,7 @@ async function readForms(
   budget: ReadBudget,
   started: number,
   run: FormPollRun,
+  signupAnswersOn: boolean,
 ): Promise<void> {
   // One token for the round. Refused: every claimed form says so, once.
   try {
@@ -382,7 +417,7 @@ async function readForms(
       const form = queue.shift();
       if (!form) return;
       try {
-        const outcome = await pollForm(admin, form, account, deps, budget);
+        const outcome = await pollForm(admin, form, account, deps, budget, signupAnswersOn);
         run.forms.push(outcome);
       } catch (err) {
         if (err instanceof StopRound) {
